@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — M1 authorized August 7, 2026 |
+| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
 | Scope | Native iPhone application architecture |
 | Sources | `../KINEO_PRODUCT_DESIGN.md`, `../KINEO_UX_DESIGN_SPEC.md` |
-| Last reviewed | August 6, 2026 |
+| Last reviewed | August 9, 2026 |
 
 This document defines the prototype architecture. Product behavior remains governed by the source documents and TD-00.
 
@@ -140,7 +140,9 @@ Core defines narrow `Sendable` ports. Required capabilities are:
 - `ProtectedDataStatus`: report whether protected storage is currently available.
 - `Clock`, `CalendarProvider`, and `IdentifierGenerator`: injected sources for deterministic tests.
 
-Repositories return domain values, never database rows. Use cases define transaction boundaries when several records must change together.
+Cross-record writes use transaction-owning command ports declared by Core: complete a check-in and apply Attention transitions; append a decision only after the in-transaction global Attention check; create a prepared session; append a routine event with its checkpoint; finalize a routine; submit feedback; and reset history. One SQLite store implements these commands. Core never receives a database handle or transaction closure.
+
+Repositories return domain values, never database rows. Read repositories may remain separate; no use case composes writes across independent repository instances and calls that result atomic.
 
 ## 6. State ownership and concurrency
 
@@ -164,7 +166,7 @@ Repositories return domain values, never database rows. Use cases define transac
 
 ### 6.3 Transaction boundaries
 
-The following operations are atomic:
+The following database operations are atomic:
 
 1. Complete check-in + transition any conditional safety state + save its immutable entries.
 2. Append a deterministic selection/composition decision revision before presenting or updating its plan; duration or gentler-level changes append revisions rather than mutating one.
@@ -174,9 +176,8 @@ The following operations are atomic:
 6. Finalize routine status + terminal event.
 7. Save all feedback submitted together on one screen; feedback remains optional and occurs after finalization.
 8. Reset history, removing history and transition audits while retaining profile/preferences and only a currently active Attention state.
-9. Delete all Kineo data.
 
-An operation either commits its entire domain change or leaves the previous durable state intact.
+Each operation either commits its entire database change or leaves the previous durable state intact. Delete All spans SQLite, files, and platform schedules, so it is an idempotent verified erasure workflow rather than one transaction; TD-02 owns its recovery contract.
 
 ## 7. Application state machines
 
@@ -187,6 +188,7 @@ Navigation reflects durable domain state; it does not define it.
 ```text
 launch
   ├─ protected data unavailable → protected-data holding screen
+  ├─ deletion marker present    → resume verified erasure
   ├─ onboarding incomplete      → onboarding
   ├─ recoverable active session → resume/end decision
   └─ otherwise                  → Today

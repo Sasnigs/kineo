@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved build plan — M1 complete; M2 awaits authorization |
+| Status | Approved build plan — M1–M2 complete; M3 awaits authorization |
 | Platform | Native iPhone, SwiftUI, iOS 17 minimum |
 | Sources | Product design, UX specification, and TD-00 through TD-08 |
 | Last updated | August 9, 2026 |
@@ -76,6 +76,8 @@ flowchart LR
 
 ### M2 — Domain and persistence foundation
 
+**Status:** Complete — domain, real-SQLite persistence, reset/delete recovery, package tests, and simulator checks passed August 9, 2026.
+
 **Build outcome:** Kineo can create, reload, reset, and delete local fixture data safely.
 
 - Implement domain values and repository protocols.
@@ -85,7 +87,7 @@ flowchart LR
 
 **Learn:** domain modeling, SQLite relationships, migrations, transactions, actors, and data protection.
 
-**Complete when:** TD-02 persistence tests pass against a real temporary database.
+**Complete when:** M2-scoped TD-02 tests pass against a real temporary database: domain invariants; schema and repository contracts for every record; atomic command rollback; initial, failed, and future-schema migration behavior; Reset History; recoverable Delete All; and app-hosted file-attribute checks. Selection/composition semantics, full routine recovery, notifications, and physical-device lock/backup evidence remain owned by later milestones.
 
 ### M3 — Selection and safety engine
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — M1 authorized August 7, 2026 |
+| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
 | Scope | Deterministic plan selection, safety state, history eligibility, overrides, explanations, and audit records |
 | Product inputs | `KINEO_PRODUCT_DESIGN.md` 0.5; `KINEO_UX_DESIGN_SPEC.md` |
 | Rules version | `selection-v1.0.0-prototype` |
@@ -339,7 +339,7 @@ submitCorrection(area, correctedEntry):
     continue completing the new check-in
 ```
 
-Selecting the mistake action alone never clears Attention. Correction is an append-only entry/event workflow, not deletion of historical evidence and not a claim that movement is safe.
+Selecting the mistake action alone never clears Attention. Correction is an append-only entry/event workflow, not deletion of historical evidence and not a claim that movement is safe. If its area is no longer selected, the correction never enters this selector; after clearance, the coordinator creates a normal check-in for current preferences.
 
 ### 6.2 Selected-session behavior
 

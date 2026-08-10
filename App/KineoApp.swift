@@ -8,7 +8,7 @@ struct KineoApp: App {
 
     var body: some Scene {
         WindowGroup {
-            KineoRootView(launchState: bootstrapper.initialState())
+            KineoRootView(bootstrapper: bootstrapper)
         }
     }
 }

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — M1 authorized August 7, 2026 |
+| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
 | Scope | Onboarding, Today/check-in, attention, plan, routine, feedback, Progress, and Profile |
 | Product source | `../KINEO_PRODUCT_DESIGN.md` v0.5 |
 | UX source | `../KINEO_UX_DESIGN_SPEC.md` |
@@ -64,12 +64,14 @@ These decisions are authoritative for implementation unless the product contract
 | `Launching` | `bootstrapSucceeded` | Read onboarding status, active Attention flags, unfinished routine, and catalog availability | Route by precedence below |
 | `Launching` | `protectedDataUnavailable` | Do not attempt destructive recovery; explain that protected local data is unavailable while device is locked | `ProtectedDataUnavailable` |
 | `ProtectedDataUnavailable` | `protectedDataBecameAvailable` | Retry bootstrap | `Launching` |
+| `Launching` | `deletionPending` | Resume TD-02 erasure without opening SQLite | `DeletingAllData` |
+| `DeletingAllData` | `verificationFailed` | Keep marker and offer Retry | `DeletingAllData` |
 | Any non-routine state | `onboardingIncomplete` | — | `Onboarding` at first incomplete step |
 | Any non-routine state | `onboardingComplete` | — | `MainTabs.Today` |
 | `MainTabs` | `selectTab(Today/Progress/Profile)` | Retain an independent navigation path per tab | Selected tab root |
-| Any state | `deleteAllCommitted` | Complete deletion transaction | `Onboarding.Welcome` |
+| Any state | `deleteAllVerified` | Complete TD-02's phased erasure and remove its pending marker | `Onboarding.Welcome` |
 
-Bootstrap precedence is: protected-data availability, onboarding, then main tabs. Attention flags affect Today content but do not block access to Progress, Profile, privacy, deletion, support, or safety information. An unfinished routine never auto-resumes into active playback; Today offers an explicit Resume or End choice and reconstructs it paused.
+Bootstrap precedence is: protected-data availability, pending deletion, onboarding, then main tabs. Attention flags affect Today content but do not block access to Progress, Profile, privacy, deletion, support, or safety information. An unfinished routine never auto-resumes into active playback; Today offers an explicit Resume or End choice and reconstructs it paused.
 
 ## 4. Onboarding state machine
 
@@ -147,7 +149,7 @@ Correction is a fresh check-in flow; the blocked check-in is never mutated or re
 | `CorrectionCheckIn(area)` | `submit(triggeringEntry + Yes/NotSure)` | Complete fresh record, append reaffirm event, and keep Attention | `AttentionGuidance(area)` |
 | `CorrectionCheckIn(area)` | `cancel/appTerminates` | Leave current Attention row unchanged; an incomplete draft may be discarded | `AttentionReturn(area)` on next entry |
 
-After the final flag clears, the user continues any remaining questions in the fresh check-in. Only that complete fresh check-in may reach plan preparation; the blocked check-in never can.
+After the final flag clears, the user continues any remaining questions in the fresh check-in only when its area snapshot still matches current preferences. If the corrected area is no longer selected, the correction cannot produce a plan; route to a new normal check-in for current preferences. The blocked check-in never reaches plan preparation.
 
 “Returned to usual” only clears the persistent gate. It never generates a routine or reuses the answers that originally caused Attention; the user must complete a fresh check-in. Selecting by mistake only opens correction. A submitted valid correction appends an audit event and may clear the row; prior blocked answers remain immutable.
 
@@ -207,7 +209,7 @@ Feedback rows exist only for areas actually included in the composed routine. Om
 | `FeedbackDraft(area)` | `answer(Better/Same/Worse)` | Update only the in-memory response draft for that included area | Next included area or review state |
 | `FeedbackDraft(area)` | `skipArea` | Leave that area's response absent; create no placeholder row | Next included area or review state |
 | `FeedbackDraft` | `submit` | Atomically insert all supplied per-area responses; absent areas create no rows; a Worse response becomes that area's next derived reset boundary | `Completion` |
-| `FeedbackDraft` | `skipAll` | Commit no feedback rows | `Completion` |
+| `FeedbackDraft` | `skipAll` | Commit a submission with no area-response rows | `Completion` |
 | `Completion` | `done` | Session already has its committed terminal status; recompute local Progress read model | `TodayReady` |
 | `Completion` | `startAnother` | Create a new session and require a new check-in | `CollectingAnswers` |
 

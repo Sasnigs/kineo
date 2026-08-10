@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — M1 authorized August 7, 2026 |
+| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
 | Depends on | TD-01 architecture, TD-02 domain/data, TD-05 flows |
 | Owns | Apple-framework adapters and lifecycle behavior |
-| Last updated | August 6, 2026 |
+| Last updated | August 9, 2026 |
 
 ## 1. Scope
 
@@ -144,7 +144,7 @@ Only one guided session may be active. The repository enforces this invariant. A
 The persistence design owns the schema; the platform adapter owns file-system attributes.
 
 - Apply `NSFileProtectionComplete` to the store and sidecar files. Kineo has no requirement to read or write sensitive records while the device is locked; lifecycle persistence must checkpoint before protection becomes unavailable and tolerate recovery from the last committed event.
-- Mark the containing Application Support directory, store, derived HealthKit cache, and any pending local diagnostic files as excluded from backup using the documented iOS resource value. This is the strongest app-controlled mechanism, not a guarantee about platform backup behavior.
+- Mark the containing Application Support directory, store, deletion-pending marker, derived HealthKit cache, and any pending local diagnostic files as excluded from backup using the documented iOS resource value. This is the strongest app-controlled mechanism, not a guarantee about platform backup behavior.
 - Reapply and verify attributes after store creation, migration, replacement, or recovery.
 - Treat inability to establish required protection as a blocking storage error, not a warning that allows sensitive writes.
 - Do not place sensitive values in `UserDefaults`, state-restoration payloads, Spotlight, widgets, pasteboard, or notification metadata.

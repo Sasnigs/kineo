@@ -8,7 +8,8 @@ final class DependencyBoundaryTests: XCTestCase {
             encoding: .utf8
         )
 
-        XCTAssertTrue(manifest.contains("name: \"KineoInfrastructure\",\n            dependencies: [\"KineoCore\"]"))
+        XCTAssertTrue(manifest.contains("name: \"KineoInfrastructure\""))
+        XCTAssertTrue(manifest.contains(".product(name: \"GRDB\", package: \"GRDB.swift\")"))
         XCTAssertTrue(manifest.contains("name: \"KineoUI\",\n            dependencies: [\"KineoCore\"]"))
         XCTAssertFalse(manifest.contains("name: \"KineoCore\",\n            dependencies:"))
     }
