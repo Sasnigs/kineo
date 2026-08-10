@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — M1 authorized August 7, 2026 |
+| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
 | Platform | Native iPhone, SwiftUI, iOS 17 minimum |
 | Owns | Presentation boundaries, navigation, reusable UI, adaptive layout, assistive behavior |
 | Depends on | `01_APP_ARCHITECTURE.md`, `05_APP_FLOW_STATE_MACHINES.md`, `07_PLATFORM_SERVICES.md` |

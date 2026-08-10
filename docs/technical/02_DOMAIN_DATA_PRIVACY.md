@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — M1 authorized August 7, 2026 |
+| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
 | Scope | Domain model, local persistence, data lifecycle, and privacy enforcement |
 | Sources | `../KINEO_PRODUCT_DESIGN.md`, `../KINEO_UX_DESIGN_SPEC.md`, `01_APP_ARCHITECTURE.md` |
-| Last reviewed | August 6, 2026 |
+| Last reviewed | August 9, 2026 |
 
 This document defines the source of truth for Kineo’s local state. It specifies no server, account, synchronization, research export, or telemetry implementation.
 
@@ -69,6 +69,8 @@ Invariants:
 - Any `yes` or `notSure` enters Attention Required for that area and makes the entire check-in ineligible for a plan.
 - `no` is not a safety certification; it merely continues the product mapping.
 - A new routine attempt, including another on the same day, requires a new check-in identifier.
+- A check-in purpose is either `normal` or `attentionCorrection`. A correction identifies its target area and links the triggering entry while that history still exists; it never changes a frozen record.
+- If the correction target is no longer selected in the current profile, the correction may only clear or reaffirm Attention. It cannot produce a plan; clearing routes to a new normal check-in for current preferences.
 
 ### `SafetyState`
 
@@ -83,6 +85,8 @@ Events:
 - `attentionReaffirmedCorrection`: a submitted correction still answered `yes` or `notSure` to a required conditional question.
 
 Entering Attention atomically upserts current state and appends an event. Clearing Attention atomically removes current state and appends the relevant clear event. An Attention Required state cannot be cleared by changing preferences, omitting the area, resetting ordinary history, reinstall-free relaunch, or catalog/rules update. Full deletion necessarily removes it along with every other local value and returns the app to first use.
+
+Every clear or reaffirm command carries the `updatedAt` value of the Attention state it read. Its event time must be strictly newer. The store compares the prior value inside the write transaction and rejects stale or same-version commands, preventing delayed UI work from clearing or regressing a newer Attention state.
 
 ### `SelectionDecision`
 
@@ -106,6 +110,7 @@ Owns the resolved content snapshot, lifecycle, current checkpoint, and movement-
 Invariants:
 
 - A session uses only content in its frozen validated snapshot.
+- Its snapshot `includedAreas` exactly matches the included inputs of its referenced decision.
 - Quick is separately authored; it is never a truncated Standard session.
 - A terminal session cannot resume.
 - Completion is explicit; elapsed wall-clock time alone never completes a routine.
@@ -143,12 +148,14 @@ This threshold is configuration versioned with the selection rules and remains a
 erDiagram
     direction LR
     CHECK_IN ||--|{ CHECK_IN_ENTRY : contains
+    CHECK_IN_ENTRY o|--o{ CHECK_IN : correction_source
     CHECK_IN ||--o| PAUSE_TODAY_EVENT : may_record
     CHECK_IN ||--o{ SELECTION_DECISION : revisions
     SELECTION_DECISION ||--|{ DECISION_AREA_INPUT : snapshots
     SELECTION_DECISION ||--o| ROUTINE_SESSION : starts
     ROUTINE_SESSION ||--o{ ROUTINE_EVENT : records
-    ROUTINE_SESSION ||--o{ AREA_FEEDBACK : receives
+    ROUTINE_SESSION ||--o| FEEDBACK_SUBMISSION : receives
+    FEEDBACK_SUBMISSION ||--|{ AREA_FEEDBACK : contains
     CHECK_IN_ENTRY o|..o{ SAFETY_EVENT : may_source
 
     USER_PROFILE {
@@ -173,6 +180,10 @@ erDiagram
         string id PK
         string decision_id FK
     }
+    FEEDBACK_SUBMISSION {
+        string id PK
+        string routine_session_id FK
+    }
 ```
 
 The diagram shows the audit spine, not every child table. `AttentionState` is keyed independently by body area so preferences and Reset History cannot clear it. Catalog records are installed read-only content, not user tables; a session stores the resolved content snapshot.
@@ -195,6 +206,8 @@ All timestamps are signed 64-bit Unix milliseconds in UTC. Each event that contr
 | `applied_at_ms` | non-null integer |
 
 SQLite `PRAGMA user_version` must equal the greatest committed migration version. The table detects an accidentally edited historical migration.
+
+GRDB `DatabaseMigrator` is the transaction and ordering authority. Each registered migration owns a canonical, version-controlled manifest containing its ordered SQL and any explicit data-transform identifier; `checksum` is the SHA-256 of the exact UTF-8 manifest bytes. Its transaction also updates `PRAGMA user_version`. Launch preflight rejects a future version or checksum mismatch before pending work. GRDB's destructive schema-change erase option is never enabled.
 
 #### `user_profile`
 
@@ -234,8 +247,11 @@ The system authorization status is queried live and is not duplicated as authori
 | --- | --- |
 | `id` | text primary key UUID |
 | `status` | `draft`, `completed`, or `abandoned` |
+| `purpose` | `normal` or `attentionCorrection` |
 | `primary_area` | non-null `BodyArea` snapshot |
 | `secondary_area` | nullable distinct `BodyArea` snapshot |
+| `correction_area` | nullable `BodyArea`; required only for `attentionCorrection` |
+| `source_triggering_entry_id` | nullable foreign key to `check_in_entries` with `ON DELETE SET NULL`; present for `attentionCorrection` when Reset History has not removed the triggering entry |
 | `started_at_ms` | non-null integer |
 | `completed_at_ms` | nullable; required only for completed |
 | `local_day` | non-null text |
@@ -255,7 +271,7 @@ The system authorization status is queried live and is not duplicated as authori
 | `conditional_safety_answer` | nullable `ConditionalSafetyAnswer`; required exactly when change is Worse or comfort is Limited |
 | `submitted_at_ms` | non-null integer |
 
-There is at most one entry per check-in and area. Draft entries may be edited until commit; all entries become immutable when the check-in completes. A later Attention correction preserves the blocked check-in, appends a correction safety event, and starts a fresh check-in rather than revising frozen history.
+For `normal`, both correction columns are null. For `attentionCorrection`, `correction_area` is required and the triggering-entry link is retained when available; Reset History may remove it while preserving the current Attention row. There is at most one entry per check-in and area. Draft entries may be edited until commit; all entries become immutable when the check-in completes. A later Attention correction preserves any retained blocked check-in, links a fresh correction check-in to its triggering entry, and appends a correction safety event rather than revising frozen history.
 
 #### `safety_events`
 
@@ -265,6 +281,7 @@ There is at most one entry per check-in and area. Draft entries may be edited un
 | `area` | non-null `BodyArea`, indexed with time |
 | `kind` | one of the five `SafetyState` transition events |
 | `source_check_in_entry_id` | nullable foreign key with `ON DELETE SET NULL`; required for enter, correction-clear, and correction-reaffirmation events |
+| `return_answer` | nullable `ConditionalSafetyAnswer`; `yes` for return-to-usual clearance and `no` or `notSure` for return reaffirmation; null for entry-sourced events |
 | `occurred_at_ms` | non-null integer |
 | `local_day`, `time_zone_id`, `calendar_id` | non-null event-day snapshot |
 
@@ -310,9 +327,9 @@ Pause Today is allowed only after an otherwise eligible completed check-in conta
 | `secondary_omission_reason` | nullable `OmissionReason`, never a safety value |
 | `validation_result` | `exact`, `fallback`, or `unavailable`, consistent with outcome |
 | `primary_template_id` | nullable text; required for selected outcome |
-| `primary_template_revision` | nullable integer; required for selected outcome |
+| `primary_template_revision` | nullable positive integer; required for selected outcome |
 | `secondary_module_id` | nullable text; present only when secondary content is delivered |
-| `secondary_module_revision` | nullable integer paired with module ID |
+| `secondary_module_revision` | nullable positive integer paired with module ID |
 | `compatibility_rule_id` | nullable text; required when a secondary module is delivered |
 | `composition_fingerprint` | nullable lower-case SHA-256 hex digest using TD-04's exact composition projection; required for selected outcome |
 | `created_at_ms` | non-null integer |
@@ -330,6 +347,10 @@ Pause Today is allowed only after an otherwise eligible completed check-in conta
 | `qualifying_count` | non-null integer `>= 0` snapshot |
 | `latest_response` | nullable `AreaResponse` snapshot |
 | `included` | non-null Boolean; primary must be included |
+
+Each decision contains exactly one input for every entry committed by its frozen check-in. A secondary omitted before answering is absent from both the check-in and decision; a checked secondary that cannot be composed remains an explicit `included = false` input with an omission reason.
+
+If the current profile has a secondary area but the frozen check-in omits it, the decision must record `secondaryUnanswered` and the `notice.secondary_skipped` disclosure. Silent omission is invalid.
 
 #### `decision_reasons`
 
@@ -387,21 +408,34 @@ The snapshot contains catalog version, primary template ID, optional secondary m
 | `alternative_id` | nullable; required only for alternative selection |
 | `local_reason_code` | nullable allow-listed reason (`uncomfortable`, `unclear`, `notEnoughSpace`); never free text |
 | `occurred_at_ms` | non-null integer |
+| `resulting_status`, `resulting_step_index`, `resulting_step_elapsed_ms` | non-null resulting checkpoint used to verify idempotent retries |
+| `resulting_updated_at_ms`, `resulting_ended_at_ms` | checkpoint timestamps; end time is nullable |
 
 Event insert and mutable session checkpoint/status update occur in one transaction. The coordinator assigns the event UUID before the first write attempt and retains it with the command until a terminal result. Every retry of that logical event MUST reuse the same UUID; a new UUID represents a new event. The unique event UUID plus per-session sequence number makes retries idempotent.
+
+#### `feedback_submissions`
+
+| Column | Constraint |
+| --- | --- |
+| `id` | text primary key request UUID |
+| `routine_session_id` | non-null unique foreign key, cascade delete |
+| `submitted_at_ms` | non-null integer |
+| `local_day`, `time_zone_id`, `calendar_id` | non-null submission-day snapshot, including skip-all submissions |
+
+One screen submission owns all supplied area responses. Its request UUID is assigned before the first write and reused for every retry.
 
 #### `area_feedback`
 
 | Column | Constraint |
 | --- | --- |
 | `id` | text primary key UUID |
-| `routine_session_id` | non-null foreign key, cascade delete |
+| `feedback_submission_id` | non-null foreign key, cascade delete |
 | `area` | non-null `BodyArea` present in the routine snapshot |
 | `response` | non-null `AreaResponse` |
 | `submitted_at_ms` | non-null integer |
 | `local_day`, `time_zone_id`, `calendar_id` | non-null event-day snapshot |
 
-Unique constraint: one feedback row per routine session and area. A skipped response creates no row.
+Unique constraint: one feedback row per submission and area. Because each session has at most one submission, this enforces one response per routine session and area. A skipped response creates no row.
 
 ### Required indexes
 
@@ -413,9 +447,10 @@ Unique constraint: one feedback row per routine session and area. A skipped resp
 - `routine_sessions(local_day, ended_at_ms)` and `routine_sessions(status)` for Progress and recovery.
 - A unique partial index over a constant expression where status is `prepared`, `inProgress`, or `paused`, enforcing at most one nonterminal routine globally.
 - `area_feedback(area, submitted_at_ms)` for latest response and eligibility derivation.
+- `feedback_submissions(routine_session_id)` unique for idempotent submission lookup.
 - `routine_events(routine_session_id, sequence_number)` unique for replay/audit.
 
-Foreign keys are enabled on every connection. Schema-level `CHECK` constraints protect enum domains and obvious shape rules; cross-table invariants remain Core use-case checks inside transactions.
+Foreign keys are enabled on every connection. Schema-level `CHECK`, foreign-key, and uniqueness constraints protect structural shapes. Transaction-owning Core command ports enforce cross-table membership and lifecycle rules; they are tested against the real store rather than duplicated in SQLite triggers.
 
 ## 6. Write workflows
 
@@ -429,7 +464,7 @@ Foreign keys are enabled on every connection. Schema-level `CHECK` constraints p
 
 This workflow is the sole writer of Attention transitions produced by submitted check-in or correction answers. A blocked check-in never proceeds to plan creation. If the pure selector is exercised defensively or in isolation with such answers, any returned `SafetyTransition` values describe the already-derived transition and MUST NOT be written again by the plan coordinator.
 
-If the user later chooses “Selected by mistake,” keep the current Attention row and create a new correction draft. Never mutate or reuse the blocked check-in's answers. Clear that area's Attention row and append `attentionClearedCorrection` only in the same transaction that submits a structurally valid corrected entry: either the corrected entry has no conditional trigger, or it includes the required `No` answer. `Yes` or `Not sure` reaffirms Attention. Abandoning the correction draft leaves the gate intact.
+If the user later chooses “Selected by mistake,” keep the current Attention row and create a correction draft linked to the triggering entry when retained. Never mutate or reuse the blocked check-in's answers. Clear that area's Attention row and append `attentionClearedCorrection` only in the same transaction that submits a structurally valid corrected entry: either the corrected entry has no conditional trigger, or it includes the required `No` answer. `Yes` or `Not sure` reaffirms Attention. Abandoning the correction draft leaves the gate intact. If the corrected area is no longer selected, the submitted correction cannot create a decision; after clearance, start a normal check-in from current preferences.
 
 ### Create plan and routine
 
@@ -454,7 +489,7 @@ Record meaningful transitions, not timer ticks. Persist when starting, pausing, 
 
 ### Submit feedback
 
-Insert all responses supplied on the screen in one transaction. Missing areas create no placeholder response. Duplicate submission with the same request/event ID returns the existing result rather than adding another record.
+After a routine is `completed`, `stopped`, or `safetyStopped`, insert one feedback-submission row and all supplied responses in one transaction. Abandoned preparation does not accept feedback. `submitted_at_ms` cannot precede the routine end. Missing areas create no placeholder response. Retrying the same request UUID returns the stored submission; a different request after feedback already exists for that session is rejected without changing it.
 
 ## 7. Storage protection
 
@@ -476,6 +511,10 @@ For the private directory, database, SQLite WAL, SQLite shared-memory file, and 
 
 Create and protect the directory before opening SQLite so newly created sidecars inherit protection. Recheck `database`, `database-wal`, and `database-shm`, because sidecar creation timing can vary. A runtime storage audit must enumerate only the exact app-owned private directory, not broad user paths.
 
+Reapply protection before reading an existing store and again after migration or any write, including failed migration/preflight paths that preserve the file for recovery. If post-commit protection fails, close and poison that store instance; it rejects further access until a fresh open reapplies and verifies protection.
+
+M2 app-hosted tests enumerate every created item and verify backup exclusion. The Complete Protection assertion runs on physical iOS; simulator explicitly skips it because it does not report `NSFileProtectionKey`. Locked-device and backup-content evidence remain later gates in TD-08.
+
 Complete Protection means records become inaccessible when the device locks. The app must handle the protected-data-unavailable condition without treating it as missing data. In-memory routine state may continue only while the process remains alive; durable changes wait for unlock. If the lock prevents a final checkpoint write, recovery uses the last successfully committed checkpoint and never infers activity after it. If safe persistence cannot be guaranteed, pause the routine UI and explain how to resume after unlock.
 
 When iOS announces that protected data will become unavailable, the active routine coordinator attempts one immediate checkpoint, then stops accepting progress-changing actions until storage is available again. Failure of that final attempt is recoverable only from the prior committed checkpoint.
@@ -491,8 +530,8 @@ When iOS announces that protected data will become unavailable, the active routi
 
 ## 8. Migrations and compatibility
 
-- Migrations are ordered, forward-only, deterministic, and transactional.
-- Never edit a released migration. Add a new one; verify historical checksum.
+- `DatabaseMigrator` applies ordered, forward-only definitions transactionally; each definition updates Kineo's migration metadata and `PRAGMA user_version` in the same migration.
+- Never edit a released definition. Add a new one; verify each installed checksum against the shipped immutable definition before applying pending migrations.
 - Test upgrade from every previously shipped schema fixture to current.
 - Before a migration, confirm protected data availability and sufficient disk space.
 - Schema migration must not reinterpret a stored enum silently. Map explicitly or preserve the old value/version.
@@ -529,16 +568,16 @@ Retaining only current Attention Required state prevents an ordinary history res
 
 ### Delete all Kineo data
 
-User-confirmed Delete All Data:
+Delete All crosses database, filesystem, and platform-service boundaries. It is an idempotent, verified erasure workflow, not one transaction:
 
-1. Ends any active routine without falsely completing it.
-2. Cancels Kineo-scheduled local notifications.
-3. Closes the database.
-4. Deletes the database, WAL/SHM, all local caches, recovery artifacts, and any pending telemetry.
-5. Recreates no profile or database until routing returns to first-use onboarding.
-6. Verifies that no Kineo-owned sensitive file remains.
+1. Create a constant, non-sensitive `deletion-pending` marker outside the private database directory, with Complete Protection and backup exclusion.
+2. Stop any active routine without completing it, then stop new persistence work.
+3. Cancel Kineo-scheduled local notifications and close every database handle.
+4. Delete the private directory, database, WAL/SHM, caches, recovery artifacts, and any pending telemetry.
+5. Verify the exact owned paths and schedules are empty.
+6. Delete the marker last and route to first-use onboarding without creating a replacement store.
 
-This removes Attention Required because the user asked to delete all app data. It does not revoke system permissions or delete Apple-held HealthKit source data or Apple-managed diagnostics. The UI explains this distinction. If deletion partially fails, remain on a blocking recovery screen, list only nonsensitive categories that remain, and allow Retry; never claim success early.
+Bootstrap checks the marker before opening SQLite and resumes deletion when it exists. This removes Attention Required because the user asked to delete all app data. It does not revoke system permissions or delete Apple-held HealthKit source data or Apple-managed diagnostics. The UI explains this distinction. If any phase fails, keep the marker, remain on a blocking recovery screen, list only nonsensitive categories that remain, and allow Retry; never claim success early.
 
 ### App uninstall
 
@@ -569,12 +608,13 @@ No flow should wait for reachability. Do not add a reachability dependency until
 In order:
 
 1. Confirm protected data availability.
-2. Ensure private-directory protection and backup exclusion.
-3. Open SQLite and enable foreign keys.
-4. Validate schema version and migration checksums; migrate if needed.
-5. Validate profile invariants.
-6. Load and validate the bundled catalog.
-7. Find a nonterminal routine and route to recovery if present.
+2. If the protected deletion-pending marker exists, resume and verify erasure without opening SQLite.
+3. Ensure private-directory protection and backup exclusion.
+4. Open SQLite and enable foreign keys.
+5. Validate schema version and migration checksums; migrate if needed.
+6. Validate profile invariants.
+7. Load and validate the bundled catalog.
+8. Find a nonterminal routine and route to recovery if present.
 
 Do not run an expensive full database integrity scan every launch. Run a quick check after an unclean database error, after migration in test/internal builds, and as part of release verification.
 
@@ -641,6 +681,8 @@ Do not run an expensive full database integrity scan every launch. Run a quick c
 21. A future schema, failed migration, or corrupt database never causes silent recreation.
 22. Protected-data unavailability never routes to first use or creates a new store.
 23. Catalog/snapshot checksum failure cannot start or resume content.
+
+For M2, tests 17, 20–22, Reset, Delete, and app-hosted file-attribute inspection apply to synthetic fixture records. Selection/composition integration, full routine interruption, notification removal, and physical-device lock/backup evidence remain additive gates in their owning later milestones.
 
 ### Privacy and lifecycle
 

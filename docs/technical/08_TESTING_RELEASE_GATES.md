@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved verification contract — M1 authorized August 7, 2026 |
+| Status | Approved verification contract — implementation through M2 complete August 9, 2026; M3 not authorized |
 | Scope | Automated tests, manual validation, acceptance traceability, prototype and public-release gates |
 | Sources | `../KINEO_PRODUCT_DESIGN.md`, `../KINEO_UX_DESIGN_SPEC.md`, TD-01 through TD-07 |
 | Implementation authorization | Not granted by this document |
@@ -138,9 +138,9 @@ Catalog validation derives prototype durations from the authoritative catalog co
 
 ### 4.3 Domain data and privacy behavior (`DAT`)
 
-`DAT-001` Verify schema constraints and relationships prevent duplicate decisions/sessions, invalid area pairs, feedback for unincluded areas, invalid lifecycle transitions, and more than one active routine.
+`DAT-001` Verify database constraints prevent duplicate identities, invalid stored enums/shapes, invalid area pairs, and more than one active routine. Verify transaction-owning Core commands reject cross-table violations, including silent secondary omission, incomplete decision audits, stale Attention versions, routine/decision area mismatch, feedback before routine end, feedback after abandonment or for an unincluded area, and invalid lifecycle transitions, against the real store.
 
-`DAT-002` Verify each TD-01 transaction boundary under success and injected failure at every write: draft secondary omission; check-in/safety; decision/composition revision including the in-transaction Attention recheck; Start-time snapshot plus `prepared` session; asset-ready transition plus `started` event; routine event/checkpoint; terminal status/event; optional feedback submission; Reset History; and Delete All. A failed secondary-omission write keeps the secondary included and returns to the recoverable draft state. Partial state is never visible, and adjacent boundaries are not falsely treated as one transaction.
+`DAT-002` Verify each TD-01 database transaction boundary under success and injected failure at every write: draft secondary omission; check-in/safety; decision revision including the in-transaction Attention recheck; prepared session; asset-ready transition plus `started` event; routine event/checkpoint; terminal status/event; idempotent feedback submission; and Reset History. A failed secondary-omission write keeps the secondary included and returns to the recoverable draft state. Partial database state is never visible, and adjacent boundaries are not falsely treated as one transaction. Separately inject failure after each Delete All phase; its protected pending marker must make relaunch resume erasure and success must not be reported before verification.
 
 `DAT-003` Run migrations from every supported historical fixture to current, twice for idempotence. Verify record counts, semantic values, versions, file attributes, and migration rollback on injected failure. A future schema is preserved and not downgraded or recreated.
 
@@ -153,6 +153,10 @@ Catalog validation derives prototype durations from the authoritative catalog co
 `DAT-007` Process termination/relaunch reconstructs draft, plan, and routine states only from valid checkpoints; no interrupted session becomes completed. A backgrounded timer remains paused.
 
 `DAT-008` Replaying a failed routine-event command with its original UUID returns the existing logical result and does not advance the sequence twice. Retrying with a new UUID is treated as a distinct event and must still satisfy lifecycle guards. Independently recompute the lower-case SHA-256 checksum over the exact canonical snapshot bytes and reject any mutation.
+
+### 4.3.1 M2 evidence boundary
+
+M2 proves domain invariants, every record's real-SQLite repository contract, structural constraints, transaction rollback, startup snapshot validation, initial/failed/future migration behavior, Reset History, recoverable Delete All, and simulator-verifiable file attributes using synthetic fixtures. Later milestones add selector/composer semantics, full routine interruption, notification integration, product UI flows, and physical-device lock and backup evidence; those are not prerequisites for closing M2.
 
 ### 4.4 Feature state and navigation (`FLOW`)
 

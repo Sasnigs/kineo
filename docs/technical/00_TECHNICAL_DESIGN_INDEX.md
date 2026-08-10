@@ -3,12 +3,12 @@
 | Field | Value |
 | --- | --- |
 | Technical-design version | 0.1 |
-| Status | Approved prototype contract — M1 authorized August 7, 2026 |
+| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
 | Platform | Native iPhone app |
 | Minimum deployment target | iOS 17.0 |
 | Product source | `../KINEO_PRODUCT_DESIGN.md` |
 | UX source | `../KINEO_UX_DESIGN_SPEC.md` |
-| Last updated | August 6, 2026 |
+| Last updated | August 9, 2026 |
 
 ## 1. Purpose and authority
 

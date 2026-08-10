@@ -14,13 +14,22 @@ let package = Package(
         .library(name: "KineoInfrastructure", targets: ["KineoInfrastructure"]),
         .library(name: "KineoUI", targets: ["KineoUI"])
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/groue/GRDB.swift.git",
+            exact: "7.10.0"
+        )
+    ],
     targets: [
         .target(
             name: "KineoCore"
         ),
         .target(
             name: "KineoInfrastructure",
-            dependencies: ["KineoCore"]
+            dependencies: [
+                "KineoCore",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ]
         ),
         .target(
             name: "KineoUI",
@@ -32,7 +41,11 @@ let package = Package(
         ),
         .testTarget(
             name: "KineoInfrastructureTests",
-            dependencies: ["KineoInfrastructure", "KineoCore"]
+            dependencies: [
+                "KineoInfrastructure",
+                "KineoCore",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ]
         ),
         .testTarget(
             name: "KineoUITests",
