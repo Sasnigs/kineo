@@ -114,6 +114,9 @@ public actor PrototypeProductService: KineoProductServing {
             guard let primaryArea = profile.primaryArea else { return .onboarding(.primaryArea) }
             guard profile.safetyBoundaryVersion != nil,
                   profile.safetyAcknowledgedAt != nil else {
+                if profile.secondaryArea == nil {
+                    return .onboarding(.secondaryArea(primary: primaryArea, selected: nil))
+                }
                 return .onboarding(.safetyBoundary(primaryArea))
             }
             guard profile.onboardingCompletedAt != nil else {
@@ -130,6 +133,7 @@ public actor PrototypeProductService: KineoProductServing {
             let currentMoment = try moment()
             if let draft = latestNormalDraft(in: snapshot) {
                 if draft.primaryArea == primaryArea,
+                   draft.secondaryArea == profile.secondaryArea,
                    draft.dayContext == currentMoment.dayContext {
                     return .unfinishedCheckIn(checkInDraft(from: draft))
                 }
@@ -138,6 +142,7 @@ public actor PrototypeProductService: KineoProductServing {
             if let decision = latestUnconsumedDecision(in: snapshot),
                let checkIn = snapshot.checkIns.first(where: { $0.id == decision.checkInID }),
                checkIn.primaryArea == primaryArea,
+               selectedSecondaryArea(for: decision, checkIn: checkIn) == profile.secondaryArea,
                checkIn.dayContext == currentMoment.dayContext {
                 return .unfinishedPlan(try await preparePlan(
                     checkInID: checkIn.id,
@@ -203,6 +208,32 @@ public actor PrototypeProductService: KineoProductServing {
         }
     }
 
+    public func saveSecondaryArea(_ area: BodyArea?) async throws(ProductFlowError) {
+        do {
+            try await updateProfile { existing, moment in
+                guard let primaryArea = existing.primaryArea,
+                      area != primaryArea else {
+                    throw ProductFlowError.invalidState
+                }
+                return try UserProfile(
+                    onboardingCompletedAt: existing.onboardingCompletedAt,
+                    adultAcknowledged: existing.adultAcknowledged,
+                    safetyBoundaryVersion: existing.safetyBoundaryVersion,
+                    safetyAcknowledgedAt: existing.safetyAcknowledgedAt,
+                    primaryArea: primaryArea,
+                    secondaryArea: area,
+                    routinePreference: existing.routinePreference,
+                    weeklyGoalDays: existing.weeklyGoalDays,
+                    telemetryChoice: existing.telemetryChoice,
+                    createdAt: existing.createdAt,
+                    updatedAt: moment.timestamp
+                )
+            }
+        } catch {
+            throw map(error)
+        }
+    }
+
     public func acknowledgeSafetyBoundary() async throws(ProductFlowError) {
         do {
             try await updateProfile { existing, moment in
@@ -215,7 +246,7 @@ public actor PrototypeProductService: KineoProductServing {
                     ),
                     safetyAcknowledgedAt: moment.timestamp,
                     primaryArea: existing.primaryArea,
-                    secondaryArea: nil,
+                    secondaryArea: existing.secondaryArea,
                     routinePreference: existing.routinePreference,
                     weeklyGoalDays: existing.weeklyGoalDays,
                     telemetryChoice: existing.telemetryChoice,
@@ -245,7 +276,7 @@ public actor PrototypeProductService: KineoProductServing {
                     safetyBoundaryVersion: existing.safetyBoundaryVersion,
                     safetyAcknowledgedAt: existing.safetyAcknowledgedAt,
                     primaryArea: area,
-                    secondaryArea: nil,
+                    secondaryArea: existing.secondaryArea,
                     routinePreference: existing.routinePreference,
                     weeklyGoalDays: existing.weeklyGoalDays,
                     telemetryChoice: existing.telemetryChoice,
@@ -468,6 +499,7 @@ public actor PrototypeProductService: KineoProductServing {
             let moment = try moment()
             if let existing = latestNormalDraft(in: snapshot) {
                 if existing.primaryArea == area,
+                   existing.secondaryArea == profile.secondaryArea,
                    existing.dayContext == moment.dayContext {
                     return checkInDraft(from: existing)
                 }
@@ -477,6 +509,8 @@ public actor PrototypeProductService: KineoProductServing {
                 checkInID: CheckInID(UUID()),
                 entryID: CheckInEntryID(UUID()),
                 area: area,
+                secondaryEntryID: profile.secondaryArea.map { _ in CheckInEntryID(UUID()) },
+                secondaryArea: profile.secondaryArea,
                 startedAt: moment.timestamp,
                 dayContext: moment.dayContext
             )
@@ -484,7 +518,7 @@ public actor PrototypeProductService: KineoProductServing {
                 id: draft.checkInID,
                 status: .draft,
                 primaryArea: area,
-                secondaryArea: nil,
+                secondaryArea: profile.secondaryArea,
                 startedAt: draft.startedAt,
                 completedAt: nil,
                 dayContext: draft.dayContext,
@@ -503,47 +537,97 @@ public actor PrototypeProductService: KineoProductServing {
         comfort: MovementComfort,
         safetyAnswer: ConditionalSafetyAnswer?
     ) async throws(ProductFlowError) -> SingleAreaCheckInResult {
+        try await submitCheckIn(
+            draft,
+            primary: AreaCheckInAnswers(
+                area: draft.area,
+                change: change,
+                comfort: comfort,
+                safetyAnswer: safetyAnswer
+            ),
+            secondary: nil
+        )
+    }
+
+    public func submitCheckIn(
+        _ draft: SingleAreaCheckInDraft,
+        primary: AreaCheckInAnswers,
+        secondary: AreaCheckInAnswers?
+    ) async throws(ProductFlowError) -> SingleAreaCheckInResult {
         do {
             let store = try requiredStore()
-            let entry = try CheckInEntry(
+            guard primary.area == draft.area,
+                  (secondary == nil || secondary?.area == draft.secondaryArea),
+                  (secondary == nil || draft.secondaryEntryID != nil) else {
+                throw ProductFlowError.invalidState
+            }
+            let primaryEntry = try CheckInEntry(
                 id: draft.entryID,
                 area: draft.area,
                 role: .primary,
-                changeReport: change,
-                movementComfort: comfort,
-                conditionalSafetyAnswer: safetyAnswer,
+                changeReport: primary.change,
+                movementComfort: primary.comfort,
+                conditionalSafetyAnswer: primary.safetyAnswer,
                 submittedAt: draft.startedAt
             )
+            var entries = [primaryEntry]
+            if let secondary,
+               let secondaryEntryID = draft.secondaryEntryID {
+                entries.append(try CheckInEntry(
+                    id: secondaryEntryID,
+                    area: secondary.area,
+                    role: .secondary,
+                    changeReport: secondary.change,
+                    movementComfort: secondary.comfort,
+                    conditionalSafetyAnswer: secondary.safetyAnswer,
+                    submittedAt: draft.startedAt
+                ))
+            }
             let completed = try CheckIn(
                 id: draft.checkInID,
                 status: .completed,
                 primaryArea: draft.area,
-                secondaryArea: nil,
+                secondaryArea: secondary?.area,
                 startedAt: draft.startedAt,
                 completedAt: draft.startedAt,
                 dayContext: draft.dayContext,
-                entries: [entry]
+                entries: entries
             )
-            let mutations: [SafetyMutation]
-            if entry.triggersAttention {
-                let event = try SafetyEvent(
-                    id: SafetyEventID(UUID()),
-                    area: draft.area,
-                    kind: .attentionEntered,
-                    sourceCheckInEntryID: entry.id,
-                    occurredAt: draft.startedAt,
-                    dayContext: draft.dayContext
+            let mutations = try entries.filter(\.triggersAttention).map { entry in
+                try SafetyMutation(
+                    event: SafetyEvent(
+                        id: SafetyEventID(UUID()),
+                        area: entry.area,
+                        kind: .attentionEntered,
+                        sourceCheckInEntryID: entry.id,
+                        occurredAt: draft.startedAt,
+                        dayContext: draft.dayContext
+                    ),
+                    statusAfter: .attentionRequired
                 )
-                mutations = [try SafetyMutation(event: event, statusAfter: .attentionRequired)]
-            } else {
-                mutations = []
+            }
+            let beforeCommit = try await store.loadSnapshot()
+            if let existing = beforeCommit.checkIns.first(where: { $0.id == draft.checkInID }),
+               existing.status == .completed {
+                guard existing == completed else { throw ProductFlowError.invalidState }
+                if !mutations.isEmpty {
+                    guard let attention = firstAttention(in: beforeCommit) else {
+                        throw ProductFlowError.invalidData
+                    }
+                    return .attentionRequired(attentionPrompt(for: attention))
+                }
+                return .plan(try await preparePlan(
+                    checkInID: draft.checkInID,
+                    duration: .standard,
+                    requestedLevel: nil
+                ))
             }
             try await store.completeCheckIn(
                 try CompleteCheckInCommand(checkIn: completed, safetyMutations: mutations)
             )
-            if entry.triggersAttention {
+            if !mutations.isEmpty {
                 let updated = try await store.loadSnapshot()
-                guard let attention = updated.attentionStates.first(where: { $0.area == draft.area }) else {
+                guard let attention = firstAttention(in: updated) else {
                     throw ProductFlowError.invalidData
                 }
                 return .attentionRequired(attentionPrompt(for: attention))
@@ -954,6 +1038,27 @@ public actor PrototypeProductService: KineoProductServing {
         sessionID: RoutineSessionID,
         response: AreaResponse?
     ) async throws(ProductFlowError) {
+        let snapshot: KineoDataSnapshot
+        do {
+            snapshot = try await requiredStore().loadSnapshot()
+            let session = try requiredSession(sessionID, snapshot: snapshot)
+            let frozen = try decodeSnapshot(session.snapshot)
+            guard let primaryArea = frozen.includedAreas.first else {
+                throw ProductFlowError.invalidData
+            }
+            try await submitFeedback(
+                sessionID: sessionID,
+                responses: response.map { [primaryArea: $0] } ?? [:]
+            )
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func submitFeedback(
+        sessionID: RoutineSessionID,
+        responses: [BodyArea: AreaResponse]
+    ) async throws(ProductFlowError) {
         do {
             let store = try requiredStore()
             let snapshot = try await store.loadSnapshot()
@@ -966,15 +1071,19 @@ public actor PrototypeProductService: KineoProductServing {
                 throw ProductFlowError.invalidState
             }
             let frozen = try decodeSnapshot(session.snapshot)
-            guard let area = frozen.includedAreas.first else { throw ProductFlowError.invalidData }
-            let responses = response.map {
-                [FeedbackResponse(id: AreaFeedbackID(UUID()), area: area, response: $0)]
-            } ?? []
+            guard !frozen.includedAreas.isEmpty,
+                  Set(responses.keys).isSubset(of: Set(frozen.includedAreas)) else {
+                throw ProductFlowError.invalidState
+            }
+            let feedbackResponses: [FeedbackResponse] = frozen.includedAreas.compactMap { area in
+                guard let response = responses[area] else { return nil }
+                return FeedbackResponse(id: AreaFeedbackID(UUID()), area: area, response: response)
+            }
             let submittedAt = try timestamp(notBefore: endedAt)
             let submission = try FeedbackSubmission(
                 id: FeedbackSubmissionID(UUID()),
                 routineSessionID: session.id,
-                responses: responses,
+                responses: feedbackResponses,
                 submittedAt: submittedAt,
                 dayContext: session.dayContext
             )
@@ -998,7 +1107,8 @@ private extension PrototypeProductService {
         }
         let checkIn = try requiredCheckIn(checkInID, snapshot: snapshot)
         guard checkIn.status == .completed,
-              let entry = checkIn.entries.first(where: { $0.area == checkIn.primaryArea }) else {
+              let profile = snapshot.profileState?.profile,
+              let primaryEntry = checkIn.entries.first(where: { $0.area == checkIn.primaryArea }) else {
             throw ProductFlowError.invalidState
         }
         let latestDecision = snapshot.decisions
@@ -1012,26 +1122,44 @@ private extension PrototypeProductService {
         let revision = existing?.revision ?? nextDecisionRevision(for: checkInID, in: snapshot)
         let installed = try await catalogProvider.load()
         let catalogVersion = try NonEmptyString(validating: installed.catalog.catalogVersion.rawValue)
-        let history = try historyState(for: checkIn.primaryArea, snapshot: snapshot)
+        let selectedAreas = [checkIn.primaryArea, profile.secondaryArea].compactMap { $0 }
+        var historyByArea = [BodyArea: ActiveHistoryState]()
+        for area in selectedAreas {
+            historyByArea[area] = try historyState(for: area, snapshot: snapshot)
+        }
+        var checkInsByArea = [
+            checkIn.primaryArea: SelectionAreaCheckIn(
+                checkInEntryID: primaryEntry.id,
+                entryRevision: PrototypeProductConfiguration.firstEntryRevision,
+                area: primaryEntry.area,
+                changeReport: primaryEntry.changeReport,
+                movementComfort: primaryEntry.movementComfort,
+                conditionalSafetyAnswer: primaryEntry.conditionalSafetyAnswer
+            )
+        ]
+        if let secondaryArea = checkIn.secondaryArea,
+           let secondaryEntry = checkIn.entries.first(where: { $0.area == secondaryArea }) {
+            checkInsByArea[secondaryArea] = SelectionAreaCheckIn(
+                checkInEntryID: secondaryEntry.id,
+                entryRevision: PrototypeProductConfiguration.firstEntryRevision,
+                area: secondaryEntry.area,
+                changeReport: secondaryEntry.changeReport,
+                movementComfort: secondaryEntry.movementComfort,
+                conditionalSafetyAnswer: secondaryEntry.conditionalSafetyAnswer
+            )
+        }
         let request = PlanSelectionRequest(
             decisionID: decisionID,
             checkInID: checkInID,
             decisionRevision: revision,
             primaryArea: checkIn.primaryArea,
-            secondaryArea: nil,
-            secondaryParticipation: nil,
-            checkInsByArea: [
-                checkIn.primaryArea: SelectionAreaCheckIn(
-                    checkInEntryID: entry.id,
-                    entryRevision: PrototypeProductConfiguration.firstEntryRevision,
-                    area: entry.area,
-                    changeReport: entry.changeReport,
-                    movementComfort: entry.movementComfort,
-                    conditionalSafetyAnswer: entry.conditionalSafetyAnswer
-                )
-            ],
+            secondaryArea: profile.secondaryArea,
+            secondaryParticipation: profile.secondaryArea.map {
+                checkIn.secondaryArea == $0 ? .include : .skipForSession
+            },
+            checkInsByArea: checkInsByArea,
             safetyByArea: safetySnapshots(snapshot.attentionStates),
-            historyByArea: [checkIn.primaryArea: history],
+            historyByArea: historyByArea,
             requestedOverride: requestedLevel,
             duration: duration,
             rulesVersion: PrototypeSelectionRules.version,
@@ -1065,7 +1193,7 @@ private extension PrototypeProductService {
                 request: request,
                 selected: selected,
                 composition: composition,
-                history: history,
+                historyByArea: historyByArea,
                 createdAt: try moment().timestamp
             )
             try await store.appendDecision(AppendDecisionCommand(decision: decision))
@@ -1074,6 +1202,8 @@ private extension PrototypeProductService {
             decisionID: decisionID,
             checkInID: checkInID,
             area: checkIn.primaryArea,
+            includedAreas: composition.includedAreas,
+            omittedSecondaryArea: composition.omittedArea ?? selected.omittedAreas.first?.area,
             recommendedLevel: selected.recommendedLevel,
             selectedLevel: selected.selectedLevel,
             deliveredLevel: composition.deliveredLevel,
@@ -1089,11 +1219,14 @@ private extension PrototypeProductService {
         request: PlanSelectionRequest,
         selected: SelectedPlan,
         composition: ComposedRoutine,
-        history: ActiveHistoryState,
+        historyByArea: [BodyArea: ActiveHistoryState],
         createdAt: TimestampMilliseconds
     ) throws -> SelectionDecision {
         let areaInputs = try selected.includedAreaDecisions.map { area in
-            try DecisionAreaInput(
+            guard let history = historyByArea[area.area] else {
+                throw ProductFlowError.invalidData
+            }
+            return try DecisionAreaInput(
                 area: area.area,
                 role: area.role,
                 checkInEntryID: area.checkInEntryID,
@@ -1101,7 +1234,7 @@ private extension PrototypeProductService {
                 activeUnlocked: area.activeUnlocked,
                 qualifyingCount: history.qualifyingOutcomeCount,
                 latestResponse: history.mostRecentRecordedResponse,
-                included: true
+                included: composition.includedAreas.contains(area.area)
             )
         }
         let reasons = try selected.explanations.enumerated().map { position, explanation in
@@ -1134,7 +1267,7 @@ private extension PrototypeProductService {
             selectedLevel: selected.selectedLevel,
             deliveredLevel: composition.deliveredLevel,
             durationVariant: selected.duration,
-            secondaryOmissionReason: composition.omissionReason,
+            secondaryOmissionReason: composition.omissionReason ?? selected.omittedAreas.first?.reason,
             validationResult: composition.status == .exact ? .exact : .fallback,
             primaryTemplateID: NonEmptyString(rawValue: composition.primaryTemplate.id.rawValue),
             primaryTemplateRevision: composition.primaryTemplate.revision.rawValue,
@@ -1240,6 +1373,7 @@ private extension PrototypeProductService {
         return RoutinePresentation(
             sessionID: session.id,
             area: area,
+            includedAreas: frozen.includedAreas,
             selectedLevel: frozen.selectedLevel,
             deliveredLevel: frozen.deliveredLevel,
             duration: frozen.duration,
@@ -1595,6 +1729,8 @@ private extension PrototypeProductService {
             checkInID: checkIn.id,
             entryID: CheckInEntryID(UUID()),
             area: checkIn.primaryArea,
+            secondaryEntryID: checkIn.secondaryArea.map { _ in CheckInEntryID(UUID()) },
+            secondaryArea: checkIn.secondaryArea,
             startedAt: checkIn.startedAt,
             dayContext: checkIn.dayContext
         )
@@ -1627,6 +1763,12 @@ private extension PrototypeProductService {
                 }
                 return first.createdAt < second.createdAt
             }
+    }
+
+    func selectedSecondaryArea(for decision: SelectionDecision, checkIn: CheckIn) -> BodyArea? {
+        checkIn.secondaryArea ?? decision.notices.first(where: {
+            $0.code.rawValue == PrototypeProductConfiguration.secondarySkippedNotice
+        })?.area
     }
 
     func canonicalJSON(_ parameters: [String: String]) throws -> CanonicalJSON {
@@ -1688,6 +1830,7 @@ private enum PrototypeProductConfiguration {
     static let revisionIncrement = 1
     static let beforeFirstSequence = 0
     static let sequenceIncrement = 1
+    static let secondarySkippedNotice = "notice.secondary_skipped"
 }
 
 private enum ProductTimeFormat {

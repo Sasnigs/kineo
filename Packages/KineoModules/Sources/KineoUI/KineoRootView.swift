@@ -37,6 +37,8 @@ private struct ProductFlowContainer: View {
                 case .ageConfirmation: AgeConfirmationView(model: model)
                 case .ageUnavailable: AgeUnavailableView(model: model)
                 case .primaryArea(let selected): PrimaryAreaView(model: model, selected: selected)
+                case .secondaryArea(let primary, let selected):
+                    SecondaryAreaView(model: model, primary: primary, selected: selected)
                 case .safetyBoundary(let area): SafetyBoundaryView(model: model, area: area)
                 case .firstCheckIn(let area): FirstCheckInView(model: model, area: area)
                 case .today(let area): TodayTabsView(model: model, area: area)
@@ -178,6 +180,27 @@ private struct PrimaryAreaView: View {
     }
 }
 
+private struct SecondaryAreaView: View {
+    let model: ProductFlowModel
+    let primary: BodyArea
+    let selected: BodyArea?
+
+    var body: some View {
+        FlowPage(title: "Add another area?") {
+            Text("Optional. Your \(primary.title.lowercased()) stays the main focus.")
+            ChoiceCard(title: "No secondary area", selected: selected == nil) {
+                model.send(.selectSecondaryArea(nil))
+            }
+            ForEach(BodyArea.allCases.filter { $0 != primary }, id: \.self) { area in
+                ChoiceCard(title: area.title, selected: selected == area) {
+                    model.send(.selectSecondaryArea(area))
+                }
+            }
+            PrimaryButton("Continue") { model.send(.continueSecondaryArea) }
+        }
+    }
+}
+
 private struct SafetyBoundaryView: View {
     let model: ProductFlowModel
     let area: BodyArea
@@ -227,11 +250,16 @@ private struct ChangeCheckInView: View {
     let model: ProductFlowModel
     let draft: SingleAreaCheckInDraft
     var body: some View {
-        FlowPage(title: "How does \(draft.area.title.lowercased()) feel today?") {
-            Text("Question 1 of 2").font(.headline).foregroundStyle(.secondary)
+        let area = model.currentCheckInArea ?? draft.area
+        FlowPage(title: "How does \(area.title.lowercased()) feel today?") {
+            Text(area == draft.area ? "Primary area · Question 1 of 2" : "Secondary area · Question 1 of 2")
+                .font(.headline).foregroundStyle(.secondary)
             ChoiceCard(title: "Better", symbol: "arrow.up") { model.send(.selectChange(.better)) }
             ChoiceCard(title: "Similar", symbol: "arrow.right") { model.send(.selectChange(.similar)) }
             ChoiceCard(title: "Worse", symbol: "arrow.down") { model.send(.selectChange(.worse)) }
+            if model.canSkipSecondaryArea {
+                SecondaryButton("Skip secondary for today") { model.send(.skipSecondaryArea) }
+            }
         }
     }
 }
@@ -241,11 +269,15 @@ private struct ComfortCheckInView: View {
     let draft: SingleAreaCheckInDraft
     let change: ChangeReport
     var body: some View {
+        let area = model.currentCheckInArea ?? draft.area
         FlowPage(title: "How comfortable does movement feel?") {
-            Text("Question 2 of 2 for \(draft.area.title)").font(.headline).foregroundStyle(.secondary)
+            Text("Question 2 of 2 for \(area.title)").font(.headline).foregroundStyle(.secondary)
             ChoiceCard(title: "Limited") { model.send(.selectComfort(.limited)) }
             ChoiceCard(title: "Okay") { model.send(.selectComfort(.okay)) }
             ChoiceCard(title: "Good") { model.send(.selectComfort(.good)) }
+            if model.canSkipSecondaryArea {
+                SecondaryButton("Skip secondary for today") { model.send(.skipSecondaryArea) }
+            }
         }
     }
 }
@@ -256,7 +288,8 @@ private struct ConditionalSafetyView: View {
     let change: ChangeReport
     let comfort: MovementComfort
     var body: some View {
-        FlowPage(title: "One follow-up for \(draft.area.title.lowercased())") {
+        let area = model.currentCheckInArea ?? draft.area
+        FlowPage(title: "One follow-up for \(area.title.lowercased())") {
             NoticeCard(title: "Is this new, sudden, or unusual for you?", message: "Choose the answer that best reflects today. Yes and Not sure both withhold a Kineo routine.")
             ChoiceCard(title: "No") { model.send(.answerConditionalSafety(.no)) }
             ChoiceCard(title: "Yes") { model.send(.answerConditionalSafety(.yes)) }
@@ -357,9 +390,17 @@ private struct PlanView: View {
             VStack(alignment: .leading, spacing: KineoLayout.compactSpacing) {
                 Label("\(plan.deliveredLevel.title) level", systemImage: plan.deliveredLevel.symbol).font(.title2.weight(.semibold))
                 Text(plan.explanationText)
+                Text("Included: \(plan.includedAreas.map(\.title).joined(separator: ", "))")
+                    .foregroundStyle(.secondary)
                 Text("\(plan.itemCount) guided steps • \(plan.nominalMinutes) minutes").foregroundStyle(.secondary)
             }
             .cardStyle()
+            if let omitted = plan.omittedSecondaryArea {
+                NoticeCard(
+                    title: "Primary-area plan",
+                    message: "\(omitted.title) is not included in this routine. Kineo did not substitute unapproved content."
+                )
+            }
             Text("Choose a complete routine length").font(.headline)
             VStack(spacing: KineoLayout.standardSpacing) {
                 DurationButton(duration: .quick, selected: plan.duration == .quick) { model.send(.chooseDuration(.quick)) }
@@ -501,12 +542,31 @@ private struct FeedbackView: View {
     let model: ProductFlowModel
     let routine: RoutinePresentation
     var body: some View {
-        FlowPage(title: "How does \(routine.area.title.lowercased()) feel now?") {
+        FlowPage(title: "How do you feel now?") {
             Text("Feedback is optional and does not change the routine you just completed.")
-            ChoiceCard(title: "Better", symbol: "arrow.up") { model.send(.submitFeedback(.better)) }
-            ChoiceCard(title: "Same", symbol: "arrow.right") { model.send(.submitFeedback(.same)) }
-            ChoiceCard(title: "Worse", symbol: "arrow.down") { model.send(.submitFeedback(.worse)) }
-            SecondaryButton("Skip feedback") { model.send(.submitFeedback(nil)) }
+            ForEach(routine.includedAreas, id: \.self) { area in
+                VStack(alignment: .leading, spacing: KineoLayout.compactSpacing) {
+                    Text(area.title).font(.headline)
+                    ChoiceCard(
+                        title: "Better",
+                        symbol: "arrow.up",
+                        selected: model.feedbackResponse(for: area) == .better
+                    ) { model.send(.selectFeedback(area, .better)) }
+                    ChoiceCard(
+                        title: "Same",
+                        symbol: "arrow.right",
+                        selected: model.feedbackResponse(for: area) == .same
+                    ) { model.send(.selectFeedback(area, .same)) }
+                    ChoiceCard(
+                        title: "Worse",
+                        symbol: "arrow.down",
+                        selected: model.feedbackResponse(for: area) == .worse
+                    ) { model.send(.selectFeedback(area, .worse)) }
+                }
+            }
+            PrimaryButton("Save feedback") { model.send(.submitAreaFeedback) }
+                .disabled(routine.includedAreas.allSatisfy { model.feedbackResponse(for: $0) == nil })
+            SecondaryButton("Skip all feedback") { model.send(.skipFeedback) }
         }
     }
 }

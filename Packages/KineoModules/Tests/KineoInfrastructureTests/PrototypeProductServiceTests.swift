@@ -17,8 +17,11 @@ struct PrototypeProductServiceTests {
         #expect(try await service.loadProductStartState() == .onboarding(.primaryArea))
         try await service.savePrimaryArea(.neck)
         #expect(
-            try await service.loadProductStartState() == .onboarding(.safetyBoundary(.neck))
+            try await service.loadProductStartState() == .onboarding(
+                .secondaryArea(primary: .neck, selected: nil)
+            )
         )
+        try await service.saveSecondaryArea(nil)
         try await service.acknowledgeSafetyBoundary()
         #expect(
             try await service.loadProductStartState() == .onboarding(.firstCheckIn(.neck))
@@ -79,6 +82,152 @@ struct PrototypeProductServiceTests {
         #expect(persisted.decisions.count == ProductServiceFixture.planRevisionCount)
         #expect(persisted.routineSessions.first?.status == .completed)
         #expect(persisted.feedbackSubmissions.first?.responses.first?.response == .same)
+    }
+
+    @Test("Every ordered area pair composes conservatively and keeps feedback history isolated")
+    func orderedAreaPairsRemainConservativeAndIsolated() async throws {
+        for (primaryArea, secondaryArea) in ProductServiceFixture.orderedAreaPairs {
+            let fixture = try ProductServiceFixture()
+            defer { fixture.removeFiles() }
+            try await fixture.completeOnboarding(area: primaryArea, secondaryArea: secondaryArea)
+            let draft = try await fixture.service.beginSingleAreaCheckIn()
+            guard case .plan(let plan) = try await fixture.service.submitCheckIn(
+                draft,
+                primary: AreaCheckInAnswers(
+                    area: primaryArea,
+                    change: .similar,
+                    comfort: .okay,
+                    safetyAnswer: nil
+                ),
+                secondary: AreaCheckInAnswers(
+                    area: secondaryArea,
+                    change: .worse,
+                    comfort: .okay,
+                    safetyAnswer: .no
+                )
+            ) else {
+                Issue.record("Expected a two-area plan for \(primaryArea) and \(secondaryArea).")
+                continue
+            }
+            #expect(plan.recommendedLevel == .gentle)
+            #expect(plan.includedAreas == [primaryArea, secondaryArea])
+            #expect(plan.omittedSecondaryArea == nil)
+
+            var routine = try await fixture.service.startRoutine(decisionID: plan.decisionID)
+            #expect(routine.includedAreas == [primaryArea, secondaryArea])
+            while !routine.status.isTerminal {
+                routine = try await fixture.service.advanceRoutine(
+                    sessionID: routine.sessionID,
+                    expectedStepIndex: routine.currentStepIndex
+                )
+            }
+            try await fixture.service.submitFeedback(
+                sessionID: routine.sessionID,
+                responses: [primaryArea: .better, secondaryArea: .worse]
+            )
+
+            let nextDraft = try await fixture.service.beginSingleAreaCheckIn()
+            guard case .plan(let nextPlan) = try await fixture.service.submitCheckIn(
+                nextDraft,
+                primary: AreaCheckInAnswers(
+                    area: primaryArea,
+                    change: .better,
+                    comfort: .good,
+                    safetyAnswer: nil
+                ),
+                secondary: AreaCheckInAnswers(
+                    area: secondaryArea,
+                    change: .better,
+                    comfort: .good,
+                    safetyAnswer: nil
+                )
+            ) else {
+                Issue.record("Expected the next two-area plan.")
+                continue
+            }
+            let persisted = try await fixture.snapshot()
+            let nextDecision = persisted.decisions.first(where: { $0.id == nextPlan.decisionID })
+            #expect(
+                nextDecision?.areaInputs.first(where: { $0.area == primaryArea })?.qualifyingCount ==
+                    ProductServiceFixture.oneQualifyingOutcome
+            )
+            #expect(
+                nextDecision?.areaInputs.first(where: { $0.area == secondaryArea })?.qualifyingCount ==
+                    ProductServiceFixture.noQualifyingOutcomes
+            )
+        }
+    }
+
+    @Test("A secondary safety trigger blocks every ordered pair without catalog fallback")
+    func secondarySafetyBlocksEveryOrderedPair() async throws {
+        for (primaryArea, secondaryArea) in ProductServiceFixture.orderedAreaPairs {
+            let fixture = try ProductServiceFixture()
+            defer { fixture.removeFiles() }
+            try await fixture.completeOnboarding(area: primaryArea, secondaryArea: secondaryArea)
+            let draft = try await fixture.service.beginSingleAreaCheckIn()
+            guard case .attentionRequired(let prompt) = try await fixture.service.submitCheckIn(
+                draft,
+                primary: AreaCheckInAnswers(
+                    area: primaryArea,
+                    change: .similar,
+                    comfort: .okay,
+                    safetyAnswer: nil
+                ),
+                secondary: AreaCheckInAnswers(
+                    area: secondaryArea,
+                    change: .worse,
+                    comfort: .limited,
+                    safetyAnswer: .yes
+                )
+            ) else {
+                Issue.record("Expected secondary Attention for \(secondaryArea).")
+                continue
+            }
+            #expect(prompt.area == secondaryArea)
+            let persisted = try await fixture.snapshot()
+            #expect(persisted.decisions.isEmpty)
+            #expect(persisted.routineSessions.isEmpty)
+            #expect(persisted.attentionStates.map(\.area) == [secondaryArea])
+        }
+    }
+
+    @Test("Skipping a secondary is disclosed and omitted from routine feedback")
+    func skippedSecondaryIsDisclosed() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        try await fixture.completeOnboarding(area: .neck, secondaryArea: .upperMidBack)
+        let draft = try await fixture.service.beginSingleAreaCheckIn()
+        guard case .plan(let plan) = try await fixture.service.submitCheckIn(
+            draft,
+            primary: AreaCheckInAnswers(
+                area: .neck,
+                change: .similar,
+                comfort: .okay,
+                safetyAnswer: nil
+            ),
+            secondary: nil
+        ) else {
+            Issue.record("Expected a disclosed primary-only plan.")
+            return
+        }
+        #expect(plan.includedAreas == [.neck])
+        #expect(plan.omittedSecondaryArea == .upperMidBack)
+        var routine = try await fixture.service.startRoutine(decisionID: plan.decisionID)
+        while !routine.status.isTerminal {
+            routine = try await fixture.service.advanceRoutine(
+                sessionID: routine.sessionID,
+                expectedStepIndex: routine.currentStepIndex
+            )
+        }
+        await #expect(throws: ProductFlowError.invalidState) {
+            try await fixture.service.submitFeedback(
+                sessionID: routine.sessionID,
+                responses: [.upperMidBack: .same]
+            )
+        }
+        let decision = try await fixture.snapshot().decisions.first
+        #expect(decision?.secondaryOmissionReason == .secondaryUnanswered)
+        #expect(decision?.notices.contains(where: { $0.code.rawValue == "notice.secondary_skipped" }) == true)
     }
 
     @Test("Relaunch resumes one same-day check-in without creating a duplicate draft")
@@ -541,6 +690,11 @@ private struct ProductServiceFixture {
     static let noCommittedElapsed: Int64 = 0
     static let safetyTerminalEventCount = 2
     static let finalStepOffset = 1
+    static let oneQualifyingOutcome = 1
+    static let noQualifyingOutcomes = 0
+    static let orderedAreaPairs = BodyArea.allCases.flatMap { primary in
+        BodyArea.allCases.filter { $0 != primary }.map { (primary, $0) }
+    }
 
     let root: URL
     let location: KineoStoreLocation
@@ -575,10 +729,11 @@ private struct ProductServiceFixture {
         return try await store.loadSnapshot()
     }
 
-    func completeOnboarding(area: BodyArea) async throws {
+    func completeOnboarding(area: BodyArea, secondaryArea: BodyArea? = nil) async throws {
         #expect(await service.initialState() == .foundationReady)
         try await service.confirmAdultEligibility()
         try await service.savePrimaryArea(area)
+        try await service.saveSecondaryArea(secondaryArea)
         try await service.acknowledgeSafetyBoundary()
         _ = try await service.completeOnboarding()
     }
