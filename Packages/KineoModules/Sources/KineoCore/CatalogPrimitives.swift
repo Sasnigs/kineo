@@ -9,6 +9,20 @@ public enum CatalogValidationError: Error, Equatable, Sendable {
     case invalidAlternative(String)
     case invalidSequenceItem(String)
     case invalidArtifact(String)
+    case unsupportedSchemaVersion(Int)
+    case ineligibleCatalog(BuildChannel)
+    case manifestFingerprintMismatch
+    case duplicateRecordID(CatalogID)
+    case duplicateVariant(String)
+    case missingDurationPolicy(DurationVariant)
+    case ineligibleRecord(CatalogID)
+    case missingReference(CatalogID)
+    case missingLocalization(String)
+    case missingAsset(String)
+    case assetFingerprintMismatch(String)
+    case invalidMedia(String)
+    case alternativeCycle(CatalogID)
+    case incompatibleContent(CatalogID)
 }
 
 /// A three-component semantic catalog version.
