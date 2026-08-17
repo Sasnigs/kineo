@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved build plan — M1–M3 complete; M4 next |
+| Status | Approved build plan — M1–M4 complete; M5 next |
 | Platform | Native iPhone, SwiftUI, iOS 17 minimum |
 | Sources | Product design, UX specification, and TD-00 through TD-08 |
 | Last updated | August 17, 2026 |
@@ -102,6 +102,8 @@ flowchart LR
 **Complete when:** every TD-03 matrix passes and repeated inputs produce identical outputs.
 
 ### M4 — Catalog and routine composition
+
+**Status:** Complete — signed prototype content, bounded composition, immutable snapshots, asset verification, and fallback matrices passed August 17, 2026. See the [M4 completion report](reviews/M4_COMPLETION_REPORT_2026-08-17.md).
 
 **Build outcome:** Kineo can turn a selected plan into a validated immutable routine snapshot.
 

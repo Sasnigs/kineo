@@ -54,6 +54,7 @@ public enum CheckInIdentity {}
 public enum CheckInEntryIdentity {}
 public enum SafetyEventIdentity {}
 public enum SelectionDecisionIdentity {}
+public enum CompositionIdentity {}
 public enum RoutineSessionIdentity {}
 public enum RoutineEventIdentity {}
 public enum PauseTodayEventIdentity {}
@@ -64,6 +65,7 @@ public typealias CheckInID = StableID<CheckInIdentity>
 public typealias CheckInEntryID = StableID<CheckInEntryIdentity>
 public typealias SafetyEventID = StableID<SafetyEventIdentity>
 public typealias SelectionDecisionID = StableID<SelectionDecisionIdentity>
+public typealias CompositionID = StableID<CompositionIdentity>
 public typealias RoutineSessionID = StableID<RoutineSessionIdentity>
 public typealias RoutineEventID = StableID<RoutineEventIdentity>
 public typealias PauseTodayEventID = StableID<PauseTodayEventIdentity>
