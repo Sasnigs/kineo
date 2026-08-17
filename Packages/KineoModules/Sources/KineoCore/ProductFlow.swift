@@ -36,7 +36,15 @@ public enum OnboardingProgress: Equatable, Sendable {
 public enum ProductStartState: Equatable, Sendable {
     case onboarding(OnboardingProgress)
     case attentionRequired(AttentionPrompt)
+    case unfinishedCheckIn(SingleAreaCheckInDraft)
+    case unfinishedPlan(PlanPresentation)
+    case unfinishedRoutine(RoutinePresentation)
     case today(BodyArea)
+}
+
+/// Supplies monotonic elapsed time for guided-routine timing.
+public protocol RoutineMonotonicClock: Sendable {
+    func nowMilliseconds() async -> Int64?
 }
 
 /// One immutable attempt to answer the return-to-usual Attention prompt.
@@ -160,6 +168,9 @@ public struct RoutinePresentation: Equatable, Sendable {
     public let currentStepIndex: Int
     public let totalStepCount: Int
     public let currentItem: PresentedRoutineItem?
+    public let selectedAlternative: PresentedAlternative?
+    public let stepElapsedMilliseconds: Int64
+    public let contentAvailable: Bool
 
     public init(
         sessionID: RoutineSessionID,
@@ -170,7 +181,10 @@ public struct RoutinePresentation: Equatable, Sendable {
         status: RoutineStatus,
         currentStepIndex: Int,
         totalStepCount: Int,
-        currentItem: PresentedRoutineItem?
+        currentItem: PresentedRoutineItem?,
+        selectedAlternative: PresentedAlternative? = nil,
+        stepElapsedMilliseconds: Int64 = 0,
+        contentAvailable: Bool = true
     ) {
         self.sessionID = sessionID
         self.area = area
@@ -181,6 +195,9 @@ public struct RoutinePresentation: Equatable, Sendable {
         self.currentStepIndex = currentStepIndex
         self.totalStepCount = totalStepCount
         self.currentItem = currentItem
+        self.selectedAlternative = selectedAlternative
+        self.stepElapsedMilliseconds = stepElapsedMilliseconds
+        self.contentAvailable = contentAvailable
     }
 }
 
@@ -218,6 +235,23 @@ public protocol KineoProductServing: AppBootstrapping {
     ) async throws(ProductFlowError) -> PlanPresentation
     func pauseToday(checkInID: CheckInID) async throws(ProductFlowError) -> BodyArea
     func startRoutine(decisionID: SelectionDecisionID) async throws(ProductFlowError) -> RoutinePresentation
+    func refreshRoutine(sessionID: RoutineSessionID) async throws(ProductFlowError) -> RoutinePresentation
+    func pauseRoutine(sessionID: RoutineSessionID) async throws(ProductFlowError) -> RoutinePresentation
+    func resumeRoutine(sessionID: RoutineSessionID) async throws(ProductFlowError) -> RoutinePresentation
+    func skipRoutineStep(
+        sessionID: RoutineSessionID,
+        expectedStepIndex: Int,
+        reason: RoutineEventReason?
+    ) async throws(ProductFlowError) -> RoutinePresentation
+    func selectRoutineAlternative(
+        sessionID: RoutineSessionID,
+        expectedStepIndex: Int,
+        movementID: CatalogID
+    ) async throws(ProductFlowError) -> RoutinePresentation
+    func endRoutine(
+        sessionID: RoutineSessionID,
+        forSafety: Bool
+    ) async throws(ProductFlowError) -> RoutinePresentation
     func advanceRoutine(
         sessionID: RoutineSessionID,
         expectedStepIndex: Int

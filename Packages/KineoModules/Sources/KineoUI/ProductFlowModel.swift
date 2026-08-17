@@ -26,6 +26,9 @@ enum ProductScreenState: Equatable {
     case plan(PlanPresentation)
     case pauseTodayConfirmation(BodyArea)
     case routine(RoutinePresentation)
+    case alternativePreview(RoutinePresentation)
+    case endConfirmation(RoutinePresentation)
+    case safetyGuidance(RoutinePresentation)
     case feedback(RoutinePresentation)
     case completion(BodyArea)
 }
@@ -56,6 +59,19 @@ enum ProductFlowAction: Equatable {
     case pauseToday
     case finishPauseToday
     case startRoutine
+    case refreshRoutine
+    case pauseRoutine
+    case resumeRoutine
+    case skipRoutineStep(RoutineEventReason?)
+    case requestAlternative
+    case chooseAlternative(CatalogID)
+    case cancelRoutineModal
+    case requestEndRoutine
+    case confirmEndRoutine
+    case somethingFeelsWrong
+    case confirmSafetyEnd
+    case safetyTappedByMistake
+    case backgroundRoutine
     case advanceRoutine
     case submitFeedback(AreaResponse?)
     case finishCompletion
@@ -72,6 +88,11 @@ final class ProductFlowModel {
     private(set) var actionSequence = ProductFlowModelConstants.initialActionSequence
     private(set) var isSubmitting = false
     private(set) var errorMessage: String?
+
+    var activeRoutineSessionID: RoutineSessionID? {
+        guard case .routine(let routine) = state, routine.status == .inProgress else { return nil }
+        return routine.sessionID
+    }
 
     init(service: any KineoProductServing) {
         self.service = service
@@ -142,6 +163,16 @@ final class ProductFlowModel {
         case .finishPauseToday:
             guard case .pauseTodayConfirmation(let area) = state else { return true }
             state = .today(area)
+        case .cancelRoutineModal:
+            switch state {
+            case .alternativePreview(let routine), .endConfirmation(let routine):
+                state = .routine(routine)
+            default:
+                return true
+            }
+        case .safetyTappedByMistake:
+            guard case .safetyGuidance(let routine) = state else { return true }
+            state = .routine(routine)
         case .finishCompletion:
             guard case .completion(let area) = state else { return true }
             state = .today(area)
@@ -150,7 +181,11 @@ final class ProductFlowModel {
              .answerConditionalSafety, .answerAttentionReturn, .startAttentionCorrection,
              .selectCorrectionComfort, .answerCorrectionSafety,
              .chooseDuration, .chooseGentlerLevel, .pauseToday,
-             .startRoutine, .advanceRoutine, .submitFeedback, .retry:
+             .startRoutine, .refreshRoutine, .pauseRoutine, .resumeRoutine,
+             .skipRoutineStep, .requestAlternative, .chooseAlternative,
+             .requestEndRoutine, .confirmEndRoutine, .somethingFeelsWrong,
+             .confirmSafetyEnd, .backgroundRoutine,
+             .advanceRoutine, .submitFeedback, .retry:
             return false
         default:
             return true
@@ -271,6 +306,64 @@ final class ProductFlowModel {
         case .startRoutine:
             guard case .plan(let plan) = state else { throw .invalidState }
             state = .routine(try await service.startRoutine(decisionID: plan.decisionID))
+        case .refreshRoutine:
+            guard case .routine(let routine) = state, routine.status == .inProgress else {
+                throw .invalidState
+            }
+            state = .routine(try await service.refreshRoutine(sessionID: routine.sessionID))
+        case .pauseRoutine, .backgroundRoutine:
+            guard case .routine(let routine) = state else { throw .invalidState }
+            state = .routine(try await service.pauseRoutine(sessionID: routine.sessionID))
+        case .resumeRoutine:
+            guard case .routine(let routine) = state, routine.status == .paused else {
+                throw .invalidState
+            }
+            state = .routine(try await service.resumeRoutine(sessionID: routine.sessionID))
+        case .skipRoutineStep(let reason):
+            guard case .routine(let routine) = state else { throw .invalidState }
+            let updated = try await service.skipRoutineStep(
+                sessionID: routine.sessionID,
+                expectedStepIndex: routine.currentStepIndex,
+                reason: reason
+            )
+            state = updated.status.isTerminal ? .feedback(updated) : .routine(updated)
+        case .requestAlternative:
+            guard case .routine(let routine) = state,
+                  routine.currentItem?.availableAlternatives.isEmpty == false else {
+                throw .invalidState
+            }
+            state = .alternativePreview(
+                try await service.pauseRoutine(sessionID: routine.sessionID)
+            )
+        case .chooseAlternative(let movementID):
+            guard case .alternativePreview(let routine) = state else { throw .invalidState }
+            state = .routine(try await service.selectRoutineAlternative(
+                sessionID: routine.sessionID,
+                expectedStepIndex: routine.currentStepIndex,
+                movementID: movementID
+            ))
+        case .requestEndRoutine:
+            guard case .routine(let routine) = state else { throw .invalidState }
+            state = .endConfirmation(
+                try await service.pauseRoutine(sessionID: routine.sessionID)
+            )
+        case .confirmEndRoutine:
+            guard case .endConfirmation(let routine) = state else { throw .invalidState }
+            state = .feedback(try await service.endRoutine(
+                sessionID: routine.sessionID,
+                forSafety: false
+            ))
+        case .somethingFeelsWrong:
+            guard case .routine(let routine) = state else { throw .invalidState }
+            state = .safetyGuidance(
+                try await service.pauseRoutine(sessionID: routine.sessionID)
+            )
+        case .confirmSafetyEnd:
+            guard case .safetyGuidance(let routine) = state else { throw .invalidState }
+            state = .feedback(try await service.endRoutine(
+                sessionID: routine.sessionID,
+                forSafety: true
+            ))
         case .advanceRoutine:
             guard case .routine(let routine) = state else { throw .invalidState }
             let updated = try await service.advanceRoutine(
@@ -287,7 +380,8 @@ final class ProductFlowModel {
             try await perform(failedAction)
         case .getStarted, .underAge, .correctAge, .selectPrimaryArea,
              .selectChange, .showAttentionReturn, .selectCorrectionChange,
-             .cancelAttentionCorrection, .finishPauseToday, .finishCompletion:
+             .cancelAttentionCorrection, .finishPauseToday, .cancelRoutineModal,
+             .safetyTappedByMistake, .finishCompletion:
             throw .invalidState
         }
     }
@@ -341,6 +435,9 @@ final class ProductFlowModel {
         case .onboarding(.safetyBoundary(let area)): state = .safetyBoundary(area)
         case .onboarding(.firstCheckIn(let area)): state = .firstCheckIn(area)
         case .attentionRequired(let prompt): state = .attentionReturn(prompt)
+        case .unfinishedCheckIn(let draft): state = .checkInChange(draft)
+        case .unfinishedPlan(let plan): state = .plan(plan)
+        case .unfinishedRoutine(let routine): state = .routine(routine)
         case .today(let area): state = .today(area)
         }
     }
@@ -354,9 +451,49 @@ final class ProductFlowModel {
         case .invalidState, .invalidData: "Kineo couldn't continue from this state. Try again."
         }
     }
+
+    func refreshActiveRoutineUntilCancelled() async {
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(ProductFlowModelConstants.refreshIntervalSeconds))
+            } catch is CancellationError {
+                return
+            } catch {
+                errorMessage = "Kineo couldn't update the routine timer."
+                return
+            }
+            guard !isSubmitting,
+                  case .routine(let routine) = state,
+                  routine.status == .inProgress else { continue }
+            do {
+                let updated = try await service.refreshRoutine(sessionID: routine.sessionID)
+                guard case .routine(let current) = state,
+                      current.sessionID == updated.sessionID,
+                      current.status == .inProgress else { continue }
+                state = .routine(updated)
+            } catch let error {
+                handle(error)
+                return
+            }
+        }
+    }
+
+    func pauseActiveRoutineForLifecycle() async {
+        guard case .routine(let routine) = state, routine.status == .inProgress else { return }
+        do {
+            let updated = try await service.pauseRoutine(sessionID: routine.sessionID)
+            guard case .routine(let current) = state,
+                  current.sessionID == updated.sessionID,
+                  !updated.status.isTerminal else { return }
+            state = .routine(updated)
+        } catch let error {
+            handle(error)
+        }
+    }
 }
 
 private enum ProductFlowModelConstants {
     static let initialActionSequence = 0
     static let actionSequenceIncrement = 1
+    static let refreshIntervalSeconds = 1
 }

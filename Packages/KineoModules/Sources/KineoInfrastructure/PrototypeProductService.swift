@@ -36,19 +36,37 @@ public struct SystemProductClock: ProductClock {
     }
 }
 
+/// Monotonic process clock used only for active routine elapsed time.
+public struct SystemRoutineMonotonicClock: RoutineMonotonicClock {
+    public init() {}
+
+    public func nowMilliseconds() async -> Int64? {
+        let value = ProcessInfo.processInfo.systemUptime * ProductTimeFormat.millisecondsPerSecond
+        guard value.isFinite,
+              value >= TimeInterval.zero,
+              value <= Double(Int64.max) else { return nil }
+        return Int64(value.rounded(.down))
+    }
+}
+
 /// Real local-store orchestration for the functional internal prototype flow.
 public actor PrototypeProductService: KineoProductServing {
     private let location: KineoStoreLocation?
     private let protectedData: any KineoProtectedDataAvailability
     private let storageProtector: any KineoStorageProtecting
     private let clock: any ProductClock
+    private let monotonicClock: any RoutineMonotonicClock
+    private let catalogProvider: any InstalledPrototypeCatalogProviding
     private var store: KineoGRDBStore?
+    private var activeStepStartedAt = [RoutineSessionID: Int64]()
 
     public init(
         location: KineoStoreLocation? = nil,
         protectedData: (any KineoProtectedDataAvailability)? = nil,
         storageProtector: any KineoStorageProtecting = FoundationKineoStorageProtector(),
-        clock: any ProductClock = SystemProductClock()
+        clock: any ProductClock = SystemProductClock(),
+        monotonicClock: any RoutineMonotonicClock = SystemRoutineMonotonicClock(),
+        catalogProvider: any InstalledPrototypeCatalogProviding = BundledInstalledPrototypeCatalogProvider()
     ) {
         self.location = location
         #if canImport(UIKit)
@@ -58,6 +76,8 @@ public actor PrototypeProductService: KineoProductServing {
         #endif
         self.storageProtector = storageProtector
         self.clock = clock
+        self.monotonicClock = monotonicClock
+        self.catalogProvider = catalogProvider
     }
 
     public func initialState() async -> AppLaunchState {
@@ -71,7 +91,7 @@ public actor PrototypeProductService: KineoProductServing {
                 storageProtector: storageProtector
             )
             _ = try await candidate.loadSnapshot()
-            _ = try InstalledPrototypeCatalogLoader.load()
+            _ = try await catalogProvider.load()
             store = candidate
             return .foundationReady
         } catch KineoPersistenceFailure.deletedStore {
@@ -99,8 +119,31 @@ public actor PrototypeProductService: KineoProductServing {
             guard profile.onboardingCompletedAt != nil else {
                 return .onboarding(.firstCheckIn(primaryArea))
             }
+            if let session = snapshot.routineSessions.first(where: { !$0.status.isTerminal }) {
+                return .unfinishedRoutine(
+                    try await restoreUnfinishedRoutine(session, snapshot: snapshot)
+                )
+            }
             if let attention = firstAttention(in: snapshot) {
                 return .attentionRequired(attentionPrompt(for: attention))
+            }
+            let currentMoment = try moment()
+            if let draft = latestNormalDraft(in: snapshot) {
+                if draft.primaryArea == primaryArea,
+                   draft.dayContext == currentMoment.dayContext {
+                    return .unfinishedCheckIn(checkInDraft(from: draft))
+                }
+                try await abandon(draft, store: try requiredStore())
+            }
+            if let decision = latestUnconsumedDecision(in: snapshot),
+               let checkIn = snapshot.checkIns.first(where: { $0.id == decision.checkInID }),
+               checkIn.primaryArea == primaryArea,
+               checkIn.dayContext == currentMoment.dayContext {
+                return .unfinishedPlan(try await preparePlan(
+                    checkInID: checkIn.id,
+                    duration: decision.durationVariant,
+                    requestedLevel: decision.requestedOverride
+                ))
             }
             return .today(primaryArea)
         } catch {
@@ -423,6 +466,13 @@ public actor PrototypeProductService: KineoProductServing {
                 throw ProductFlowError.invalidState
             }
             let moment = try moment()
+            if let existing = latestNormalDraft(in: snapshot) {
+                if existing.primaryArea == area,
+                   existing.dayContext == moment.dayContext {
+                    return checkInDraft(from: existing)
+                }
+                try await abandon(existing, store: store)
+            }
             let draft = SingleAreaCheckInDraft(
                 checkInID: CheckInID(UUID()),
                 entryID: CheckInEntryID(UUID()),
@@ -557,10 +607,12 @@ public actor PrototypeProductService: KineoProductServing {
                 throw ProductFlowError.invalidState
             }
             if let existing = snapshot.routineSessions.first(where: { $0.decisionID == decisionID }) {
+                if existing.status == .abandoned { throw ProductFlowError.contentUnavailable }
+                if existing.status.isTerminal { throw ProductFlowError.invalidState }
                 return try await startPreparedSessionIfNeeded(existing, snapshot: snapshot, store: store)
             }
 
-            let installed = try InstalledPrototypeCatalogLoader.load()
+            let installed = try await catalogProvider.load()
             let composition = try composition(for: decision, installed: installed)
             guard composition.fingerprint == decision.compositionFingerprint else {
                 throw ProductFlowError.invalidData
@@ -602,6 +654,253 @@ public actor PrototypeProductService: KineoProductServing {
         }
     }
 
+    public func refreshRoutine(
+        sessionID: RoutineSessionID
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        do {
+            let snapshot = try await requiredStore().loadSnapshot()
+            let session = try requiredSession(sessionID, snapshot: snapshot)
+            let frozen = try decodeSnapshot(session.snapshot)
+            return try presentation(
+                session: session,
+                frozen: frozen,
+                snapshot: snapshot,
+                elapsedOverride: try await elapsedMilliseconds(for: session)
+            )
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func pauseRoutine(
+        sessionID: RoutineSessionID
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        do {
+            let store = try requiredStore()
+            let snapshot = try await store.loadSnapshot()
+            let session = try requiredSession(sessionID, snapshot: snapshot)
+            let frozen = try decodeSnapshot(session.snapshot)
+            if session.status == .paused || session.status.isTerminal {
+                activeStepStartedAt.removeValue(forKey: session.id)
+                return try presentation(session: session, frozen: frozen, snapshot: snapshot)
+            }
+            guard session.status == .inProgress else { throw ProductFlowError.invalidState }
+            let elapsed = try await elapsedMilliseconds(for: session)
+            let updated = try await recordRoutineEvent(
+                session: session,
+                snapshot: snapshot,
+                kind: .paused,
+                checkpoint: try RoutineCheckpoint(
+                    status: .paused,
+                    currentStepIndex: session.currentStepIndex,
+                    stepElapsedMilliseconds: elapsed,
+                    updatedAt: try timestamp(notBefore: session.updatedAt),
+                    endedAt: nil
+                ),
+                store: store
+            )
+            activeStepStartedAt.removeValue(forKey: session.id)
+            let updatedSnapshot = try await store.loadSnapshot()
+            return try presentation(session: updated, frozen: frozen, snapshot: updatedSnapshot)
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func resumeRoutine(
+        sessionID: RoutineSessionID
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        do {
+            let store = try requiredStore()
+            let snapshot = try await store.loadSnapshot()
+            let session = try requiredSession(sessionID, snapshot: snapshot)
+            let frozen = try decodeSnapshot(session.snapshot)
+            if session.status == .inProgress {
+                return try presentation(
+                    session: session,
+                    frozen: frozen,
+                    snapshot: snapshot,
+                    elapsedOverride: try await elapsedMilliseconds(for: session)
+                )
+            }
+            guard session.status == .paused,
+                  frozen.items.indices.contains(session.currentStepIndex) else {
+                throw ProductFlowError.invalidState
+            }
+            try await validateInstalledContent(for: frozen)
+            let monotonicStart = try await monotonicMilliseconds()
+            let updatedAt = try timestamp(notBefore: session.updatedAt)
+            let updated = try await recordRoutineEvent(
+                session: session,
+                snapshot: snapshot,
+                kind: .resumed,
+                checkpoint: try RoutineCheckpoint(
+                    status: .inProgress,
+                    currentStepIndex: session.currentStepIndex,
+                    stepElapsedMilliseconds: session.stepElapsedMilliseconds,
+                    updatedAt: updatedAt,
+                    endedAt: nil
+                ),
+                store: store
+            )
+            activeStepStartedAt[session.id] = monotonicStart
+            let updatedSnapshot = try await store.loadSnapshot()
+            return try presentation(session: updated, frozen: frozen, snapshot: updatedSnapshot)
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func skipRoutineStep(
+        sessionID: RoutineSessionID,
+        expectedStepIndex: Int,
+        reason: RoutineEventReason?
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        do {
+            let store = try requiredStore()
+            var snapshot = try await store.loadSnapshot()
+            var session = try requiredSession(sessionID, snapshot: snapshot)
+            let frozen = try decodeSnapshot(session.snapshot)
+            if session.status.isTerminal || session.currentStepIndex > expectedStepIndex {
+                return try presentation(session: session, frozen: frozen, snapshot: snapshot)
+            }
+            guard session.status == .inProgress,
+                  session.currentStepIndex == expectedStepIndex,
+                  frozen.items.indices.contains(expectedStepIndex) else {
+                throw ProductFlowError.invalidState
+            }
+            let item = frozen.items[expectedStepIndex]
+            let nextIndex = expectedStepIndex + PrototypeProductConfiguration.stepIncrement
+            let isLast = nextIndex == frozen.items.endIndex
+            let nextMonotonicStart = isLast ? nil : try await monotonicMilliseconds()
+            let updatedAt = try timestamp(notBefore: session.updatedAt)
+            session = try await recordRoutineEvent(
+                session: session,
+                snapshot: snapshot,
+                kind: .skipped,
+                stepID: try NonEmptyString(validating: item.itemID.rawValue),
+                moduleID: try NonEmptyString(validating: item.sourceOwnerID.rawValue),
+                localReason: reason,
+                checkpoint: try RoutineCheckpoint(
+                    status: .inProgress,
+                    currentStepIndex: nextIndex,
+                    stepElapsedMilliseconds: PrototypeProductConfiguration.noElapsedMilliseconds,
+                    updatedAt: updatedAt,
+                    endedAt: nil
+                ),
+                store: store
+            )
+            activeStepStartedAt.removeValue(forKey: session.id)
+            snapshot = try await store.loadSnapshot()
+            if isLast {
+                session = try await completeRoutineAfterLastSkipped(
+                    session,
+                    snapshot: snapshot,
+                    store: store
+                )
+                snapshot = try await store.loadSnapshot()
+            } else if let nextMonotonicStart {
+                activeStepStartedAt[session.id] = nextMonotonicStart
+            }
+            return try presentation(session: session, frozen: frozen, snapshot: snapshot)
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func selectRoutineAlternative(
+        sessionID: RoutineSessionID,
+        expectedStepIndex: Int,
+        movementID: CatalogID
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        do {
+            let store = try requiredStore()
+            var snapshot = try await store.loadSnapshot()
+            var session = try requiredSession(sessionID, snapshot: snapshot)
+            let frozen = try decodeSnapshot(session.snapshot)
+            guard session.currentStepIndex == expectedStepIndex,
+                  frozen.items.indices.contains(expectedStepIndex) else {
+                throw ProductFlowError.invalidState
+            }
+            let item = frozen.items[expectedStepIndex]
+            _ = try frozen.alternative(movementID, forItem: item.itemID)
+            if try selectedAlternativeID(
+                for: item,
+                sessionID: session.id,
+                in: snapshot
+            ) == movementID {
+                return try presentation(session: session, frozen: frozen, snapshot: snapshot)
+            }
+            if session.status == .inProgress {
+                _ = try await pauseRoutine(sessionID: session.id)
+                snapshot = try await store.loadSnapshot()
+                session = try requiredSession(session.id, snapshot: snapshot)
+            }
+            guard session.status == .paused else { throw ProductFlowError.invalidState }
+            let updatedAt = try timestamp(notBefore: session.updatedAt)
+            session = try await recordRoutineEvent(
+                session: session,
+                snapshot: snapshot,
+                kind: .alternativeSelected,
+                stepID: try NonEmptyString(validating: item.itemID.rawValue),
+                moduleID: try NonEmptyString(validating: item.sourceOwnerID.rawValue),
+                alternativeID: try NonEmptyString(validating: movementID.rawValue),
+                checkpoint: try RoutineCheckpoint(
+                    status: .paused,
+                    currentStepIndex: session.currentStepIndex,
+                    stepElapsedMilliseconds: session.stepElapsedMilliseconds,
+                    updatedAt: updatedAt,
+                    endedAt: nil
+                ),
+                store: store
+            )
+            snapshot = try await store.loadSnapshot()
+            return try presentation(session: session, frozen: frozen, snapshot: snapshot)
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func endRoutine(
+        sessionID: RoutineSessionID,
+        forSafety: Bool
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        do {
+            let store = try requiredStore()
+            var snapshot = try await store.loadSnapshot()
+            var session = try requiredSession(sessionID, snapshot: snapshot)
+            let frozen = try decodeSnapshot(session.snapshot)
+            if session.status.isTerminal {
+                return try presentation(session: session, frozen: frozen, snapshot: snapshot)
+            }
+            if session.status == .inProgress {
+                _ = try await pauseRoutine(sessionID: session.id)
+                snapshot = try await store.loadSnapshot()
+                session = try requiredSession(session.id, snapshot: snapshot)
+            }
+            guard session.status == .paused else { throw ProductFlowError.invalidState }
+            let endedAt = try timestamp(notBefore: session.updatedAt)
+            session = try await recordRoutineEvent(
+                session: session,
+                snapshot: snapshot,
+                kind: forSafety ? .safetyStopped : .stopped,
+                checkpoint: try RoutineCheckpoint(
+                    status: forSafety ? .safetyStopped : .stopped,
+                    currentStepIndex: session.currentStepIndex,
+                    stepElapsedMilliseconds: session.stepElapsedMilliseconds,
+                    updatedAt: endedAt,
+                    endedAt: endedAt
+                ),
+                store: store
+            )
+            activeStepStartedAt.removeValue(forKey: session.id)
+            snapshot = try await store.loadSnapshot()
+            return try presentation(session: session, frozen: frozen, snapshot: snapshot)
+        } catch {
+            throw map(error)
+        }
+    }
+
     public func advanceRoutine(
         sessionID: RoutineSessionID,
         expectedStepIndex: Int
@@ -612,7 +911,7 @@ public actor PrototypeProductService: KineoProductServing {
             let session = try requiredSession(sessionID, snapshot: snapshot)
             let frozen = try decodeSnapshot(session.snapshot)
             if session.status.isTerminal || session.currentStepIndex > expectedStepIndex {
-                return try presentation(session: session, frozen: frozen)
+                return try presentation(session: session, frozen: frozen, snapshot: snapshot)
             }
             guard session.status == .inProgress,
                   session.currentStepIndex == expectedStepIndex,
@@ -623,30 +922,29 @@ public actor PrototypeProductService: KineoProductServing {
             let currentItem = frozen.items[expectedStepIndex]
             let eventKind: RoutineEventKind = isLast ? .completed : .stepCompleted
             let nextIndex = expectedStepIndex + PrototypeProductConfiguration.stepIncrement
-            let moment = try timestamp(notBefore: session.updatedAt)
-            let event = try RoutineEvent(
-                id: RoutineEventID(UUID()),
-                routineSessionID: session.id,
-                sequenceNumber: nextSequenceNumber(for: session.id, in: snapshot),
+            let nextMonotonicStart = isLast ? nil : try await monotonicMilliseconds()
+            let updatedAt = try timestamp(notBefore: session.updatedAt)
+            let updated = try await recordRoutineEvent(
+                session: session,
+                snapshot: snapshot,
                 kind: eventKind,
                 stepID: isLast ? nil : try NonEmptyString(validating: currentItem.itemID.rawValue),
                 moduleID: isLast ? nil : try NonEmptyString(validating: currentItem.sourceOwnerID.rawValue),
-                alternativeID: nil,
-                localReason: nil,
-                occurredAt: moment
+                checkpoint: try RoutineCheckpoint(
+                    status: isLast ? .completed : .inProgress,
+                    currentStepIndex: nextIndex,
+                    stepElapsedMilliseconds: PrototypeProductConfiguration.noElapsedMilliseconds,
+                    updatedAt: updatedAt,
+                    endedAt: isLast ? updatedAt : nil
+                ),
+                store: store
             )
-            let checkpoint = try RoutineCheckpoint(
-                status: isLast ? .completed : .inProgress,
-                currentStepIndex: nextIndex,
-                stepElapsedMilliseconds: PrototypeProductConfiguration.noElapsedMilliseconds,
-                updatedAt: moment,
-                endedAt: isLast ? moment : nil
-            )
-            try await store.recordRoutineEvent(
-                try RecordRoutineEventCommand(event: event, checkpoint: checkpoint)
-            )
-            let updated = try requiredSession(sessionID, snapshot: try await store.loadSnapshot())
-            return try presentation(session: updated, frozen: frozen)
+            activeStepStartedAt.removeValue(forKey: session.id)
+            if let nextMonotonicStart {
+                activeStepStartedAt[session.id] = nextMonotonicStart
+            }
+            let updatedSnapshot = try await store.loadSnapshot()
+            return try presentation(session: updated, frozen: frozen, snapshot: updatedSnapshot)
         } catch {
             throw map(error)
         }
@@ -712,7 +1010,7 @@ private extension PrototypeProductService {
         }
         let decisionID = existing?.id ?? SelectionDecisionID(UUID())
         let revision = existing?.revision ?? nextDecisionRevision(for: checkInID, in: snapshot)
-        let installed = try InstalledPrototypeCatalogLoader.load()
+        let installed = try await catalogProvider.load()
         let catalogVersion = try NonEmptyString(validating: installed.catalog.catalogVersion.rawValue)
         let history = try historyState(for: checkIn.primaryArea, snapshot: snapshot)
         let request = PlanSelectionRequest(
@@ -887,40 +1185,58 @@ private extension PrototypeProductService {
         store: KineoGRDBStore
     ) async throws -> RoutinePresentation {
         let frozen = try decodeSnapshot(session.snapshot)
-        guard session.status == .prepared else { return try presentation(session: session, frozen: frozen) }
-        let moment = try timestamp(notBefore: session.updatedAt)
-        let event = try RoutineEvent(
-            id: RoutineEventID(UUID()),
-            routineSessionID: session.id,
-            sequenceNumber: nextSequenceNumber(for: session.id, in: snapshot),
+        do {
+            try await validateInstalledContent(for: frozen)
+        } catch ProductFlowError.contentUnavailable {
+            if session.status == .prepared {
+                _ = try await abandonPreparedSession(session, snapshot: snapshot, store: store)
+            }
+            throw ProductFlowError.contentUnavailable
+        }
+        guard session.status == .prepared else {
+            return try presentation(session: session, frozen: frozen, snapshot: snapshot)
+        }
+        let monotonicStart = try await monotonicMilliseconds()
+        let updatedAt = try timestamp(notBefore: session.updatedAt)
+        let updated = try await recordRoutineEvent(
+            session: session,
+            snapshot: snapshot,
             kind: .started,
-            stepID: nil,
-            moduleID: nil,
-            alternativeID: nil,
-            localReason: nil,
-            occurredAt: moment
+            checkpoint: try RoutineCheckpoint(
+                status: .inProgress,
+                currentStepIndex: session.currentStepIndex,
+                stepElapsedMilliseconds: session.stepElapsedMilliseconds,
+                updatedAt: updatedAt,
+                endedAt: nil
+            ),
+            store: store
         )
-        let checkpoint = try RoutineCheckpoint(
-            status: .inProgress,
-            currentStepIndex: session.currentStepIndex,
-            stepElapsedMilliseconds: session.stepElapsedMilliseconds,
-            updatedAt: moment,
-            endedAt: nil
-        )
-        try await store.recordRoutineEvent(
-            try RecordRoutineEventCommand(event: event, checkpoint: checkpoint)
-        )
-        let updated = try requiredSession(session.id, snapshot: try await store.loadSnapshot())
-        return try presentation(session: updated, frozen: frozen)
+        activeStepStartedAt[session.id] = monotonicStart
+        let updatedSnapshot = try await store.loadSnapshot()
+        return try presentation(session: updated, frozen: frozen, snapshot: updatedSnapshot)
     }
 
     func presentation(
         session: RoutineSession,
-        frozen: RoutineSessionSnapshot
+        frozen: RoutineSessionSnapshot,
+        snapshot: KineoDataSnapshot,
+        elapsedOverride: Int64? = nil,
+        contentAvailable: Bool = true
     ) throws -> RoutinePresentation {
         guard let area = frozen.includedAreas.first else { throw ProductFlowError.invalidData }
         let item = frozen.items.indices.contains(session.currentStepIndex) ?
             frozen.items[session.currentStepIndex] : nil
+        let selectedAlternative: PresentedAlternative?
+        if let item,
+           let movementID = try selectedAlternativeID(
+               for: item,
+               sessionID: session.id,
+               in: snapshot
+           ) {
+            selectedAlternative = try frozen.alternative(movementID, forItem: item.itemID)
+        } else {
+            selectedAlternative = nil
+        }
         return RoutinePresentation(
             sessionID: session.id,
             area: area,
@@ -930,8 +1246,191 @@ private extension PrototypeProductService {
             status: session.status,
             currentStepIndex: session.currentStepIndex,
             totalStepCount: frozen.items.count,
-            currentItem: item
+            currentItem: item,
+            selectedAlternative: selectedAlternative,
+            stepElapsedMilliseconds: elapsedOverride ?? session.stepElapsedMilliseconds,
+            contentAvailable: contentAvailable
         )
+    }
+
+    func restoreUnfinishedRoutine(
+        _ session: RoutineSession,
+        snapshot: KineoDataSnapshot
+    ) async throws -> RoutinePresentation {
+        let store = try requiredStore()
+        switch session.status {
+        case .prepared:
+            let started = try await startPreparedSessionIfNeeded(session, snapshot: snapshot, store: store)
+            return try await pauseRoutine(sessionID: started.sessionID)
+        case .inProgress:
+            activeStepStartedAt.removeValue(forKey: session.id)
+            _ = try await pauseRoutine(sessionID: session.id)
+            let pausedSnapshot = try await store.loadSnapshot()
+            let paused = try requiredSession(session.id, snapshot: pausedSnapshot)
+            return try await restoredPausedPresentation(paused, snapshot: pausedSnapshot)
+        case .paused:
+            return try await restoredPausedPresentation(session, snapshot: snapshot)
+        case .completed, .stopped, .safetyStopped, .abandoned:
+            throw ProductFlowError.invalidState
+        }
+    }
+
+    func restoredPausedPresentation(
+        _ session: RoutineSession,
+        snapshot: KineoDataSnapshot
+    ) async throws -> RoutinePresentation {
+        let frozen = try decodeSnapshot(session.snapshot)
+        do {
+            try await validateInstalledContent(for: frozen)
+            return try presentation(session: session, frozen: frozen, snapshot: snapshot)
+        } catch ProductFlowError.contentUnavailable {
+            return try presentation(
+                session: session,
+                frozen: frozen,
+                snapshot: snapshot,
+                contentAvailable: false
+            )
+        }
+    }
+
+    func abandonPreparedSession(
+        _ session: RoutineSession,
+        snapshot: KineoDataSnapshot,
+        store: KineoGRDBStore
+    ) async throws -> RoutineSession {
+        let endedAt = try timestamp(notBefore: session.updatedAt)
+        return try await recordRoutineEvent(
+            session: session,
+            snapshot: snapshot,
+            kind: .abandoned,
+            checkpoint: try RoutineCheckpoint(
+                status: .abandoned,
+                currentStepIndex: session.currentStepIndex,
+                stepElapsedMilliseconds: session.stepElapsedMilliseconds,
+                updatedAt: endedAt,
+                endedAt: endedAt
+            ),
+            store: store
+        )
+    }
+
+    func validateInstalledContent(
+        for frozen: RoutineSessionSnapshot
+    ) async throws {
+        let installed: InstalledPrototypeCatalog
+        do {
+            installed = try await catalogProvider.load()
+        } catch {
+            throw ProductFlowError.contentUnavailable
+        }
+        guard installed.catalog.catalogVersion == frozen.catalogVersion else {
+            throw ProductFlowError.contentUnavailable
+        }
+        var mediaByID = [String: MediaReference]()
+        for media in installed.catalog.movements.compactMap(\.media) {
+            if let existing = mediaByID[media.assetID.rawValue], existing != media {
+                throw ProductFlowError.contentUnavailable
+            }
+            mediaByID[media.assetID.rawValue] = media
+        }
+        let referencedAssetIDs = frozen.items.flatMap { item in
+            [item.mediaAssetID] + item.availableAlternatives.map(\.mediaAssetID)
+        }.compactMap { $0?.rawValue }
+        for assetID in referencedAssetIDs {
+            guard let media = mediaByID[assetID],
+                  installed.resources.assetDigestsByPath[media.localBundlePath.rawValue] == media.sha256 else {
+                throw ProductFlowError.contentUnavailable
+            }
+        }
+    }
+
+    func recordRoutineEvent(
+        session: RoutineSession,
+        snapshot: KineoDataSnapshot,
+        kind: RoutineEventKind,
+        stepID: NonEmptyString? = nil,
+        moduleID: NonEmptyString? = nil,
+        alternativeID: NonEmptyString? = nil,
+        localReason: RoutineEventReason? = nil,
+        checkpoint: RoutineCheckpoint,
+        store: KineoGRDBStore
+    ) async throws -> RoutineSession {
+        let event = try RoutineEvent(
+            id: RoutineEventID(UUID()),
+            routineSessionID: session.id,
+            sequenceNumber: nextSequenceNumber(for: session.id, in: snapshot),
+            kind: kind,
+            stepID: stepID,
+            moduleID: moduleID,
+            alternativeID: alternativeID,
+            localReason: localReason,
+            occurredAt: checkpoint.updatedAt
+        )
+        try await store.recordRoutineEvent(
+            try RecordRoutineEventCommand(event: event, checkpoint: checkpoint)
+        )
+        return try requiredSession(session.id, snapshot: try await store.loadSnapshot())
+    }
+
+    func completeRoutineAfterLastSkipped(
+        _ session: RoutineSession,
+        snapshot: KineoDataSnapshot,
+        store: KineoGRDBStore
+    ) async throws -> RoutineSession {
+        guard session.status == .inProgress else { throw ProductFlowError.invalidState }
+        let endedAt = try timestamp(notBefore: session.updatedAt)
+        return try await recordRoutineEvent(
+            session: session,
+            snapshot: snapshot,
+            kind: .completed,
+            checkpoint: try RoutineCheckpoint(
+                status: .completed,
+                currentStepIndex: session.currentStepIndex,
+                stepElapsedMilliseconds: session.stepElapsedMilliseconds,
+                updatedAt: endedAt,
+                endedAt: endedAt
+            ),
+            store: store
+        )
+    }
+
+    func elapsedMilliseconds(for session: RoutineSession) async throws -> Int64 {
+        guard session.status == .inProgress,
+              let startedAt = activeStepStartedAt[session.id] else {
+            return session.stepElapsedMilliseconds
+        }
+        let current = try await monotonicMilliseconds()
+        guard current >= startedAt else { throw ProductFlowError.invalidData }
+        let (elapsedSinceStart, deltaOverflow) = current.subtractingReportingOverflow(startedAt)
+        let (total, totalOverflow) = session.stepElapsedMilliseconds.addingReportingOverflow(elapsedSinceStart)
+        guard !deltaOverflow, !totalOverflow else { throw ProductFlowError.invalidData }
+        return total
+    }
+
+    func monotonicMilliseconds() async throws -> Int64 {
+        guard let value = await monotonicClock.nowMilliseconds(), value >= Int64.zero else {
+            throw ProductFlowError.invalidData
+        }
+        return value
+    }
+
+    func selectedAlternativeID(
+        for item: PresentedRoutineItem,
+        sessionID: RoutineSessionID,
+        in snapshot: KineoDataSnapshot
+    ) throws -> CatalogID? {
+        let selectedEvent = snapshot.routineEvents
+            .filter {
+                $0.routineSessionID == sessionID &&
+                    $0.kind == .alternativeSelected &&
+                    $0.stepID?.rawValue == item.itemID.rawValue
+            }
+            .max(by: { $0.sequenceNumber < $1.sequenceNumber })
+        guard let rawValue = selectedEvent?.alternativeID?.rawValue else {
+            return nil
+        }
+        guard let value = CatalogID(rawValue: rawValue) else { throw ProductFlowError.invalidData }
+        return value
     }
 
     func decodeSnapshot(_ opaque: OpaqueRoutineSnapshot) throws -> RoutineSessionSnapshot {
@@ -1085,6 +1584,51 @@ private extension PrototypeProductService {
         return PrototypeSelectionRules.supportedAreas.filter(values.contains)
     }
 
+    func latestNormalDraft(in snapshot: KineoDataSnapshot) -> CheckIn? {
+        snapshot.checkIns
+            .filter { $0.status == .draft && $0.kind == .normal }
+            .max { $0.startedAt < $1.startedAt }
+    }
+
+    func checkInDraft(from checkIn: CheckIn) -> SingleAreaCheckInDraft {
+        SingleAreaCheckInDraft(
+            checkInID: checkIn.id,
+            entryID: CheckInEntryID(UUID()),
+            area: checkIn.primaryArea,
+            startedAt: checkIn.startedAt,
+            dayContext: checkIn.dayContext
+        )
+    }
+
+    func abandon(_ checkIn: CheckIn, store: KineoGRDBStore) async throws {
+        let abandoned = try CheckIn(
+            id: checkIn.id,
+            status: .abandoned,
+            kind: checkIn.kind,
+            correctionSource: checkIn.correctionSource,
+            primaryArea: checkIn.primaryArea,
+            secondaryArea: checkIn.secondaryArea,
+            startedAt: checkIn.startedAt,
+            completedAt: nil,
+            dayContext: checkIn.dayContext,
+            entries: checkIn.entries
+        )
+        try await store.abandonCheckIn(try AbandonCheckInCommand(checkIn: abandoned))
+    }
+
+    func latestUnconsumedDecision(in snapshot: KineoDataSnapshot) -> SelectionDecision? {
+        let consumedCheckInIDs = Set(snapshot.routineSessions.map(\.checkInID))
+            .union(snapshot.pauseTodayEvents.map(\.checkInID))
+        return snapshot.decisions
+            .filter { $0.outcome == .selected && !consumedCheckInIDs.contains($0.checkInID) }
+            .max { first, second in
+                if first.createdAt == second.createdAt {
+                    return first.revision < second.revision
+                }
+                return first.createdAt < second.createdAt
+            }
+    }
+
     func canonicalJSON(_ parameters: [String: String]) throws -> CanonicalJSON {
         try CanonicalJSON(bytes: JSONSerialization.data(withJSONObject: parameters, options: [.sortedKeys]))
     }
@@ -1099,6 +1643,8 @@ private extension PrototypeProductService {
     func map(_ error: any Error) -> ProductFlowError {
         if let error = error as? ProductFlowError { return error }
         if let error = error as? PersistenceError { return .persistence(error) }
+        if error is InstalledPrototypeCatalogError { return .contentUnavailable }
+        if error is RoutineAlternativeSelectionError { return .invalidState }
         return .invalidData
     }
 
@@ -1118,7 +1664,7 @@ private extension PrototypeProductService {
                 storageProtector: storageProtector
             )
             _ = try await candidate.loadSnapshot()
-            _ = try InstalledPrototypeCatalogLoader.load()
+            _ = try await catalogProvider.load()
             store = candidate
             return .foundationReady
         } catch KineoPersistenceFailure.protectedDataUnavailable,

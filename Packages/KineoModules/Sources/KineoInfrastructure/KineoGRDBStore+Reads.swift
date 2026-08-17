@@ -391,8 +391,11 @@ extension KineoGRDBStore {
         case .started: current == .prepared && next == .inProgress
         case .paused: current == .inProgress && next == .paused
         case .resumed: current == .paused && next == .inProgress
-        case .stepCompleted, .skipped, .alternativeSelected:
+        case .stepCompleted, .skipped:
             current == .inProgress && next == .inProgress
+        case .alternativeSelected:
+            (current == .inProgress && next == .inProgress) ||
+                (current == .paused && next == .paused)
         case .completed: (current == .inProgress || current == .paused) && next == .completed
         case .stopped: (current == .inProgress || current == .paused) && next == .stopped
         case .safetyStopped: (current == .inProgress || current == .paused) && next == .safetyStopped

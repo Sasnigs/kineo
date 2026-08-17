@@ -182,6 +182,80 @@ struct ProductFlowModelTests {
         #expect(model.state == .attentionReturn(prompt))
         #expect(model.errorMessage == nil)
     }
+
+    @Test("Routine pause, lifecycle, end, and safety controls never auto-resume")
+    func routineControlFlow() async {
+        let service = ProductFlowServiceStub()
+        let model = ProductFlowModel(service: service)
+        await model.performPendingAction()
+        model.send(.getStarted)
+        model.send(.confirmAdult)
+        await model.performPendingAction()
+        model.send(.selectPrimaryArea(.neck))
+        model.send(.continuePrimaryArea)
+        await model.performPendingAction()
+        model.send(.acknowledgeSafety)
+        await model.performPendingAction()
+        model.send(.completeOnboarding)
+        await model.performPendingAction()
+        model.send(.startCheckIn)
+        await model.performPendingAction()
+        model.send(.selectChange(.similar))
+        model.send(.selectComfort(.okay))
+        await model.performPendingAction()
+        model.send(.startRoutine)
+        await model.performPendingAction()
+
+        await model.pauseActiveRoutineForLifecycle()
+        guard case .routine(let backgroundPaused) = model.state else {
+            Issue.record("Backgrounding must leave a paused routine.")
+            return
+        }
+        #expect(backgroundPaused.status == .paused)
+        model.send(.resumeRoutine)
+        await model.performPendingAction()
+        model.send(.requestEndRoutine)
+        await model.performPendingAction()
+        guard case .endConfirmation(let endPaused) = model.state else {
+            Issue.record("End must pause before confirmation.")
+            return
+        }
+        #expect(endPaused.status == .paused)
+        model.send(.cancelRoutineModal)
+        guard case .routine(let cancelledEnd) = model.state else {
+            Issue.record("Cancelling End must remain paused.")
+            return
+        }
+        #expect(cancelledEnd.status == .paused)
+
+        model.send(.resumeRoutine)
+        await model.performPendingAction()
+        model.send(.somethingFeelsWrong)
+        await model.performPendingAction()
+        guard case .safetyGuidance(let safetyPaused) = model.state else {
+            Issue.record("The safety control must pause before guidance.")
+            return
+        }
+        #expect(safetyPaused.status == .paused)
+        model.send(.safetyTappedByMistake)
+        guard case .routine(let mistakenTap) = model.state else {
+            Issue.record("An accidental safety tap must return to the paused routine.")
+            return
+        }
+        #expect(mistakenTap.status == .paused)
+
+        model.send(.resumeRoutine)
+        await model.performPendingAction()
+        model.send(.somethingFeelsWrong)
+        await model.performPendingAction()
+        model.send(.confirmSafetyEnd)
+        await model.performPendingAction()
+        guard case .feedback(let ended) = model.state else {
+            Issue.record("A confirmed safety end must continue to optional feedback.")
+            return
+        }
+        #expect(ended.status == .safetyStopped)
+    }
 }
 
 private actor ProductFlowServiceStub: KineoProductServing {
@@ -315,6 +389,47 @@ private actor ProductFlowServiceStub: KineoProductServing {
         )
     }
 
+    func refreshRoutine(
+        sessionID: RoutineSessionID
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        try routine(status: .inProgress)
+    }
+
+    func pauseRoutine(
+        sessionID: RoutineSessionID
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        try routine(status: .paused)
+    }
+
+    func resumeRoutine(
+        sessionID: RoutineSessionID
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        try routine(status: .inProgress)
+    }
+
+    func skipRoutineStep(
+        sessionID: RoutineSessionID,
+        expectedStepIndex: Int,
+        reason: RoutineEventReason?
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        try routine(status: .completed)
+    }
+
+    func selectRoutineAlternative(
+        sessionID: RoutineSessionID,
+        expectedStepIndex: Int,
+        movementID: CatalogID
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        try routine(status: .paused)
+    }
+
+    func endRoutine(
+        sessionID: RoutineSessionID,
+        forSafety: Bool
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        try routine(status: forSafety ? .safetyStopped : .stopped)
+    }
+
     func advanceRoutine(
         sessionID: RoutineSessionID,
         expectedStepIndex: Int
@@ -336,6 +451,20 @@ private actor ProductFlowServiceStub: KineoProductServing {
         sessionID: RoutineSessionID,
         response: AreaResponse?
     ) async throws(ProductFlowError) {}
+
+    private func routine(status: RoutineStatus) throws(ProductFlowError) -> RoutinePresentation {
+        RoutinePresentation(
+            sessionID: sessionID,
+            area: .neck,
+            selectedLevel: .balanced,
+            deliveredLevel: .balanced,
+            duration: .quick,
+            status: status,
+            currentStepIndex: ProductFlowStubValues.firstStepIndex,
+            totalStepCount: ProductFlowStubValues.stepCount,
+            currentItem: nil
+        )
+    }
 
     private func plan(checkInID: CheckInID, duration: DurationVariant) -> PlanPresentation {
         PlanPresentation(

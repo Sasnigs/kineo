@@ -227,8 +227,9 @@ public struct KineoDataSnapshot: Equatable, Sendable, Codable {
             case .resumed where state == .paused:
                 state = .inProgress
             case .stepCompleted where state == .inProgress,
-                 .skipped where state == .inProgress,
-                 .alternativeSelected where state == .inProgress:
+                 .skipped where state == .inProgress:
+                break
+            case .alternativeSelected where state == .inProgress || state == .paused:
                 break
             case .completed where state == .inProgress || state == .paused:
                 state = .completed
@@ -263,6 +264,19 @@ public struct SaveCheckInDraftCommand: Equatable, Sendable {
     public init(checkIn: CheckIn) throws {
         guard checkIn.status == .draft else {
             throw DomainValidationError.invariantViolation("Only a draft check-in can use the draft command.")
+        }
+        self.checkIn = checkIn
+    }
+}
+
+public struct AbandonCheckInCommand: Equatable, Sendable {
+    public let checkIn: CheckIn
+
+    public init(checkIn: CheckIn) throws {
+        guard checkIn.status == .abandoned else {
+            throw DomainValidationError.invariantViolation(
+                "Only an abandoned check-in can use the abandon command."
+            )
         }
         self.checkIn = checkIn
     }
@@ -402,9 +416,15 @@ public struct RecordRoutineEventCommand: Equatable, Sendable {
             guard checkpoint.status == .abandoned else {
                 throw DomainValidationError.invariantViolation("Abandoned event and checkpoint disagree.")
             }
-        case .stepCompleted, .skipped, .alternativeSelected:
+        case .stepCompleted, .skipped:
             guard checkpoint.status == .inProgress else {
                 throw DomainValidationError.invariantViolation("A movement event remains in progress.")
+            }
+        case .alternativeSelected:
+            guard checkpoint.status == .inProgress || checkpoint.status == .paused else {
+                throw DomainValidationError.invariantViolation(
+                    "Alternative selection preserves the active or paused state."
+                )
             }
         }
         self.event = event
@@ -424,6 +444,7 @@ public protocol KineoStore: Sendable {
     func loadSnapshot() async throws(PersistenceError) -> KineoDataSnapshot
     func saveProfile(_ command: SaveProfileCommand) async throws(PersistenceError)
     func saveCheckInDraft(_ command: SaveCheckInDraftCommand) async throws(PersistenceError)
+    func abandonCheckIn(_ command: AbandonCheckInCommand) async throws(PersistenceError)
     func completeCheckIn(_ command: CompleteCheckInCommand) async throws(PersistenceError)
     func applySafetyMutation(_ command: ApplySafetyMutationCommand) async throws(PersistenceError)
     func appendDecision(_ command: AppendDecisionCommand) async throws(PersistenceError)

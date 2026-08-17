@@ -21,6 +21,20 @@ public struct InstalledPrototypeCatalog: Sendable {
     }
 }
 
+/// Injectable boundary for loading the currently installed prototype catalog.
+public protocol InstalledPrototypeCatalogProviding: Sendable {
+    func load() async throws(InstalledPrototypeCatalogError) -> InstalledPrototypeCatalog
+}
+
+/// Production adapter for the catalog bundled with KineoModules.
+public struct BundledInstalledPrototypeCatalogProvider: InstalledPrototypeCatalogProviding {
+    public init() {}
+
+    public func load() async throws(InstalledPrototypeCatalogError) -> InstalledPrototypeCatalog {
+        try InstalledPrototypeCatalogLoader.load()
+    }
+}
+
 /// Loads the internal catalog only after its bundled asset bytes validate.
 public enum InstalledPrototypeCatalogLoader {
     /// Loads and validates the exact prototype catalog bundled with the app modules.
