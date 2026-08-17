@@ -4,11 +4,11 @@ import SwiftUI
 
 @main
 struct KineoApp: App {
-    private let bootstrapper = PrototypeBootstrapper()
+    private let productService = PrototypeProductService()
 
     var body: some Scene {
         WindowGroup {
-            KineoRootView(bootstrapper: bootstrapper)
+            KineoRootView(productService: productService)
         }
     }
 }

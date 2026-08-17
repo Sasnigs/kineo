@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved build plan — M1–M4 complete; M5 next |
+| Status | Approved build plan — M1–M5 complete; M6 next |
 | Platform | Native iPhone, SwiftUI, iOS 17 minimum |
 | Sources | Product design, UX specification, and TD-00 through TD-08 |
 | Last updated | August 17, 2026 |
@@ -117,6 +117,8 @@ flowchart LR
 **Complete when:** TD-04 tests prove that no routine is invented, unbounded, more active, or release-ineligible.
 
 ### M5 — Single-area vertical slice
+
+**Status:** Complete — the offline single-area product loop, persistence reload, and app integration passed August 17, 2026. See the [M5 completion report](reviews/M5_COMPLETION_REPORT_2026-08-17.md).
 
 **Build outcome:** the first complete internal product loop.
 
