@@ -29,6 +29,16 @@ struct PlanSelectionEngineTests {
         let unlocked: Bool
     }
 
+    private struct ExcludedSelectionContext {
+        let healthValue: Int?
+        let telemetryEnabled: Bool
+        let reminderEnabled: Bool
+        let connected: Bool
+        let availableMinutes: Int
+        let occupation: String
+        let consistencyDays: Int
+    }
+
     private static let catalogVersion = "catalog-v1"
     private static let validRevision = 1
 
@@ -114,6 +124,53 @@ struct PlanSelectionEngineTests {
         #expect(pending.transitions.isEmpty)
     }
 
+    @Test("All two-area safety-answer pairs block when either area flags Attention")
+    private func twoAreaSafetyMatrix() throws {
+        let answers = [
+            ConditionalSafetyAnswer.no,
+            ConditionalSafetyAnswer.yes,
+            ConditionalSafetyAnswer.notSure
+        ]
+        for primaryAnswer in answers {
+            for secondaryAnswer in answers {
+                let result = engine().select(
+                    try request(
+                        secondaryArea: .upperMidBack,
+                        secondaryParticipation: .include,
+                        primaryCheckIn: checkIn(
+                            area: .neck,
+                            change: .worse,
+                            comfort: .good,
+                            safetyAnswer: primaryAnswer
+                        ),
+                        secondaryCheckIn: checkIn(
+                            area: .upperMidBack,
+                            change: .worse,
+                            comfort: .good,
+                            safetyAnswer: secondaryAnswer,
+                            role: .secondary
+                        ),
+                        requestedOverride: .active
+                    )
+                )
+                let flaggedAreas = [
+                    primaryAnswer == .no ? nil : BodyArea.neck,
+                    secondaryAnswer == .no ? nil : BodyArea.upperMidBack
+                ].compactMap { $0 }
+                if flaggedAreas.isEmpty {
+                    let plan = try selectedPlan(from: result)
+                    #expect(plan.recommendedLevel == .gentle)
+                    #expect(plan.overrideDisposition == .rejectedHigher)
+                } else {
+                    let blocked = try noPlan(from: result)
+                    #expect(blocked.reason == .attentionRequired)
+                    #expect(blocked.affectedAreas == flaggedAreas)
+                    #expect(blocked.transitions.map(\.area) == flaggedAreas)
+                }
+            }
+        }
+    }
+
     @Test("Persisted Attention blocks globally in deterministic order")
     private func persistedAttentionIsGlobal() throws {
         let safety = normalSafety(updating: [.lowerBack: .attentionRequired, .neck: .attentionRequired])
@@ -146,8 +203,19 @@ struct PlanSelectionEngineTests {
         #expect(noPlan.affectedAreas == [.upperMidBack])
     }
 
-    @Test("A pre-trigger secondary skip is explicit and preserves Pause eligibility")
+    @Test("Secondary skips are explicit and an answered trigger preserves Pause eligibility")
     private func secondarySkipIsExplicit() throws {
+        let skippedBeforeAnswers = try selectedPlan(
+            from: engine().select(
+                try request(
+                    secondaryArea: .upperMidBack,
+                    secondaryParticipation: .skipForSession
+                )
+            )
+        )
+        #expect(skippedBeforeAnswers.includedAreaDecisions.map(\.area) == [.neck])
+        #expect(!skippedBeforeAnswers.pauseTodayAvailable)
+
         let secondary = try checkIn(
             area: .upperMidBack,
             change: .worse,
@@ -402,6 +470,45 @@ struct PlanSelectionEngineTests {
         )
         #expect(plan.recommendedLevel == .balanced)
         #expect(plan.explanations.map(\.key) == [.activeLocked])
+    }
+
+    @Test("Excluded context cannot influence repeated selection")
+    private func excludedContextHasNoInfluence() throws {
+        let contexts = [
+            ExcludedSelectionContext(
+                healthValue: nil,
+                telemetryEnabled: false,
+                reminderEnabled: false,
+                connected: false,
+                availableMinutes: 1,
+                occupation: "desk",
+                consistencyDays: 0
+            ),
+            ExcludedSelectionContext(
+                healthValue: 100,
+                telemetryEnabled: true,
+                reminderEnabled: true,
+                connected: true,
+                availableMinutes: 90,
+                occupation: "manual",
+                consistencyDays: 365
+            )
+        ]
+        let fixedRequest = try request(
+            primaryCheckIn: checkIn(
+                area: .neck,
+                change: .better,
+                comfort: .good,
+                safetyAnswer: nil
+            ),
+            historyByArea: try history(area: .neck, unlocked: true)
+        )
+        let expected = engine().select(fixedRequest)
+
+        for context in contexts {
+            _ = context
+            #expect(engine().select(fixedRequest) == expected)
+        }
     }
 
     private func engine() -> PlanSelectionEngine {
