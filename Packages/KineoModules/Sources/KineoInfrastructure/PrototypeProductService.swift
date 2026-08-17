@@ -1,0 +1,883 @@
+import Foundation
+import KineoCore
+
+/// Wall-clock adapter kept outside deterministic Core rules.
+public struct SystemProductClock: ProductClock {
+    public init() {}
+
+    public func now() -> ProductMoment? {
+        let date = Date()
+        let calendar = Calendar.autoupdatingCurrent
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year,
+              let month = components.month,
+              let day = components.day else { return nil }
+        let dayText = String(
+            format: ProductTimeFormat.localDay,
+            year,
+            month,
+            day
+        )
+        let timestamp = Int64((date.timeIntervalSince1970 * ProductTimeFormat.millisecondsPerSecond).rounded())
+        guard let localDay = LocalDay(rawValue: dayText),
+              let timeZoneID = NonEmptyString(rawValue: calendar.timeZone.identifier),
+              let calendarID = NonEmptyString(rawValue: ProductTimeFormat.gregorian) else {
+            return nil
+        }
+        return ProductMoment(
+            timestamp: TimestampMilliseconds(rawValue: timestamp),
+            dayContext: LocalDayContext(
+                localDay: localDay,
+                timeZoneID: timeZoneID,
+                calendarID: calendarID
+            )
+        )
+    }
+}
+
+/// Real local-store orchestration for the functional internal prototype flow.
+public actor PrototypeProductService: KineoProductServing {
+    private let location: KineoStoreLocation?
+    private let protectedData: any KineoProtectedDataAvailability
+    private let storageProtector: any KineoStorageProtecting
+    private let clock: any ProductClock
+    private var store: KineoGRDBStore?
+
+    public init(
+        location: KineoStoreLocation? = nil,
+        protectedData: (any KineoProtectedDataAvailability)? = nil,
+        storageProtector: any KineoStorageProtecting = FoundationKineoStorageProtector(),
+        clock: any ProductClock = SystemProductClock()
+    ) {
+        self.location = location
+        #if canImport(UIKit)
+        self.protectedData = protectedData ?? SystemProtectedDataAvailability()
+        #else
+        self.protectedData = protectedData ?? AlwaysAvailableProtectedData()
+        #endif
+        self.storageProtector = storageProtector
+        self.clock = clock
+    }
+
+    public func initialState() async -> AppLaunchState {
+        guard let resolvedLocation = location ?? Self.defaultLocation() else {
+            return .foundationUnavailable
+        }
+        do {
+            let candidate = try await KineoGRDBStore.open(
+                location: resolvedLocation,
+                protectedData: protectedData,
+                storageProtector: storageProtector
+            )
+            _ = try await candidate.loadSnapshot()
+            _ = try InstalledPrototypeCatalogLoader.load()
+            store = candidate
+            return .foundationReady
+        } catch KineoPersistenceFailure.deletedStore {
+            return await retryAfterCompletedDeletion(at: resolvedLocation)
+        } catch KineoPersistenceFailure.protectedDataUnavailable,
+                KineoCore.PersistenceError.protectedDataUnavailable {
+            return .protectedDataUnavailable
+        } catch {
+            return .foundationUnavailable
+        }
+    }
+
+    public func loadProductStartState() async throws(ProductFlowError) -> ProductStartState {
+        do {
+            let snapshot = try await requiredStore().loadSnapshot()
+            guard let profile = snapshot.profileState?.profile else {
+                return .onboarding(.welcome)
+            }
+            guard profile.adultAcknowledged else { return .onboarding(.welcome) }
+            guard let primaryArea = profile.primaryArea else { return .onboarding(.primaryArea) }
+            guard profile.safetyBoundaryVersion != nil,
+                  profile.safetyAcknowledgedAt != nil else {
+                return .onboarding(.safetyBoundary(primaryArea))
+            }
+            guard profile.onboardingCompletedAt != nil else {
+                return .onboarding(.firstCheckIn(primaryArea))
+            }
+            return .today(primaryArea)
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func confirmAdultEligibility() async throws(ProductFlowError) {
+        do {
+            let store = try requiredStore()
+            let snapshot = try await store.loadSnapshot()
+            let moment = try moment()
+            let existing = snapshot.profileState?.profile
+            let profile = try UserProfile(
+                onboardingCompletedAt: existing?.onboardingCompletedAt,
+                adultAcknowledged: true,
+                safetyBoundaryVersion: existing?.safetyBoundaryVersion,
+                safetyAcknowledgedAt: existing?.safetyAcknowledgedAt,
+                primaryArea: existing?.primaryArea,
+                secondaryArea: nil,
+                routinePreference: nil,
+                weeklyGoalDays: existing?.weeklyGoalDays ?? UserProfile.defaultWeeklyGoalDays,
+                telemetryChoice: existing?.telemetryChoice ?? .notOffered,
+                createdAt: existing?.createdAt ?? moment.timestamp,
+                updatedAt: moment.timestamp
+            )
+            try await store.saveProfile(SaveProfileCommand(
+                state: ProfileState(
+                    profile: profile,
+                    reminderSettings: snapshot.profileState?.reminderSettings
+                )
+            ))
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func savePrimaryArea(_ area: BodyArea) async throws(ProductFlowError) {
+        do {
+            try await updateProfile { existing, moment in
+                try UserProfile(
+                    onboardingCompletedAt: existing.onboardingCompletedAt,
+                    adultAcknowledged: existing.adultAcknowledged,
+                    safetyBoundaryVersion: existing.safetyBoundaryVersion,
+                    safetyAcknowledgedAt: existing.safetyAcknowledgedAt,
+                    primaryArea: area,
+                    secondaryArea: nil,
+                    routinePreference: existing.routinePreference,
+                    weeklyGoalDays: existing.weeklyGoalDays,
+                    telemetryChoice: existing.telemetryChoice,
+                    createdAt: existing.createdAt,
+                    updatedAt: moment.timestamp
+                )
+            }
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func acknowledgeSafetyBoundary() async throws(ProductFlowError) {
+        do {
+            try await updateProfile { existing, moment in
+                guard existing.primaryArea != nil else { throw ProductFlowError.invalidState }
+                return try UserProfile(
+                    onboardingCompletedAt: existing.onboardingCompletedAt,
+                    adultAcknowledged: existing.adultAcknowledged,
+                    safetyBoundaryVersion: try NonEmptyString(
+                        validating: PrototypeProductConfiguration.safetyBoundaryVersion
+                    ),
+                    safetyAcknowledgedAt: moment.timestamp,
+                    primaryArea: existing.primaryArea,
+                    secondaryArea: nil,
+                    routinePreference: existing.routinePreference,
+                    weeklyGoalDays: existing.weeklyGoalDays,
+                    telemetryChoice: existing.telemetryChoice,
+                    createdAt: existing.createdAt,
+                    updatedAt: moment.timestamp
+                )
+            }
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func completeOnboarding() async throws(ProductFlowError) -> BodyArea {
+        do {
+            var completedArea: BodyArea?
+            try await updateProfile { existing, moment in
+                guard let area = existing.primaryArea,
+                      existing.adultAcknowledged,
+                      existing.safetyBoundaryVersion != nil,
+                      existing.safetyAcknowledgedAt != nil else {
+                    throw ProductFlowError.invalidState
+                }
+                completedArea = area
+                return try UserProfile(
+                    onboardingCompletedAt: existing.onboardingCompletedAt ?? moment.timestamp,
+                    adultAcknowledged: existing.adultAcknowledged,
+                    safetyBoundaryVersion: existing.safetyBoundaryVersion,
+                    safetyAcknowledgedAt: existing.safetyAcknowledgedAt,
+                    primaryArea: area,
+                    secondaryArea: nil,
+                    routinePreference: existing.routinePreference,
+                    weeklyGoalDays: existing.weeklyGoalDays,
+                    telemetryChoice: existing.telemetryChoice,
+                    createdAt: existing.createdAt,
+                    updatedAt: moment.timestamp
+                )
+            }
+            guard let completedArea else { throw ProductFlowError.invalidState }
+            return completedArea
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func beginSingleAreaCheckIn() async throws(ProductFlowError) -> SingleAreaCheckInDraft {
+        do {
+            let store = try requiredStore()
+            let snapshot = try await store.loadSnapshot()
+            guard snapshot.attentionStates.isEmpty else {
+                throw ProductFlowError.attentionRequired(orderedAreas(snapshot.attentionStates.map(\.area)))
+            }
+            guard let profile = snapshot.profileState?.profile,
+                  profile.onboardingCompletedAt != nil,
+                  let area = profile.primaryArea else {
+                throw ProductFlowError.invalidState
+            }
+            let moment = try moment()
+            let draft = SingleAreaCheckInDraft(
+                checkInID: CheckInID(UUID()),
+                entryID: CheckInEntryID(UUID()),
+                area: area,
+                startedAt: moment.timestamp,
+                dayContext: moment.dayContext
+            )
+            let checkIn = try CheckIn(
+                id: draft.checkInID,
+                status: .draft,
+                primaryArea: area,
+                secondaryArea: nil,
+                startedAt: draft.startedAt,
+                completedAt: nil,
+                dayContext: draft.dayContext,
+                entries: []
+            )
+            try await store.saveCheckInDraft(try SaveCheckInDraftCommand(checkIn: checkIn))
+            return draft
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func submitSingleAreaCheckIn(
+        _ draft: SingleAreaCheckInDraft,
+        change: ChangeReport,
+        comfort: MovementComfort,
+        safetyAnswer: ConditionalSafetyAnswer?
+    ) async throws(ProductFlowError) -> SingleAreaCheckInResult {
+        do {
+            let store = try requiredStore()
+            let entry = try CheckInEntry(
+                id: draft.entryID,
+                area: draft.area,
+                role: .primary,
+                changeReport: change,
+                movementComfort: comfort,
+                conditionalSafetyAnswer: safetyAnswer,
+                submittedAt: draft.startedAt
+            )
+            let completed = try CheckIn(
+                id: draft.checkInID,
+                status: .completed,
+                primaryArea: draft.area,
+                secondaryArea: nil,
+                startedAt: draft.startedAt,
+                completedAt: draft.startedAt,
+                dayContext: draft.dayContext,
+                entries: [entry]
+            )
+            let mutations: [SafetyMutation]
+            if entry.triggersAttention {
+                let event = try SafetyEvent(
+                    id: SafetyEventID(UUID()),
+                    area: draft.area,
+                    kind: .attentionEntered,
+                    sourceCheckInEntryID: entry.id,
+                    occurredAt: draft.startedAt,
+                    dayContext: draft.dayContext
+                )
+                mutations = [try SafetyMutation(event: event, statusAfter: .attentionRequired)]
+            } else {
+                mutations = []
+            }
+            try await store.completeCheckIn(
+                try CompleteCheckInCommand(checkIn: completed, safetyMutations: mutations)
+            )
+            if entry.triggersAttention { return .attentionRequired(draft.area) }
+            return .plan(try await preparePlan(
+                checkInID: draft.checkInID,
+                duration: .standard,
+                requestedLevel: nil
+            ))
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func revisePlan(
+        checkInID: CheckInID,
+        duration: DurationVariant,
+        requestedLevel: RoutineLevel?
+    ) async throws(ProductFlowError) -> PlanPresentation {
+        do {
+            return try await preparePlan(
+                checkInID: checkInID,
+                duration: duration,
+                requestedLevel: requestedLevel
+            )
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func startRoutine(
+        decisionID: SelectionDecisionID
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        do {
+            let store = try requiredStore()
+            var snapshot = try await store.loadSnapshot()
+            guard let decision = snapshot.decisions.first(where: { $0.id == decisionID }),
+                  decision.outcome == .selected else {
+                throw ProductFlowError.invalidState
+            }
+            if let existing = snapshot.routineSessions.first(where: { $0.decisionID == decisionID }) {
+                return try await startPreparedSessionIfNeeded(existing, snapshot: snapshot, store: store)
+            }
+
+            let installed = try InstalledPrototypeCatalogLoader.load()
+            let composition = try composition(for: decision, installed: installed)
+            guard composition.fingerprint == decision.compositionFingerprint else {
+                throw ProductFlowError.invalidData
+            }
+            let checkIn = try requiredCheckIn(decision.checkInID, snapshot: snapshot)
+            let sessionID = RoutineSessionID(UUID())
+            let frozen = try RoutineSessionSnapshotBuilder.make(
+                sessionID: sessionID,
+                decisionID: decision.id,
+                composition: composition,
+                catalog: installed.catalog,
+                resources: installed.resources,
+                rulesVersion: decision.rulesVersion,
+                notices: try decision.notices.map { try NonEmptyString(validating: $0.code.rawValue) },
+                explanationKeys: decision.reasons.map(\.code),
+                explanationParameters: try decision.reasons.map { try decodeParameters($0.parameters) },
+                createdAt: try moment().timestamp
+            )
+            let moment = try moment()
+            let session = try RoutineSession(
+                id: sessionID,
+                decisionID: decision.id,
+                checkInID: decision.checkInID,
+                status: .prepared,
+                snapshot: try frozen.opaqueRepresentation(),
+                currentStepIndex: PrototypeProductConfiguration.firstStepIndex,
+                stepElapsedMilliseconds: PrototypeProductConfiguration.noElapsedMilliseconds,
+                startedAt: nil,
+                updatedAt: moment.timestamp,
+                endedAt: nil,
+                dayContext: checkIn.dayContext
+            )
+            try await store.createRoutine(try CreateRoutineCommand(session: session))
+            snapshot = try await store.loadSnapshot()
+            let persisted = try requiredSession(sessionID, snapshot: snapshot)
+            return try await startPreparedSessionIfNeeded(persisted, snapshot: snapshot, store: store)
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func advanceRoutine(
+        sessionID: RoutineSessionID,
+        expectedStepIndex: Int
+    ) async throws(ProductFlowError) -> RoutinePresentation {
+        do {
+            let store = try requiredStore()
+            let snapshot = try await store.loadSnapshot()
+            let session = try requiredSession(sessionID, snapshot: snapshot)
+            let frozen = try decodeSnapshot(session.snapshot)
+            if session.status.isTerminal || session.currentStepIndex > expectedStepIndex {
+                return try presentation(session: session, frozen: frozen)
+            }
+            guard session.status == .inProgress,
+                  session.currentStepIndex == expectedStepIndex,
+                  frozen.items.indices.contains(expectedStepIndex) else {
+                throw ProductFlowError.invalidState
+            }
+            let isLast = expectedStepIndex == frozen.items.index(before: frozen.items.endIndex)
+            let currentItem = frozen.items[expectedStepIndex]
+            let eventKind: RoutineEventKind = isLast ? .completed : .stepCompleted
+            let nextIndex = expectedStepIndex + PrototypeProductConfiguration.stepIncrement
+            let moment = try timestamp(notBefore: session.updatedAt)
+            let event = try RoutineEvent(
+                id: RoutineEventID(UUID()),
+                routineSessionID: session.id,
+                sequenceNumber: nextSequenceNumber(for: session.id, in: snapshot),
+                kind: eventKind,
+                stepID: isLast ? nil : try NonEmptyString(validating: currentItem.itemID.rawValue),
+                moduleID: isLast ? nil : try NonEmptyString(validating: currentItem.sourceOwnerID.rawValue),
+                alternativeID: nil,
+                localReason: nil,
+                occurredAt: moment
+            )
+            let checkpoint = try RoutineCheckpoint(
+                status: isLast ? .completed : .inProgress,
+                currentStepIndex: nextIndex,
+                stepElapsedMilliseconds: PrototypeProductConfiguration.noElapsedMilliseconds,
+                updatedAt: moment,
+                endedAt: isLast ? moment : nil
+            )
+            try await store.recordRoutineEvent(
+                try RecordRoutineEventCommand(event: event, checkpoint: checkpoint)
+            )
+            let updated = try requiredSession(sessionID, snapshot: try await store.loadSnapshot())
+            return try presentation(session: updated, frozen: frozen)
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func submitFeedback(
+        sessionID: RoutineSessionID,
+        response: AreaResponse?
+    ) async throws(ProductFlowError) {
+        do {
+            let store = try requiredStore()
+            let snapshot = try await store.loadSnapshot()
+            if snapshot.feedbackSubmissions.contains(where: { $0.routineSessionID == sessionID }) {
+                return
+            }
+            let session = try requiredSession(sessionID, snapshot: snapshot)
+            guard session.status.acceptsFeedback,
+                  let endedAt = session.endedAt else {
+                throw ProductFlowError.invalidState
+            }
+            let frozen = try decodeSnapshot(session.snapshot)
+            guard let area = frozen.includedAreas.first else { throw ProductFlowError.invalidData }
+            let responses = response.map {
+                [FeedbackResponse(id: AreaFeedbackID(UUID()), area: area, response: $0)]
+            } ?? []
+            let submittedAt = try timestamp(notBefore: endedAt)
+            let submission = try FeedbackSubmission(
+                id: FeedbackSubmissionID(UUID()),
+                routineSessionID: session.id,
+                responses: responses,
+                submittedAt: submittedAt,
+                dayContext: session.dayContext
+            )
+            try await store.submitFeedback(SubmitFeedbackCommand(submission: submission))
+        } catch {
+            throw map(error)
+        }
+    }
+}
+
+private extension PrototypeProductService {
+    func preparePlan(
+        checkInID: CheckInID,
+        duration: DurationVariant,
+        requestedLevel: RoutineLevel?
+    ) async throws -> PlanPresentation {
+        let store = try requiredStore()
+        let snapshot = try await store.loadSnapshot()
+        guard snapshot.attentionStates.isEmpty else {
+            throw ProductFlowError.attentionRequired(orderedAreas(snapshot.attentionStates.map(\.area)))
+        }
+        let checkIn = try requiredCheckIn(checkInID, snapshot: snapshot)
+        guard checkIn.status == .completed,
+              let entry = checkIn.entries.first(where: { $0.area == checkIn.primaryArea }) else {
+            throw ProductFlowError.invalidState
+        }
+        let existing = snapshot.decisions.last {
+            $0.checkInID == checkInID && $0.durationVariant == duration &&
+                $0.requestedOverride == requestedLevel
+        }
+        let decisionID = existing?.id ?? SelectionDecisionID(UUID())
+        let revision = existing?.revision ?? nextDecisionRevision(for: checkInID, in: snapshot)
+        let installed = try InstalledPrototypeCatalogLoader.load()
+        let catalogVersion = try NonEmptyString(validating: installed.catalog.catalogVersion.rawValue)
+        let history = try historyState(for: checkIn.primaryArea, snapshot: snapshot)
+        let request = PlanSelectionRequest(
+            decisionID: decisionID,
+            checkInID: checkInID,
+            decisionRevision: revision,
+            primaryArea: checkIn.primaryArea,
+            secondaryArea: nil,
+            secondaryParticipation: nil,
+            checkInsByArea: [
+                checkIn.primaryArea: SelectionAreaCheckIn(
+                    checkInEntryID: entry.id,
+                    entryRevision: PrototypeProductConfiguration.firstEntryRevision,
+                    area: entry.area,
+                    changeReport: entry.changeReport,
+                    movementComfort: entry.movementComfort,
+                    conditionalSafetyAnswer: entry.conditionalSafetyAnswer
+                )
+            ],
+            safetyByArea: safetySnapshots(snapshot.attentionStates),
+            historyByArea: [checkIn.primaryArea: history],
+            requestedOverride: requestedLevel,
+            duration: duration,
+            rulesVersion: PrototypeSelectionRules.version,
+            catalogVersion: catalogVersion
+        )
+        guard case .selected(let selected) = PlanSelectionEngine.prototype.select(request) else {
+            throw ProductFlowError.invalidState
+        }
+        let compositionRequest = try CatalogCompositionRequest(
+            decisionID: decisionID,
+            primaryArea: selected.compositionRequest.primaryArea,
+            secondaryArea: selected.compositionRequest.secondaryArea,
+            selectedLevel: selected.selectedLevel,
+            duration: duration,
+            catalogVersion: installed.catalog.catalogVersion,
+            buildChannel: .internalPrototype
+        )
+        guard case .composed(let composition) = RoutineComposer.compose(
+            request: compositionRequest,
+            catalog: installed.catalog,
+            resources: installed.resources
+        ) else {
+            throw ProductFlowError.contentUnavailable
+        }
+        if let existing {
+            guard existing.compositionFingerprint == composition.fingerprint else {
+                throw ProductFlowError.invalidData
+            }
+        } else {
+            let decision = try makeDecision(
+                request: request,
+                selected: selected,
+                composition: composition,
+                history: history,
+                createdAt: try moment().timestamp
+            )
+            try await store.appendDecision(AppendDecisionCommand(decision: decision))
+        }
+        return PlanPresentation(
+            decisionID: decisionID,
+            checkInID: checkInID,
+            area: checkIn.primaryArea,
+            recommendedLevel: selected.recommendedLevel,
+            selectedLevel: selected.selectedLevel,
+            deliveredLevel: composition.deliveredLevel,
+            duration: duration,
+            explanationKeys: selected.explanations.map(\.key),
+            itemCount: composition.orderedItems.count,
+            nominalSeconds: composition.nominalSeconds,
+            pauseTodayAvailable: selected.pauseTodayAvailable
+        )
+    }
+
+    func makeDecision(
+        request: PlanSelectionRequest,
+        selected: SelectedPlan,
+        composition: ComposedRoutine,
+        history: ActiveHistoryState,
+        createdAt: TimestampMilliseconds
+    ) throws -> SelectionDecision {
+        let areaInputs = try selected.includedAreaDecisions.map { area in
+            try DecisionAreaInput(
+                area: area.area,
+                role: area.role,
+                checkInEntryID: area.checkInEntryID,
+                baseLevel: area.baseLevel,
+                activeUnlocked: area.activeUnlocked,
+                qualifyingCount: history.qualifyingOutcomeCount,
+                latestResponse: history.mostRecentRecordedResponse,
+                included: true
+            )
+        }
+        let reasons = try selected.explanations.enumerated().map { position, explanation in
+            try DecisionReason(
+                kind: .selection,
+                position: position,
+                code: NonEmptyString(validating: explanation.key.rawValue),
+                parameters: try canonicalJSON(explanation.parameters)
+            )
+        }
+        let notices = try selected.notices.enumerated().map { position, notice in
+            try DecisionNotice(
+                position: position,
+                code: NonEmptyString(validating: notice.key.rawValue),
+                area: notice.area,
+                parameters: try canonicalJSON([:])
+            )
+        }
+        return try SelectionDecision(
+            id: request.decisionID,
+            checkInID: request.checkInID,
+            revision: request.decisionRevision,
+            rulesVersion: NonEmptyString(validating: request.rulesVersion),
+            catalogVersionRequested: request.catalogVersion,
+            catalogVersionDelivered: NonEmptyString(rawValue: composition.catalogVersion.rawValue),
+            outcome: .selected,
+            recommendedLevel: selected.recommendedLevel,
+            requestedOverride: selected.requestedOverride,
+            overrideDisposition: selected.overrideDisposition,
+            selectedLevel: selected.selectedLevel,
+            deliveredLevel: composition.deliveredLevel,
+            durationVariant: selected.duration,
+            secondaryOmissionReason: composition.omissionReason,
+            validationResult: composition.status == .exact ? .exact : .fallback,
+            primaryTemplateID: NonEmptyString(rawValue: composition.primaryTemplate.id.rawValue),
+            primaryTemplateRevision: composition.primaryTemplate.revision.rawValue,
+            secondaryModuleID: composition.secondaryModule.flatMap {
+                NonEmptyString(rawValue: $0.id.rawValue)
+            },
+            secondaryModuleRevision: composition.secondaryModule?.revision.rawValue,
+            compatibilityRuleID: composition.compatibilityRule.flatMap {
+                NonEmptyString(rawValue: $0.id.rawValue)
+            },
+            compositionFingerprint: composition.fingerprint,
+            createdAt: createdAt,
+            areaInputs: areaInputs,
+            reasons: reasons,
+            notices: notices
+        )
+    }
+
+    func composition(
+        for decision: SelectionDecision,
+        installed: InstalledPrototypeCatalog
+    ) throws -> ComposedRoutine {
+        guard let primary = decision.areaInputs.first(where: { $0.role == .primary }) else {
+            throw ProductFlowError.invalidData
+        }
+        let request = try CatalogCompositionRequest(
+            decisionID: decision.id,
+            primaryArea: primary.area,
+            secondaryArea: decision.areaInputs.first(where: { $0.role == .secondary && $0.included })?.area,
+            selectedLevel: decision.selectedLevel,
+            duration: decision.durationVariant,
+            catalogVersion: installed.catalog.catalogVersion,
+            buildChannel: .internalPrototype
+        )
+        guard case .composed(let routine) = RoutineComposer.compose(
+            request: request,
+            catalog: installed.catalog,
+            resources: installed.resources
+        ) else {
+            throw ProductFlowError.contentUnavailable
+        }
+        return routine
+    }
+
+    func startPreparedSessionIfNeeded(
+        _ session: RoutineSession,
+        snapshot: KineoDataSnapshot,
+        store: KineoGRDBStore
+    ) async throws -> RoutinePresentation {
+        let frozen = try decodeSnapshot(session.snapshot)
+        guard session.status == .prepared else { return try presentation(session: session, frozen: frozen) }
+        let moment = try timestamp(notBefore: session.updatedAt)
+        let event = try RoutineEvent(
+            id: RoutineEventID(UUID()),
+            routineSessionID: session.id,
+            sequenceNumber: nextSequenceNumber(for: session.id, in: snapshot),
+            kind: .started,
+            stepID: nil,
+            moduleID: nil,
+            alternativeID: nil,
+            localReason: nil,
+            occurredAt: moment
+        )
+        let checkpoint = try RoutineCheckpoint(
+            status: .inProgress,
+            currentStepIndex: session.currentStepIndex,
+            stepElapsedMilliseconds: session.stepElapsedMilliseconds,
+            updatedAt: moment,
+            endedAt: nil
+        )
+        try await store.recordRoutineEvent(
+            try RecordRoutineEventCommand(event: event, checkpoint: checkpoint)
+        )
+        let updated = try requiredSession(session.id, snapshot: try await store.loadSnapshot())
+        return try presentation(session: updated, frozen: frozen)
+    }
+
+    func presentation(
+        session: RoutineSession,
+        frozen: RoutineSessionSnapshot
+    ) throws -> RoutinePresentation {
+        guard let area = frozen.includedAreas.first else { throw ProductFlowError.invalidData }
+        let item = frozen.items.indices.contains(session.currentStepIndex) ?
+            frozen.items[session.currentStepIndex] : nil
+        return RoutinePresentation(
+            sessionID: session.id,
+            area: area,
+            selectedLevel: frozen.selectedLevel,
+            deliveredLevel: frozen.deliveredLevel,
+            duration: frozen.duration,
+            status: session.status,
+            currentStepIndex: session.currentStepIndex,
+            totalStepCount: frozen.items.count,
+            currentItem: item
+        )
+    }
+
+    func decodeSnapshot(_ opaque: OpaqueRoutineSnapshot) throws -> RoutineSessionSnapshot {
+        let decoded = try JSONDecoder().decode(RoutineSessionSnapshot.self, from: opaque.bytes)
+        let exact = try decoded.opaqueRepresentation()
+        guard exact.checksum == opaque.checksum else { throw ProductFlowError.invalidData }
+        return decoded
+    }
+
+    func updateProfile(
+        _ transform: (UserProfile, ProductMoment) throws -> UserProfile
+    ) async throws {
+        let store = try requiredStore()
+        let snapshot = try await store.loadSnapshot()
+        guard let state = snapshot.profileState else { throw ProductFlowError.invalidState }
+        let profile = try transform(state.profile, try moment())
+        try await store.saveProfile(SaveProfileCommand(
+            state: ProfileState(profile: profile, reminderSettings: state.reminderSettings)
+        ))
+    }
+
+    func historyState(
+        for area: BodyArea,
+        snapshot: KineoDataSnapshot
+    ) throws -> ActiveHistoryState {
+        var state = try ActiveHistoryState(
+            area: area,
+            qualifyingOutcomeCount: PrototypeProductConfiguration.emptyHistoryCount,
+            mostRecentRecordedResponse: nil
+        )
+        let sessions = snapshot.routineSessions
+            .filter { $0.status.isTerminal && $0.snapshot.includedAreas.contains(area) }
+            .sorted { ($0.endedAt ?? $0.updatedAt) < ($1.endedAt ?? $1.updatedAt) }
+        for session in sessions {
+            guard let decision = snapshot.decisions.first(where: { $0.id == session.decisionID }),
+                  let deliveredLevel = decision.deliveredLevel else { throw ProductFlowError.invalidData }
+            let response = snapshot.feedbackSubmissions
+                .first(where: { $0.routineSessionID == session.id })?
+                .responses.first(where: { $0.area == area })?.response
+            state = try ActiveHistoryReducer(configuration: .prototype).reducing(
+                state,
+                with: RoutineAreaOutcome(
+                    area: area,
+                    routineStatus: session.status,
+                    deliveredLevel: deliveredLevel,
+                    response: response,
+                    wasIncludedInDeliveredRoutine: true
+                )
+            )
+        }
+        return state
+    }
+
+    func safetySnapshots(
+        _ attention: [AttentionState]
+    ) -> [BodyArea: SelectionSafetySnapshot] {
+        let flagged = Set(attention.map(\.area))
+        return Dictionary(uniqueKeysWithValues: PrototypeSelectionRules.supportedAreas.map { area in
+            (area, SelectionSafetySnapshot(
+                area: area,
+                status: flagged.contains(area) ? .attentionRequired : .normal
+            ))
+        })
+    }
+
+    func requiredStore() throws -> KineoGRDBStore {
+        guard let store else { throw ProductFlowError.foundationNotReady }
+        return store
+    }
+
+    func requiredCheckIn(
+        _ id: CheckInID,
+        snapshot: KineoDataSnapshot
+    ) throws -> CheckIn {
+        guard let value = snapshot.checkIns.first(where: { $0.id == id }) else {
+            throw ProductFlowError.invalidState
+        }
+        return value
+    }
+
+    func requiredSession(
+        _ id: RoutineSessionID,
+        snapshot: KineoDataSnapshot
+    ) throws -> RoutineSession {
+        guard let value = snapshot.routineSessions.first(where: { $0.id == id }) else {
+            throw ProductFlowError.invalidState
+        }
+        return value
+    }
+
+    func nextDecisionRevision(for checkInID: CheckInID, in snapshot: KineoDataSnapshot) -> Int {
+        (snapshot.decisions.filter { $0.checkInID == checkInID }.map(\.revision).max() ??
+            PrototypeProductConfiguration.beforeFirstRevision) + PrototypeProductConfiguration.revisionIncrement
+    }
+
+    func nextSequenceNumber(for sessionID: RoutineSessionID, in snapshot: KineoDataSnapshot) -> Int {
+        (snapshot.routineEvents.filter { $0.routineSessionID == sessionID }.map(\.sequenceNumber).max() ??
+            PrototypeProductConfiguration.beforeFirstSequence) + PrototypeProductConfiguration.sequenceIncrement
+    }
+
+    func timestamp(notBefore minimum: TimestampMilliseconds) throws -> TimestampMilliseconds {
+        max(try moment().timestamp, minimum)
+    }
+
+    func moment() throws -> ProductMoment {
+        guard let value = clock.now() else { throw ProductFlowError.invalidData }
+        return value
+    }
+
+    func orderedAreas(_ areas: [BodyArea]) -> [BodyArea] {
+        let values = Set(areas)
+        return PrototypeSelectionRules.supportedAreas.filter(values.contains)
+    }
+
+    func canonicalJSON(_ parameters: [String: String]) throws -> CanonicalJSON {
+        try CanonicalJSON(bytes: JSONSerialization.data(withJSONObject: parameters, options: [.sortedKeys]))
+    }
+
+    func decodeParameters(_ parameters: CanonicalJSON) throws -> [String: String] {
+        guard let value = try JSONSerialization.jsonObject(with: parameters.bytes) as? [String: String] else {
+            throw ProductFlowError.invalidData
+        }
+        return value
+    }
+
+    func map(_ error: any Error) -> ProductFlowError {
+        if let error = error as? ProductFlowError { return error }
+        if let error = error as? PersistenceError { return .persistence(error) }
+        return .invalidData
+    }
+
+    static func defaultLocation() -> KineoStoreLocation? {
+        guard let applicationSupportURL = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else { return nil }
+        return KineoStoreLocation(applicationSupportURL: applicationSupportURL)
+    }
+
+    func retryAfterCompletedDeletion(at location: KineoStoreLocation) async -> AppLaunchState {
+        do {
+            let candidate = try await KineoGRDBStore.open(
+                location: location,
+                protectedData: protectedData,
+                storageProtector: storageProtector
+            )
+            _ = try await candidate.loadSnapshot()
+            _ = try InstalledPrototypeCatalogLoader.load()
+            store = candidate
+            return .foundationReady
+        } catch KineoPersistenceFailure.protectedDataUnavailable,
+                KineoCore.PersistenceError.protectedDataUnavailable {
+            return .protectedDataUnavailable
+        } catch {
+            return .foundationUnavailable
+        }
+    }
+}
+
+private enum PrototypeProductConfiguration {
+    static let safetyBoundaryVersion = "safety-boundary-v1.0.0-prototype"
+    static let firstEntryRevision = 1
+    static let emptyHistoryCount = 0
+    static let firstStepIndex = 0
+    static let stepIncrement = 1
+    static let noElapsedMilliseconds: Int64 = 0
+    static let beforeFirstRevision = 0
+    static let revisionIncrement = 1
+    static let beforeFirstSequence = 0
+    static let sequenceIncrement = 1
+}
+
+private enum ProductTimeFormat {
+    static let localDay = "%04d-%02d-%02d"
+    static let millisecondsPerSecond = 1_000.0
+    static let gregorian = "gregorian"
+}
