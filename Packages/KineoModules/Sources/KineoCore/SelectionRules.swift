@@ -5,10 +5,20 @@ public enum PrototypeSelectionRules {
 
     /// The number of qualifying outcomes required to unlock Active for one area.
     public static let qualifyingOutcomeCountRequired = 2
+
+    /// Stable ordering of every area supported by this rules version.
+    public static let supportedAreas: [BodyArea] = [.neck, .upperMidBack, .lowerBack]
 }
 
 /// Configuration for area-specific Active eligibility.
 public struct ActiveUnlockConfiguration: Equatable, Sendable {
+    /// The immutable configuration for the current prototype rules version.
+    public static let prototype = ActiveUnlockConfiguration(
+        validatedQualifyingOutcomeCountRequired: PrototypeSelectionRules.qualifyingOutcomeCountRequired,
+        qualifyingLevels: [.gentle, .balanced],
+        qualifyingResponses: [.better, .same]
+    )
+
     /// The number of qualifying outcomes required for an area.
     public let qualifyingOutcomeCountRequired: Int
 
@@ -30,6 +40,16 @@ public struct ActiveUnlockConfiguration: Equatable, Sendable {
             throw DomainValidationError.invalidRange("qualifyingOutcomeCountRequired")
         }
         self.qualifyingOutcomeCountRequired = qualifyingOutcomeCountRequired
+        self.qualifyingLevels = qualifyingLevels
+        self.qualifyingResponses = qualifyingResponses
+    }
+
+    private init(
+        validatedQualifyingOutcomeCountRequired: Int,
+        qualifyingLevels: Set<RoutineLevel>,
+        qualifyingResponses: Set<AreaResponse>
+    ) {
+        qualifyingOutcomeCountRequired = validatedQualifyingOutcomeCountRequired
         self.qualifyingLevels = qualifyingLevels
         self.qualifyingResponses = qualifyingResponses
     }
