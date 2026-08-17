@@ -99,6 +99,9 @@ public actor PrototypeProductService: KineoProductServing {
             guard profile.onboardingCompletedAt != nil else {
                 return .onboarding(.firstCheckIn(primaryArea))
             }
+            if let attention = firstAttention(in: snapshot) {
+                return .attentionRequired(attentionPrompt(for: attention))
+            }
             return .today(primaryArea)
         } catch {
             throw map(error)
@@ -214,6 +217,199 @@ public actor PrototypeProductService: KineoProductServing {
         }
     }
 
+    public func respondToAttentionReturn(
+        _ prompt: AttentionPrompt,
+        answer: ConditionalSafetyAnswer
+    ) async throws(ProductFlowError) -> AttentionResolution {
+        do {
+            let store = try requiredStore()
+            let snapshot = try await store.loadSnapshot()
+            if let existing = snapshot.safetyEvents.first(where: { $0.id == prompt.responseEventID }) {
+                guard existing.area == prompt.area,
+                      existing.returnAnswer == answer,
+                      existing.kind == (answer == .yes ? .attentionClearedReturnedToUsual : .attentionReaffirmed)
+                else { throw ProductFlowError.invalidState }
+                return try attentionResolution(from: snapshot)
+            }
+            guard let attention = snapshot.attentionStates.first(where: { $0.area == prompt.area }),
+                  attention.updatedAt == prompt.expectedAttentionUpdatedAt else {
+                throw ProductFlowError.invalidState
+            }
+            let eventMoment = try moment(after: attention.updatedAt)
+            let clearsAttention = answer == .yes
+            let event = try SafetyEvent(
+                id: prompt.responseEventID,
+                area: prompt.area,
+                kind: clearsAttention ? .attentionClearedReturnedToUsual : .attentionReaffirmed,
+                sourceCheckInEntryID: nil,
+                returnAnswer: answer,
+                occurredAt: eventMoment.timestamp,
+                dayContext: eventMoment.dayContext
+            )
+            let mutation = try SafetyMutation(
+                event: event,
+                statusAfter: clearsAttention ? .normal : .attentionRequired,
+                expectedAttentionUpdatedAt: attention.updatedAt
+            )
+            try await store.applySafetyMutation(try ApplySafetyMutationCommand(mutation: mutation))
+            return try attentionResolution(from: try await store.loadSnapshot())
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func beginAttentionCorrection(
+        _ prompt: AttentionPrompt
+    ) async throws(ProductFlowError) -> AttentionCorrectionDraft {
+        do {
+            let store = try requiredStore()
+            let snapshot = try await store.loadSnapshot()
+            guard let attention = snapshot.attentionStates.first(where: { $0.area == prompt.area }),
+                  attention.updatedAt == prompt.expectedAttentionUpdatedAt else {
+                throw ProductFlowError.invalidState
+            }
+            let moment = try moment()
+            let existing = snapshot.checkIns
+                .filter {
+                    $0.status == .draft &&
+                        $0.kind == .attentionCorrection &&
+                        $0.correctionSource?.area == prompt.area &&
+                        $0.dayContext.localDay == moment.dayContext.localDay
+                }
+                .max { $0.startedAt < $1.startedAt }
+            let checkInDraft: SingleAreaCheckInDraft
+            if let existing {
+                checkInDraft = SingleAreaCheckInDraft(
+                    checkInID: existing.id,
+                    entryID: CheckInEntryID(UUID()),
+                    area: prompt.area,
+                    startedAt: existing.startedAt,
+                    dayContext: existing.dayContext
+                )
+            } else {
+                checkInDraft = SingleAreaCheckInDraft(
+                    checkInID: CheckInID(UUID()),
+                    entryID: CheckInEntryID(UUID()),
+                    area: prompt.area,
+                    startedAt: moment.timestamp,
+                    dayContext: moment.dayContext
+                )
+                let sourceEvent = snapshot.safetyEvents
+                    .filter {
+                        $0.area == prompt.area &&
+                            $0.sourceCheckInEntryID != nil &&
+                            $0.occurredAt <= attention.updatedAt
+                    }
+                    .max { $0.occurredAt < $1.occurredAt }
+                let checkIn = try CheckIn(
+                    id: checkInDraft.checkInID,
+                    status: .draft,
+                    kind: .attentionCorrection,
+                    correctionSource: CorrectionSource(
+                        area: prompt.area,
+                        triggeringEntryID: sourceEvent?.sourceCheckInEntryID
+                    ),
+                    primaryArea: prompt.area,
+                    secondaryArea: nil,
+                    startedAt: checkInDraft.startedAt,
+                    completedAt: nil,
+                    dayContext: checkInDraft.dayContext,
+                    entries: []
+                )
+                try await store.saveCheckInDraft(try SaveCheckInDraftCommand(checkIn: checkIn))
+            }
+            return AttentionCorrectionDraft(
+                checkIn: checkInDraft,
+                safetyEventID: SafetyEventID(UUID()),
+                expectedAttentionUpdatedAt: attention.updatedAt
+            )
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func submitAttentionCorrection(
+        _ draft: AttentionCorrectionDraft,
+        change: ChangeReport,
+        comfort: MovementComfort,
+        safetyAnswer: ConditionalSafetyAnswer?
+    ) async throws(ProductFlowError) -> AttentionResolution {
+        do {
+            let store = try requiredStore()
+            let snapshot = try await store.loadSnapshot()
+            if let existing = snapshot.safetyEvents.first(where: { $0.id == draft.safetyEventID }) {
+                let expectedKind: SafetyEventKind = safetyAnswer == .yes || safetyAnswer == .notSure ?
+                    .attentionReaffirmedCorrection : .attentionClearedCorrection
+                guard let completed = snapshot.checkIns.first(where: { $0.id == draft.checkIn.checkInID }),
+                      let entry = completed.entries.first(where: { $0.id == draft.checkIn.entryID }),
+                      completed.status == .completed,
+                      completed.kind == .attentionCorrection,
+                      entry.area == draft.checkIn.area,
+                      entry.changeReport == change,
+                      entry.movementComfort == comfort,
+                      entry.conditionalSafetyAnswer == safetyAnswer,
+                      existing.area == draft.checkIn.area,
+                      existing.sourceCheckInEntryID == entry.id,
+                      existing.returnAnswer == nil,
+                      existing.kind == expectedKind
+                else { throw ProductFlowError.invalidState }
+                return try attentionResolution(from: snapshot)
+            }
+            guard let attention = snapshot.attentionStates.first(where: { $0.area == draft.checkIn.area }),
+                  attention.updatedAt == draft.expectedAttentionUpdatedAt,
+                  let persisted = snapshot.checkIns.first(where: { $0.id == draft.checkIn.checkInID }),
+                  persisted.status == .draft,
+                  persisted.kind == .attentionCorrection,
+                  persisted.correctionSource?.area == draft.checkIn.area,
+                  persisted.primaryArea == draft.checkIn.area,
+                  persisted.startedAt == draft.checkIn.startedAt,
+                  persisted.dayContext == draft.checkIn.dayContext else {
+                throw ProductFlowError.invalidState
+            }
+            let completedAt = try timestamp(after: max(attention.updatedAt, persisted.startedAt))
+            let entry = try CheckInEntry(
+                id: draft.checkIn.entryID,
+                area: draft.checkIn.area,
+                role: .primary,
+                changeReport: change,
+                movementComfort: comfort,
+                conditionalSafetyAnswer: safetyAnswer,
+                submittedAt: completedAt
+            )
+            let completed = try CheckIn(
+                id: persisted.id,
+                status: .completed,
+                kind: .attentionCorrection,
+                correctionSource: persisted.correctionSource,
+                primaryArea: persisted.primaryArea,
+                secondaryArea: nil,
+                startedAt: persisted.startedAt,
+                completedAt: completedAt,
+                dayContext: persisted.dayContext,
+                entries: [entry]
+            )
+            let event = try SafetyEvent(
+                id: draft.safetyEventID,
+                area: entry.area,
+                kind: entry.triggersAttention ? .attentionReaffirmedCorrection : .attentionClearedCorrection,
+                sourceCheckInEntryID: entry.id,
+                occurredAt: completedAt,
+                dayContext: persisted.dayContext
+            )
+            let mutation = try SafetyMutation(
+                event: event,
+                statusAfter: entry.triggersAttention ? .attentionRequired : .normal,
+                expectedAttentionUpdatedAt: attention.updatedAt
+            )
+            try await store.completeCheckIn(
+                try CompleteCheckInCommand(checkIn: completed, safetyMutations: [mutation])
+            )
+            return try attentionResolution(from: try await store.loadSnapshot())
+        } catch {
+            throw map(error)
+        }
+    }
+
     public func beginSingleAreaCheckIn() async throws(ProductFlowError) -> SingleAreaCheckInDraft {
         do {
             let store = try requiredStore()
@@ -295,7 +491,13 @@ public actor PrototypeProductService: KineoProductServing {
             try await store.completeCheckIn(
                 try CompleteCheckInCommand(checkIn: completed, safetyMutations: mutations)
             )
-            if entry.triggersAttention { return .attentionRequired(draft.area) }
+            if entry.triggersAttention {
+                let updated = try await store.loadSnapshot()
+                guard let attention = updated.attentionStates.first(where: { $0.area == draft.area }) else {
+                    throw ProductFlowError.invalidData
+                }
+                return .attentionRequired(attentionPrompt(for: attention))
+            }
             return .plan(try await preparePlan(
                 checkInID: draft.checkInID,
                 duration: .standard,
@@ -317,6 +519,28 @@ public actor PrototypeProductService: KineoProductServing {
                 duration: duration,
                 requestedLevel: requestedLevel
             )
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func pauseToday(checkInID: CheckInID) async throws(ProductFlowError) -> BodyArea {
+        do {
+            let store = try requiredStore()
+            let snapshot = try await store.loadSnapshot()
+            let checkIn = try requiredCheckIn(checkInID, snapshot: snapshot)
+            guard checkIn.status == .completed else { throw ProductFlowError.invalidState }
+            if snapshot.pauseTodayEvents.contains(where: { $0.checkInID == checkInID }) {
+                return checkIn.primaryArea
+            }
+            let chosenAt = try timestamp(notBefore: checkIn.completedAt ?? checkIn.startedAt)
+            try await store.recordPauseToday(RecordPauseTodayCommand(event: PauseTodayEvent(
+                id: PauseTodayEventID(UUID()),
+                checkInID: checkInID,
+                chosenAt: chosenAt,
+                dayContext: checkIn.dayContext
+            )))
+            return checkIn.primaryArea
         } catch {
             throw map(error)
         }
@@ -773,6 +997,29 @@ private extension PrototypeProductService {
         })
     }
 
+    func firstAttention(in snapshot: KineoDataSnapshot) -> AttentionState? {
+        let byArea = Dictionary(uniqueKeysWithValues: snapshot.attentionStates.map { ($0.area, $0) })
+        return PrototypeSelectionRules.supportedAreas.compactMap { byArea[$0] }.first
+    }
+
+    func attentionPrompt(for attention: AttentionState) -> AttentionPrompt {
+        AttentionPrompt(
+            area: attention.area,
+            responseEventID: SafetyEventID(UUID()),
+            expectedAttentionUpdatedAt: attention.updatedAt
+        )
+    }
+
+    func attentionResolution(from snapshot: KineoDataSnapshot) throws -> AttentionResolution {
+        if let attention = firstAttention(in: snapshot) {
+            return .attentionRequired(attentionPrompt(for: attention))
+        }
+        guard let area = snapshot.profileState?.profile.primaryArea else {
+            throw ProductFlowError.invalidState
+        }
+        return .ready(area)
+    }
+
     func requiredStore() throws -> KineoGRDBStore {
         guard let store else { throw ProductFlowError.foundationNotReady }
         return store
@@ -810,6 +1057,22 @@ private extension PrototypeProductService {
 
     func timestamp(notBefore minimum: TimestampMilliseconds) throws -> TimestampMilliseconds {
         max(try moment().timestamp, minimum)
+    }
+
+    func timestamp(after minimum: TimestampMilliseconds) throws -> TimestampMilliseconds {
+        try moment(after: minimum).timestamp
+    }
+
+    func moment(after minimum: TimestampMilliseconds) throws -> ProductMoment {
+        let current = try moment()
+        let (nextRawValue, overflow) = minimum.rawValue.addingReportingOverflow(
+            PrototypeProductConfiguration.timestampIncrement
+        )
+        guard !overflow else { throw ProductFlowError.invalidData }
+        return ProductMoment(
+            timestamp: max(current.timestamp, TimestampMilliseconds(rawValue: nextRawValue)),
+            dayContext: current.dayContext
+        )
     }
 
     func moment() throws -> ProductMoment {
@@ -874,6 +1137,7 @@ private enum PrototypeProductConfiguration {
     static let firstStepIndex = 0
     static let stepIncrement = 1
     static let noElapsedMilliseconds: Int64 = 0
+    static let timestampIncrement: Int64 = 1
     static let beforeFirstRevision = 0
     static let revisionIncrement = 1
     static let beforeFirstSequence = 0

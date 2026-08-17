@@ -45,8 +45,19 @@ private struct ProductFlowContainer: View {
                     ComfortCheckInView(model: model, draft: draft, change: change)
                 case .conditionalSafety(let draft, let change, let comfort):
                     ConditionalSafetyView(model: model, draft: draft, change: change, comfort: comfort)
-                case .attentionRequired(let area): AttentionRequiredView(area: area)
+                case .attentionGuidance(let prompt):
+                    AttentionGuidanceView(model: model, prompt: prompt)
+                case .attentionReturn(let prompt):
+                    AttentionReturnView(model: model, prompt: prompt)
+                case .attentionCorrectionChange(_, let draft):
+                    AttentionCorrectionChangeView(model: model, draft: draft)
+                case .attentionCorrectionComfort(_, let draft, _):
+                    AttentionCorrectionComfortView(model: model, draft: draft)
+                case .attentionCorrectionSafety(_, let draft, _, _):
+                    AttentionCorrectionSafetyView(model: model, draft: draft)
                 case .plan(let plan): PlanView(model: model, plan: plan)
+                case .pauseTodayConfirmation(let area):
+                    PauseTodayConfirmationView(model: model, area: area)
                 case .routine(let routine): RoutineView(model: model, routine: routine)
                 case .feedback(let routine): FeedbackView(model: model, routine: routine)
                 case .completion(let area): CompletionView(model: model, area: area)
@@ -241,15 +252,87 @@ private struct ConditionalSafetyView: View {
     }
 }
 
-private struct AttentionRequiredView: View {
-    let area: BodyArea
+private struct AttentionGuidanceView: View {
+    let model: ProductFlowModel
+    let prompt: AttentionPrompt
     var body: some View {
         ContentUnavailableView {
             Label("Attention required", systemImage: "exclamationmark.circle")
         } description: {
-            Text("Kineo has withheld a routine because of your \(area.title.lowercased()) answer.")
+            Text("Kineo has withheld a routine because of your \(prompt.area.title.lowercased()) answer.")
+        } actions: {
+            VStack(spacing: KineoLayout.standardSpacing) {
+                Button("Done") { model.send(.showAttentionReturn) }
+                Button("I selected that by mistake") { model.send(.startAttentionCorrection) }
+            }
         }
         .navigationTitle("Attention required")
+    }
+}
+
+private struct AttentionReturnView: View {
+    let model: ProductFlowModel
+    let prompt: AttentionPrompt
+    var body: some View {
+        FlowPage(title: "Before another check-in") {
+            Text("Has your \(prompt.area.title.lowercased()) returned to what is usual for you?")
+                .font(.headline)
+            Text("This does not create a routine. If you answer Yes, you will still complete a fresh check-in.")
+                .foregroundStyle(.secondary)
+            ChoiceCard(title: "Yes") { model.send(.answerAttentionReturn(.yes)) }
+            ChoiceCard(title: "No") { model.send(.answerAttentionReturn(.no)) }
+            ChoiceCard(title: "Not sure") { model.send(.answerAttentionReturn(.notSure)) }
+            SecondaryButton("I selected that by mistake") {
+                model.send(.startAttentionCorrection)
+            }
+        }
+    }
+}
+
+private struct AttentionCorrectionChangeView: View {
+    let model: ProductFlowModel
+    let draft: AttentionCorrectionDraft
+    var body: some View {
+        FlowPage(title: "Correct your \(draft.checkIn.area.title.lowercased()) answer") {
+            Text("How does this area feel today?")
+                .font(.headline)
+            ChoiceCard(title: "Better") { model.send(.selectCorrectionChange(.better)) }
+            ChoiceCard(title: "Similar") { model.send(.selectCorrectionChange(.similar)) }
+            ChoiceCard(title: "Worse") { model.send(.selectCorrectionChange(.worse)) }
+            SecondaryButton("Cancel correction") { model.send(.cancelAttentionCorrection) }
+        }
+    }
+}
+
+private struct AttentionCorrectionComfortView: View {
+    let model: ProductFlowModel
+    let draft: AttentionCorrectionDraft
+    var body: some View {
+        FlowPage(title: "Correct your movement answer") {
+            Text("How comfortable does movement feel?")
+                .font(.headline)
+            ChoiceCard(title: "Limited") { model.send(.selectCorrectionComfort(.limited)) }
+            ChoiceCard(title: "Okay") { model.send(.selectCorrectionComfort(.okay)) }
+            ChoiceCard(title: "Good") { model.send(.selectCorrectionComfort(.good)) }
+            SecondaryButton("Cancel correction") { model.send(.cancelAttentionCorrection) }
+        }
+    }
+}
+
+private struct AttentionCorrectionSafetyView: View {
+    let model: ProductFlowModel
+    let draft: AttentionCorrectionDraft
+    var body: some View {
+        FlowPage(title: "Correct your follow-up") {
+            NoticeCard(
+                title: "Is this new, sudden, or unusual for you?",
+                message: "Yes and Not sure keep Attention Required active."
+            )
+            ChoiceCard(title: "No") { model.send(.answerCorrectionSafety(.no)) }
+            ChoiceCard(title: "Yes") { model.send(.answerCorrectionSafety(.yes)) }
+            ChoiceCard(title: "Not sure") { model.send(.answerCorrectionSafety(.notSure)) }
+            SecondaryButton("Cancel correction") { model.send(.cancelAttentionCorrection) }
+        }
     }
 }
 
@@ -273,7 +356,24 @@ private struct PlanView: View {
                 SecondaryButton("Choose \(gentler.title) instead") { model.send(.chooseGentlerLevel(gentler)) }
             }
             PrimaryButton("Start routine") { model.send(.startRoutine) }
+            if plan.pauseTodayAvailable {
+                SecondaryButton("Pause for today") { model.send(.pauseToday) }
+            }
             Text("Changing duration changes reviewed content, not the selected movement level.").font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct PauseTodayConfirmationView: View {
+    let model: ProductFlowModel
+    let area: BodyArea
+    var body: some View {
+        ContentUnavailableView {
+            Label("Paused for today", systemImage: "pause.circle")
+        } description: {
+            Text("No \(area.title.lowercased()) routine was started. You can check in again when you choose.")
+        } actions: {
+            Button("Done") { model.send(.finishPauseToday) }
         }
     }
 }

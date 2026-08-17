@@ -103,11 +103,93 @@ struct ProductFlowModelTests {
         await model.performPendingAction()
         #expect(model.state == .welcome)
     }
+
+    @Test("Attention return and correction require a committed clear before Today")
+    func attentionCorrectionFlow() async {
+        let prompt = AttentionPrompt(
+            area: .neck,
+            responseEventID: SafetyEventID(UUID()),
+            expectedAttentionUpdatedAt: ProductFlowStubValues.timestamp
+        )
+        let service = ProductFlowServiceStub(productStartState: .attentionRequired(prompt))
+        let model = ProductFlowModel(service: service)
+
+        await model.performPendingAction()
+        #expect(model.state == .attentionReturn(prompt))
+        model.send(.answerAttentionReturn(.no))
+        await model.performPendingAction()
+        #expect(model.state == .attentionGuidance(prompt))
+        model.send(.showAttentionReturn)
+        #expect(model.state == .attentionReturn(prompt))
+
+        model.send(.startAttentionCorrection)
+        await model.performPendingAction()
+        guard case .attentionCorrectionChange = model.state else {
+            Issue.record("Expected a fresh correction check-in.")
+            return
+        }
+        model.send(.selectCorrectionChange(.similar))
+        model.send(.selectCorrectionComfort(.okay))
+        await model.performPendingAction()
+        #expect(model.state == .today(.neck))
+    }
+
+    @Test("An eligible plan can Pause Today without starting a routine")
+    func pauseTodayFlow() async throws {
+        let service = ProductFlowServiceStub(pauseTodayAvailable: true)
+        let model = ProductFlowModel(service: service)
+        await model.performPendingAction()
+        model.send(.getStarted)
+        model.send(.confirmAdult)
+        await model.performPendingAction()
+        model.send(.selectPrimaryArea(.neck))
+        model.send(.continuePrimaryArea)
+        await model.performPendingAction()
+        model.send(.acknowledgeSafety)
+        await model.performPendingAction()
+        model.send(.completeOnboarding)
+        await model.performPendingAction()
+        model.send(.startCheckIn)
+        await model.performPendingAction()
+        model.send(.selectChange(.similar))
+        model.send(.selectComfort(.okay))
+        await model.performPendingAction()
+
+        model.send(.pauseToday)
+        await model.performPendingAction()
+        #expect(model.state == .pauseTodayConfirmation(.neck))
+        model.send(.finishPauseToday)
+        #expect(model.state == .today(.neck))
+    }
+
+    @Test("A stale Today route fails closed into the current Attention prompt")
+    func attentionPreflightRecovery() async {
+        let prompt = AttentionPrompt(
+            area: .lowerBack,
+            responseEventID: SafetyEventID(UUID()),
+            expectedAttentionUpdatedAt: ProductFlowStubValues.timestamp
+        )
+        let service = ProductFlowServiceStub(
+            productStartStates: [.today(.neck), .attentionRequired(prompt)],
+            failBeginCheckInWithAttention: true
+        )
+        let model = ProductFlowModel(service: service)
+
+        await model.performPendingAction()
+        #expect(model.state == .today(.neck))
+        model.send(.startCheckIn)
+        await model.performPendingAction()
+        #expect(model.state == .attentionReturn(prompt))
+        #expect(model.errorMessage == nil)
+    }
 }
 
 private actor ProductFlowServiceStub: KineoProductServing {
     private var failAdultConfirmationOnce: Bool
     private var launchStates: [AppLaunchState]
+    private var productStartStates: [ProductStartState]
+    private let pauseTodayAvailable: Bool
+    private let failBeginCheckInWithAttention: Bool
     private let checkInID = CheckInID(UUID())
     private let entryID = CheckInEntryID(UUID())
     private let decisionID = SelectionDecisionID(UUID())
@@ -115,10 +197,17 @@ private actor ProductFlowServiceStub: KineoProductServing {
 
     init(
         failAdultConfirmationOnce: Bool = false,
-        launchStates: [AppLaunchState] = [.foundationReady]
+        launchStates: [AppLaunchState] = [.foundationReady],
+        productStartState: ProductStartState = .onboarding(.welcome),
+        productStartStates: [ProductStartState]? = nil,
+        pauseTodayAvailable: Bool = false,
+        failBeginCheckInWithAttention: Bool = false
     ) {
         self.failAdultConfirmationOnce = failAdultConfirmationOnce
         self.launchStates = launchStates
+        self.productStartStates = productStartStates ?? [productStartState]
+        self.pauseTodayAvailable = pauseTodayAvailable
+        self.failBeginCheckInWithAttention = failBeginCheckInWithAttention
     }
 
     func initialState() async -> AppLaunchState {
@@ -127,7 +216,11 @@ private actor ProductFlowServiceStub: KineoProductServing {
     }
 
     func loadProductStartState() async throws(ProductFlowError) -> ProductStartState {
-        .onboarding(.welcome)
+        guard let first = productStartStates.first else { throw .invalidState }
+        if productStartStates.count > ProductFlowStubValues.singleRemainingStateCount {
+            productStartStates.removeFirst()
+        }
+        return first
     }
 
     func confirmAdultEligibility() async throws(ProductFlowError) {
@@ -141,7 +234,36 @@ private actor ProductFlowServiceStub: KineoProductServing {
     func acknowledgeSafetyBoundary() async throws(ProductFlowError) {}
     func completeOnboarding() async throws(ProductFlowError) -> BodyArea { .neck }
 
+    func respondToAttentionReturn(
+        _ prompt: AttentionPrompt,
+        answer: ConditionalSafetyAnswer
+    ) async throws(ProductFlowError) -> AttentionResolution {
+        answer == .yes ? .ready(.neck) : .attentionRequired(prompt)
+    }
+
+    func beginAttentionCorrection(
+        _ prompt: AttentionPrompt
+    ) async throws(ProductFlowError) -> AttentionCorrectionDraft {
+        AttentionCorrectionDraft(
+            checkIn: try await beginSingleAreaCheckIn(),
+            safetyEventID: SafetyEventID(UUID()),
+            expectedAttentionUpdatedAt: prompt.expectedAttentionUpdatedAt
+        )
+    }
+
+    func submitAttentionCorrection(
+        _ draft: AttentionCorrectionDraft,
+        change: ChangeReport,
+        comfort: MovementComfort,
+        safetyAnswer: ConditionalSafetyAnswer?
+    ) async throws(ProductFlowError) -> AttentionResolution {
+        .ready(draft.checkIn.area)
+    }
+
     func beginSingleAreaCheckIn() async throws(ProductFlowError) -> SingleAreaCheckInDraft {
+        if failBeginCheckInWithAttention {
+            throw .attentionRequired([.lowerBack])
+        }
         guard let day = LocalDay(rawValue: ProductFlowStubValues.day),
               let timeZone = NonEmptyString(rawValue: ProductFlowStubValues.timeZone),
               let calendar = NonEmptyString(rawValue: ProductFlowStubValues.calendar) else {
@@ -171,6 +293,10 @@ private actor ProductFlowServiceStub: KineoProductServing {
         requestedLevel: RoutineLevel?
     ) async throws(ProductFlowError) -> PlanPresentation {
         plan(checkInID: checkInID, duration: duration)
+    }
+
+    func pauseToday(checkInID: CheckInID) async throws(ProductFlowError) -> BodyArea {
+        .neck
     }
 
     func startRoutine(
@@ -225,7 +351,7 @@ private actor ProductFlowServiceStub: KineoProductServing {
             nominalSeconds: duration == .quick ?
                 PrototypeCatalogDurations.quickNominalSeconds :
                 PrototypeCatalogDurations.standardNominalSeconds,
-            pauseTodayAvailable: false
+            pauseTodayAvailable: pauseTodayAvailable
         )
     }
 }
@@ -237,4 +363,5 @@ private enum ProductFlowStubValues {
     static let timestamp = TimestampMilliseconds(rawValue: 1_787_000_000_000)
     static let firstStepIndex = 0
     static let stepCount = 1
+    static let singleRemainingStateCount = 1
 }

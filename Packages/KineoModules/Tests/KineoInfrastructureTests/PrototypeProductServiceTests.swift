@@ -99,7 +99,11 @@ struct PrototypeProductServiceTests {
             comfort: .limited,
             safetyAnswer: .notSure
         )
-        #expect(result == .attentionRequired(.lowerBack))
+        guard case .attentionRequired(let prompt) = result else {
+            Issue.record("Expected Attention after a triggering answer.")
+            return
+        }
+        #expect(prompt.area == .lowerBack)
         await #expect(throws: ProductFlowError.attentionRequired([.lowerBack])) {
             _ = try await service.beginSingleAreaCheckIn()
         }
@@ -109,11 +113,172 @@ struct PrototypeProductServiceTests {
         #expect(persisted.decisions.isEmpty)
         #expect(persisted.routineSessions.isEmpty)
     }
+
+    @Test("Attention answers and correction preserve the gate until a valid clear commits")
+    func attentionReturnAndCorrection() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        let service = fixture.service
+        try await fixture.completeOnboarding(area: .upperMidBack)
+
+        let draft = try await service.beginSingleAreaCheckIn()
+        guard case .attentionRequired = try await service.submitSingleAreaCheckIn(
+            draft,
+            change: .worse,
+            comfort: .okay,
+            safetyAnswer: .notSure
+        ) else {
+            Issue.record("Expected the original check-in to enter Attention.")
+            return
+        }
+        guard case .attentionRequired(let initialPrompt) = try await service.loadProductStartState()
+        else {
+            Issue.record("Expected relaunch to restore the Attention prompt.")
+            return
+        }
+
+        guard case .attentionRequired(let reaffirmedPrompt) = try await service.respondToAttentionReturn(
+            initialPrompt,
+            answer: .no
+        ) else {
+            Issue.record("No must keep Attention active.")
+            return
+        }
+        #expect(reaffirmedPrompt.expectedAttentionUpdatedAt > initialPrompt.expectedAttentionUpdatedAt)
+
+        let correction = try await service.beginAttentionCorrection(reaffirmedPrompt)
+        let cleared = try await service.submitAttentionCorrection(
+            correction,
+            change: .similar,
+            comfort: .okay,
+            safetyAnswer: nil
+        )
+        #expect(cleared == .ready(.upperMidBack))
+        #expect(
+            try await service.submitAttentionCorrection(
+                correction,
+                change: .similar,
+                comfort: .okay,
+                safetyAnswer: nil
+            ) == .ready(.upperMidBack)
+        )
+        #expect(try await service.loadProductStartState() == .today(.upperMidBack))
+
+        let persisted = try await fixture.snapshot()
+        #expect(persisted.attentionStates.isEmpty)
+        #expect(persisted.checkIns.count == ProductServiceFixture.attentionCorrectionCheckInCount)
+        #expect(persisted.safetyEvents.map(\.kind) == [
+            .attentionEntered,
+            .attentionReaffirmed,
+            .attentionClearedCorrection
+        ])
+        #expect(persisted.decisions.isEmpty)
+    }
+
+    @Test("Returned to usual clears only through Yes and safely replays")
+    func returnedToUsualClear() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        let service = fixture.service
+        try await fixture.completeOnboarding(area: .lowerBack)
+        let draft = try await service.beginSingleAreaCheckIn()
+        guard case .attentionRequired(let prompt) = try await service.submitSingleAreaCheckIn(
+            draft,
+            change: .similar,
+            comfort: .limited,
+            safetyAnswer: .yes
+        ) else {
+            Issue.record("Expected Attention before the return answer.")
+            return
+        }
+
+        #expect(try await service.respondToAttentionReturn(prompt, answer: .yes) == .ready(.lowerBack))
+        #expect(try await service.respondToAttentionReturn(prompt, answer: .yes) == .ready(.lowerBack))
+        _ = try await service.beginSingleAreaCheckIn()
+
+        let persisted = try await fixture.snapshot()
+        #expect(persisted.attentionStates.isEmpty)
+        #expect(persisted.safetyEvents.map(\.kind) == [
+            .attentionEntered,
+            .attentionClearedReturnedToUsual
+        ])
+        #expect(persisted.decisions.isEmpty)
+    }
+
+    @Test("A triggering correction reaffirms Attention and creates no plan")
+    func triggeringCorrectionReaffirmsAttention() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        let service = fixture.service
+        try await fixture.completeOnboarding(area: .neck)
+        let draft = try await service.beginSingleAreaCheckIn()
+        guard case .attentionRequired(let prompt) = try await service.submitSingleAreaCheckIn(
+            draft,
+            change: .worse,
+            comfort: .good,
+            safetyAnswer: .notSure
+        ) else {
+            Issue.record("Expected Attention before correction.")
+            return
+        }
+
+        let correction = try await service.beginAttentionCorrection(prompt)
+        guard case .attentionRequired(let nextPrompt) = try await service.submitAttentionCorrection(
+            correction,
+            change: .worse,
+            comfort: .good,
+            safetyAnswer: .yes
+        ) else {
+            Issue.record("A triggering correction must preserve Attention.")
+            return
+        }
+        #expect(nextPrompt.area == .neck)
+
+        let persisted = try await fixture.snapshot()
+        #expect(persisted.attentionStates.map(\.area) == [.neck])
+        #expect(persisted.safetyEvents.map(\.kind) == [
+            .attentionEntered,
+            .attentionReaffirmedCorrection
+        ])
+        #expect(persisted.decisions.isEmpty)
+    }
+
+    @Test("Pause Today is eligible once, creates no routine, and survives retry")
+    func pauseToday() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        let service = fixture.service
+        try await fixture.completeOnboarding(area: .neck)
+
+        let draft = try await service.beginSingleAreaCheckIn()
+        guard case .plan(let plan) = try await service.submitSingleAreaCheckIn(
+            draft,
+            change: .similar,
+            comfort: .limited,
+            safetyAnswer: .no
+        ) else {
+            Issue.record("Expected a Gentle plan with Pause Today.")
+            return
+        }
+        #expect(plan.recommendedLevel == .gentle)
+        #expect(plan.pauseTodayAvailable)
+        #expect(try await service.pauseToday(checkInID: plan.checkInID) == .neck)
+        #expect(try await service.pauseToday(checkInID: plan.checkInID) == .neck)
+        await #expect(throws: ProductFlowError.persistence(.conflictingWrite)) {
+            _ = try await service.startRoutine(decisionID: plan.decisionID)
+        }
+
+        let persisted = try await fixture.snapshot()
+        #expect(persisted.pauseTodayEvents.count == ProductServiceFixture.pauseTodayEventCount)
+        #expect(persisted.routineSessions.isEmpty)
+    }
 }
 
 private struct ProductServiceFixture {
     static let completedCheckInCount = 1
     static let planRevisionCount = 3
+    static let attentionCorrectionCheckInCount = 2
+    static let pauseTodayEventCount = 1
 
     let root: URL
     let location: KineoStoreLocation
@@ -140,6 +305,14 @@ private struct ProductServiceFixture {
             storageProtector: NoOpKineoStorageProtector()
         )
         return try await store.loadSnapshot()
+    }
+
+    func completeOnboarding(area: BodyArea) async throws {
+        #expect(await service.initialState() == .foundationReady)
+        try await service.confirmAdultEligibility()
+        try await service.savePrimaryArea(area)
+        try await service.acknowledgeSafetyBoundary()
+        _ = try await service.completeOnboarding()
     }
 
     func removeFiles() {

@@ -35,7 +35,31 @@ public enum OnboardingProgress: Equatable, Sendable {
 /// The product route reconstructed after launch.
 public enum ProductStartState: Equatable, Sendable {
     case onboarding(OnboardingProgress)
+    case attentionRequired(AttentionPrompt)
     case today(BodyArea)
+}
+
+/// One immutable attempt to answer the return-to-usual Attention prompt.
+public struct AttentionPrompt: Equatable, Sendable {
+    public let area: BodyArea
+    public let responseEventID: SafetyEventID
+    public let expectedAttentionUpdatedAt: TimestampMilliseconds
+
+    public init(
+        area: BodyArea,
+        responseEventID: SafetyEventID,
+        expectedAttentionUpdatedAt: TimestampMilliseconds
+    ) {
+        self.area = area
+        self.responseEventID = responseEventID
+        self.expectedAttentionUpdatedAt = expectedAttentionUpdatedAt
+    }
+}
+
+/// The next safe route after an Attention return answer or correction commits.
+public enum AttentionResolution: Equatable, Sendable {
+    case attentionRequired(AttentionPrompt)
+    case ready(BodyArea)
 }
 
 /// Stable identity and context for one in-progress single-area check-in.
@@ -58,6 +82,23 @@ public struct SingleAreaCheckInDraft: Equatable, Sendable {
         self.area = area
         self.startedAt = startedAt
         self.dayContext = dayContext
+    }
+}
+
+/// Stable identities and safety version for one fresh Attention correction.
+public struct AttentionCorrectionDraft: Equatable, Sendable {
+    public let checkIn: SingleAreaCheckInDraft
+    public let safetyEventID: SafetyEventID
+    public let expectedAttentionUpdatedAt: TimestampMilliseconds
+
+    public init(
+        checkIn: SingleAreaCheckInDraft,
+        safetyEventID: SafetyEventID,
+        expectedAttentionUpdatedAt: TimestampMilliseconds
+    ) {
+        self.checkIn = checkIn
+        self.safetyEventID = safetyEventID
+        self.expectedAttentionUpdatedAt = expectedAttentionUpdatedAt
     }
 }
 
@@ -104,7 +145,7 @@ public struct PlanPresentation: Equatable, Sendable {
 
 /// Result after a complete check-in commits.
 public enum SingleAreaCheckInResult: Equatable, Sendable {
-    case attentionRequired(BodyArea)
+    case attentionRequired(AttentionPrompt)
     case plan(PlanPresentation)
 }
 
@@ -143,13 +184,26 @@ public struct RoutinePresentation: Equatable, Sendable {
     }
 }
 
-/// The functional product operations used by the M5 SwiftUI flow.
+/// The functional product operations used by the SwiftUI product flow.
 public protocol KineoProductServing: AppBootstrapping {
     func loadProductStartState() async throws(ProductFlowError) -> ProductStartState
     func confirmAdultEligibility() async throws(ProductFlowError)
     func savePrimaryArea(_ area: BodyArea) async throws(ProductFlowError)
     func acknowledgeSafetyBoundary() async throws(ProductFlowError)
     func completeOnboarding() async throws(ProductFlowError) -> BodyArea
+    func respondToAttentionReturn(
+        _ prompt: AttentionPrompt,
+        answer: ConditionalSafetyAnswer
+    ) async throws(ProductFlowError) -> AttentionResolution
+    func beginAttentionCorrection(
+        _ prompt: AttentionPrompt
+    ) async throws(ProductFlowError) -> AttentionCorrectionDraft
+    func submitAttentionCorrection(
+        _ draft: AttentionCorrectionDraft,
+        change: ChangeReport,
+        comfort: MovementComfort,
+        safetyAnswer: ConditionalSafetyAnswer?
+    ) async throws(ProductFlowError) -> AttentionResolution
     func beginSingleAreaCheckIn() async throws(ProductFlowError) -> SingleAreaCheckInDraft
     func submitSingleAreaCheckIn(
         _ draft: SingleAreaCheckInDraft,
@@ -162,6 +216,7 @@ public protocol KineoProductServing: AppBootstrapping {
         duration: DurationVariant,
         requestedLevel: RoutineLevel?
     ) async throws(ProductFlowError) -> PlanPresentation
+    func pauseToday(checkInID: CheckInID) async throws(ProductFlowError) -> BodyArea
     func startRoutine(decisionID: SelectionDecisionID) async throws(ProductFlowError) -> RoutinePresentation
     func advanceRoutine(
         sessionID: RoutineSessionID,
