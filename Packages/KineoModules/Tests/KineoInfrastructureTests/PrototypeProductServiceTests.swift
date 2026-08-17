@@ -230,6 +230,97 @@ struct PrototypeProductServiceTests {
         #expect(decision?.notices.contains(where: { $0.code.rawValue == "notice.secondary_skipped" }) == true)
     }
 
+    @Test("Multiple Attention areas persist and resolve in stable order")
+    func multipleAttentionAreasResolveInOrder() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        try await fixture.completeOnboarding(area: .neck, secondaryArea: .lowerBack)
+        let draft = try await fixture.service.beginSingleAreaCheckIn()
+        guard case .attentionRequired(let firstPrompt) = try await fixture.service.submitCheckIn(
+            draft,
+            primary: AreaCheckInAnswers(
+                area: .neck,
+                change: .worse,
+                comfort: .okay,
+                safetyAnswer: .yes
+            ),
+            secondary: AreaCheckInAnswers(
+                area: .lowerBack,
+                change: .similar,
+                comfort: .limited,
+                safetyAnswer: .notSure
+            )
+        ) else {
+            Issue.record("Expected Attention for both triggering areas.")
+            return
+        }
+        #expect(firstPrompt.area == .neck)
+        guard case .attentionRequired(let secondPrompt) = try await fixture.service.respondToAttentionReturn(
+            firstPrompt,
+            answer: .yes
+        ) else {
+            Issue.record("Expected the remaining Attention area.")
+            return
+        }
+        #expect(secondPrompt.area == .lowerBack)
+        #expect(try await fixture.snapshot().attentionStates.map(\.area) == [.lowerBack])
+    }
+
+    @Test("Retrying a committed two-area check-in reuses its plan revision")
+    func committedTwoAreaRetryIsIdempotent() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        try await fixture.completeOnboarding(area: .upperMidBack, secondaryArea: .neck)
+        let draft = try await fixture.service.beginSingleAreaCheckIn()
+        let primary = AreaCheckInAnswers(
+            area: .upperMidBack,
+            change: .similar,
+            comfort: .okay,
+            safetyAnswer: nil
+        )
+        let secondary = AreaCheckInAnswers(
+            area: .neck,
+            change: .better,
+            comfort: .good,
+            safetyAnswer: nil
+        )
+        guard case .plan(let first) = try await fixture.service.submitCheckIn(
+            draft,
+            primary: primary,
+            secondary: secondary
+        ), case .plan(let retry) = try await fixture.service.submitCheckIn(
+            draft,
+            primary: primary,
+            secondary: secondary
+        ) else {
+            Issue.record("Expected an idempotent two-area plan retry.")
+            return
+        }
+        #expect(retry.decisionID == first.decisionID)
+        let persisted = try await fixture.snapshot()
+        #expect(persisted.checkIns.count == ProductServiceFixture.completedCheckInCount)
+        #expect(persisted.decisions.count == ProductServiceFixture.singleDecisionCount)
+    }
+
+    @Test("Changing the secondary area invalidates an unfinished area-set draft")
+    func changedSecondaryInvalidatesDraft() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        try await fixture.completeOnboarding(area: .neck, secondaryArea: .lowerBack)
+        let stale = try await fixture.service.beginSingleAreaCheckIn()
+        try await fixture.service.saveSecondaryArea(.upperMidBack)
+
+        let reopened = fixture.reopenedService()
+        #expect(await reopened.initialState() == .foundationReady)
+        #expect(try await reopened.loadProductStartState() == .today(.neck))
+        let fresh = try await reopened.beginSingleAreaCheckIn()
+        #expect(fresh.secondaryArea == .upperMidBack)
+        #expect(
+            try await fixture.snapshot().checkIns.first(where: { $0.id == stale.checkInID })?.status ==
+                .abandoned
+        )
+    }
+
     @Test("Relaunch resumes one same-day check-in without creating a duplicate draft")
     func relaunchResumesSameDayCheckIn() async throws {
         let fixture = try ProductServiceFixture()
@@ -692,6 +783,7 @@ private struct ProductServiceFixture {
     static let finalStepOffset = 1
     static let oneQualifyingOutcome = 1
     static let noQualifyingOutcomes = 0
+    static let singleDecisionCount = 1
     static let orderedAreaPairs = BodyArea.allCases.flatMap { primary in
         BodyArea.allCases.filter { $0 != primary }.map { (primary, $0) }
     }
