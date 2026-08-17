@@ -287,12 +287,24 @@ public enum RoutineLevel: String, CaseIterable, Codable, Comparable, Sendable {
     case balanced
     case active
 
-    public static func < (lhs: Self, rhs: Self) -> Bool {
-        guard let left = allCases.firstIndex(of: lhs), let right = allCases.firstIndex(of: rhs) else {
-            return false
+    /// The stable selection rank, ordered from gentlest to most active.
+    public var selectionRank: Int {
+        switch self {
+        case .gentle: RoutineLevelRank.gentle
+        case .balanced: RoutineLevelRank.balanced
+        case .active: RoutineLevelRank.active
         }
-        return left < right
     }
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.selectionRank < rhs.selectionRank
+    }
+}
+
+private enum RoutineLevelRank {
+    static let gentle = 0
+    static let balanced = 1
+    static let active = 2
 }
 
 public enum DurationVariant: String, Codable, Sendable {
