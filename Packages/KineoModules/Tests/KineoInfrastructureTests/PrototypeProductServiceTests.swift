@@ -48,7 +48,20 @@ struct PrototypeProductServiceTests {
         #expect(quick.selectedLevel == standard.selectedLevel)
         #expect(quick.duration == .quick)
 
-        var routine = try await service.startRoutine(decisionID: quick.decisionID)
+        let standardAgain = try await service.revisePlan(
+            checkInID: standard.checkInID,
+            duration: .standard,
+            requestedLevel: nil
+        )
+        let standardRetry = try await service.revisePlan(
+            checkInID: standard.checkInID,
+            duration: .standard,
+            requestedLevel: nil
+        )
+        #expect(standardAgain.decisionID != standard.decisionID)
+        #expect(standardRetry.decisionID == standardAgain.decisionID)
+
+        var routine = try await service.startRoutine(decisionID: standardAgain.decisionID)
         #expect(routine.status == .inProgress)
         while !routine.status.isTerminal {
             routine = try await service.advanceRoutine(
@@ -100,7 +113,7 @@ struct PrototypeProductServiceTests {
 
 private struct ProductServiceFixture {
     static let completedCheckInCount = 1
-    static let planRevisionCount = 2
+    static let planRevisionCount = 3
 
     let root: URL
     let location: KineoStoreLocation

@@ -7,7 +7,8 @@ public struct SystemProductClock: ProductClock {
 
     public func now() -> ProductMoment? {
         let date = Date()
-        let calendar = Calendar.autoupdatingCurrent
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         guard let year = components.year,
               let month = components.month,
@@ -478,9 +479,12 @@ private extension PrototypeProductService {
               let entry = checkIn.entries.first(where: { $0.area == checkIn.primaryArea }) else {
             throw ProductFlowError.invalidState
         }
-        let existing = snapshot.decisions.last {
-            $0.checkInID == checkInID && $0.durationVariant == duration &&
-                $0.requestedOverride == requestedLevel
+        let latestDecision = snapshot.decisions
+            .filter { $0.checkInID == checkInID }
+            .max { $0.revision < $1.revision }
+        let existing = latestDecision.flatMap { decision in
+            decision.durationVariant == duration && decision.requestedOverride == requestedLevel ?
+                decision : nil
         }
         let decisionID = existing?.id ?? SelectionDecisionID(UUID())
         let revision = existing?.revision ?? nextDecisionRevision(for: checkInID, in: snapshot)
