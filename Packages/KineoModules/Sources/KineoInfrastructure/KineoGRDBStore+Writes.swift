@@ -86,6 +86,12 @@ extension KineoGRDBStore: KineoStore {
         }
     }
 
+    public func abandonCheckIn(_ command: AbandonCheckInCommand) async throws(KineoCore.PersistenceError) {
+        try await performWrite(name: "abandonCheckIn") { db in
+            try Self.replaceMutableCheckIn(command.checkIn, db: db)
+        }
+    }
+
     public func completeCheckIn(_ command: CompleteCheckInCommand) async throws(KineoCore.PersistenceError) {
         try await performWrite(name: "completeCheckIn") { db in
             try Self.replaceMutableCheckIn(command.checkIn, db: db)
@@ -758,8 +764,11 @@ extension KineoGRDBStore: KineoStore {
         case .started: current == .prepared && next == .inProgress
         case .paused: current == .inProgress && next == .paused
         case .resumed: current == .paused && next == .inProgress
-        case .stepCompleted, .skipped, .alternativeSelected:
+        case .stepCompleted, .skipped:
             current == .inProgress && next == .inProgress
+        case .alternativeSelected:
+            (current == .inProgress && next == .inProgress) ||
+                (current == .paused && next == .paused)
         case .completed: (current == .inProgress || current == .paused) && next == .completed
         case .stopped: (current == .inProgress || current == .paused) && next == .stopped
         case .safetyStopped: (current == .inProgress || current == .paused) && next == .safetyStopped

@@ -35,7 +35,39 @@ public enum OnboardingProgress: Equatable, Sendable {
 /// The product route reconstructed after launch.
 public enum ProductStartState: Equatable, Sendable {
     case onboarding(OnboardingProgress)
+    case attentionRequired(AttentionPrompt)
+    case unfinishedCheckIn(SingleAreaCheckInDraft)
+    case unfinishedPlan(PlanPresentation)
+    case unfinishedRoutine(RoutinePresentation)
     case today(BodyArea)
+}
+
+/// Supplies monotonic elapsed time for guided-routine timing.
+public protocol RoutineMonotonicClock: Sendable {
+    func nowMilliseconds() async -> Int64?
+}
+
+/// One immutable attempt to answer the return-to-usual Attention prompt.
+public struct AttentionPrompt: Equatable, Sendable {
+    public let area: BodyArea
+    public let responseEventID: SafetyEventID
+    public let expectedAttentionUpdatedAt: TimestampMilliseconds
+
+    public init(
+        area: BodyArea,
+        responseEventID: SafetyEventID,
+        expectedAttentionUpdatedAt: TimestampMilliseconds
+    ) {
+        self.area = area
+        self.responseEventID = responseEventID
+        self.expectedAttentionUpdatedAt = expectedAttentionUpdatedAt
+    }
+}
+
+/// The next safe route after an Attention return answer or correction commits.
+public enum AttentionResolution: Equatable, Sendable {
+    case attentionRequired(AttentionPrompt)
+    case ready(BodyArea)
 }
 
 /// Stable identity and context for one in-progress single-area check-in.
@@ -58,6 +90,23 @@ public struct SingleAreaCheckInDraft: Equatable, Sendable {
         self.area = area
         self.startedAt = startedAt
         self.dayContext = dayContext
+    }
+}
+
+/// Stable identities and safety version for one fresh Attention correction.
+public struct AttentionCorrectionDraft: Equatable, Sendable {
+    public let checkIn: SingleAreaCheckInDraft
+    public let safetyEventID: SafetyEventID
+    public let expectedAttentionUpdatedAt: TimestampMilliseconds
+
+    public init(
+        checkIn: SingleAreaCheckInDraft,
+        safetyEventID: SafetyEventID,
+        expectedAttentionUpdatedAt: TimestampMilliseconds
+    ) {
+        self.checkIn = checkIn
+        self.safetyEventID = safetyEventID
+        self.expectedAttentionUpdatedAt = expectedAttentionUpdatedAt
     }
 }
 
@@ -104,7 +153,7 @@ public struct PlanPresentation: Equatable, Sendable {
 
 /// Result after a complete check-in commits.
 public enum SingleAreaCheckInResult: Equatable, Sendable {
-    case attentionRequired(BodyArea)
+    case attentionRequired(AttentionPrompt)
     case plan(PlanPresentation)
 }
 
@@ -119,6 +168,9 @@ public struct RoutinePresentation: Equatable, Sendable {
     public let currentStepIndex: Int
     public let totalStepCount: Int
     public let currentItem: PresentedRoutineItem?
+    public let selectedAlternative: PresentedAlternative?
+    public let stepElapsedMilliseconds: Int64
+    public let contentAvailable: Bool
 
     public init(
         sessionID: RoutineSessionID,
@@ -129,7 +181,10 @@ public struct RoutinePresentation: Equatable, Sendable {
         status: RoutineStatus,
         currentStepIndex: Int,
         totalStepCount: Int,
-        currentItem: PresentedRoutineItem?
+        currentItem: PresentedRoutineItem?,
+        selectedAlternative: PresentedAlternative? = nil,
+        stepElapsedMilliseconds: Int64 = 0,
+        contentAvailable: Bool = true
     ) {
         self.sessionID = sessionID
         self.area = area
@@ -140,16 +195,32 @@ public struct RoutinePresentation: Equatable, Sendable {
         self.currentStepIndex = currentStepIndex
         self.totalStepCount = totalStepCount
         self.currentItem = currentItem
+        self.selectedAlternative = selectedAlternative
+        self.stepElapsedMilliseconds = stepElapsedMilliseconds
+        self.contentAvailable = contentAvailable
     }
 }
 
-/// The functional product operations used by the M5 SwiftUI flow.
+/// The functional product operations used by the SwiftUI product flow.
 public protocol KineoProductServing: AppBootstrapping {
     func loadProductStartState() async throws(ProductFlowError) -> ProductStartState
     func confirmAdultEligibility() async throws(ProductFlowError)
     func savePrimaryArea(_ area: BodyArea) async throws(ProductFlowError)
     func acknowledgeSafetyBoundary() async throws(ProductFlowError)
     func completeOnboarding() async throws(ProductFlowError) -> BodyArea
+    func respondToAttentionReturn(
+        _ prompt: AttentionPrompt,
+        answer: ConditionalSafetyAnswer
+    ) async throws(ProductFlowError) -> AttentionResolution
+    func beginAttentionCorrection(
+        _ prompt: AttentionPrompt
+    ) async throws(ProductFlowError) -> AttentionCorrectionDraft
+    func submitAttentionCorrection(
+        _ draft: AttentionCorrectionDraft,
+        change: ChangeReport,
+        comfort: MovementComfort,
+        safetyAnswer: ConditionalSafetyAnswer?
+    ) async throws(ProductFlowError) -> AttentionResolution
     func beginSingleAreaCheckIn() async throws(ProductFlowError) -> SingleAreaCheckInDraft
     func submitSingleAreaCheckIn(
         _ draft: SingleAreaCheckInDraft,
@@ -162,7 +233,25 @@ public protocol KineoProductServing: AppBootstrapping {
         duration: DurationVariant,
         requestedLevel: RoutineLevel?
     ) async throws(ProductFlowError) -> PlanPresentation
+    func pauseToday(checkInID: CheckInID) async throws(ProductFlowError) -> BodyArea
     func startRoutine(decisionID: SelectionDecisionID) async throws(ProductFlowError) -> RoutinePresentation
+    func refreshRoutine(sessionID: RoutineSessionID) async throws(ProductFlowError) -> RoutinePresentation
+    func pauseRoutine(sessionID: RoutineSessionID) async throws(ProductFlowError) -> RoutinePresentation
+    func resumeRoutine(sessionID: RoutineSessionID) async throws(ProductFlowError) -> RoutinePresentation
+    func skipRoutineStep(
+        sessionID: RoutineSessionID,
+        expectedStepIndex: Int,
+        reason: RoutineEventReason?
+    ) async throws(ProductFlowError) -> RoutinePresentation
+    func selectRoutineAlternative(
+        sessionID: RoutineSessionID,
+        expectedStepIndex: Int,
+        movementID: CatalogID
+    ) async throws(ProductFlowError) -> RoutinePresentation
+    func endRoutine(
+        sessionID: RoutineSessionID,
+        forSafety: Bool
+    ) async throws(ProductFlowError) -> RoutinePresentation
     func advanceRoutine(
         sessionID: RoutineSessionID,
         expectedStepIndex: Int

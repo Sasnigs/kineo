@@ -45,9 +45,26 @@ private struct ProductFlowContainer: View {
                     ComfortCheckInView(model: model, draft: draft, change: change)
                 case .conditionalSafety(let draft, let change, let comfort):
                     ConditionalSafetyView(model: model, draft: draft, change: change, comfort: comfort)
-                case .attentionRequired(let area): AttentionRequiredView(area: area)
+                case .attentionGuidance(let prompt):
+                    AttentionGuidanceView(model: model, prompt: prompt)
+                case .attentionReturn(let prompt):
+                    AttentionReturnView(model: model, prompt: prompt)
+                case .attentionCorrectionChange(_, let draft):
+                    AttentionCorrectionChangeView(model: model, draft: draft)
+                case .attentionCorrectionComfort(_, let draft, _):
+                    AttentionCorrectionComfortView(model: model, draft: draft)
+                case .attentionCorrectionSafety(_, let draft, _, _):
+                    AttentionCorrectionSafetyView(model: model, draft: draft)
                 case .plan(let plan): PlanView(model: model, plan: plan)
+                case .pauseTodayConfirmation(let area):
+                    PauseTodayConfirmationView(model: model, area: area)
                 case .routine(let routine): RoutineView(model: model, routine: routine)
+                case .alternativePreview(let routine):
+                    AlternativePreviewView(model: model, routine: routine)
+                case .endConfirmation(let routine):
+                    EndRoutineConfirmationView(model: model, routine: routine)
+                case .safetyGuidance(let routine):
+                    RoutineSafetyGuidanceView(model: model, routine: routine)
                 case .feedback(let routine): FeedbackView(model: model, routine: routine)
                 case .completion(let area): CompletionView(model: model, area: area)
                 }
@@ -67,11 +84,18 @@ private struct ProductFlowContainer: View {
             }
         }
         .task(id: model.actionSequence) { await model.performPendingAction() }
+        .task(id: model.activeRoutineSessionID) {
+            guard model.activeRoutineSessionID != nil else { return }
+            await model.refreshActiveRoutineUntilCancelled()
+        }
         .task(id: scenePhase) {
-            guard scenePhase == .active,
-                  case .launching(let launchState) = model.state,
-                  launchState != .foundationReady else { return }
-            model.send(.load)
+            if scenePhase == .active,
+               case .launching(let launchState) = model.state,
+               launchState != .foundationReady {
+                model.send(.load)
+            } else if scenePhase != .active {
+                await model.pauseActiveRoutineForLifecycle()
+            }
         }
         .tint(.accentColor)
     }
@@ -241,15 +265,87 @@ private struct ConditionalSafetyView: View {
     }
 }
 
-private struct AttentionRequiredView: View {
-    let area: BodyArea
+private struct AttentionGuidanceView: View {
+    let model: ProductFlowModel
+    let prompt: AttentionPrompt
     var body: some View {
         ContentUnavailableView {
             Label("Attention required", systemImage: "exclamationmark.circle")
         } description: {
-            Text("Kineo has withheld a routine because of your \(area.title.lowercased()) answer.")
+            Text("Kineo has withheld a routine because of your \(prompt.area.title.lowercased()) answer.")
+        } actions: {
+            VStack(spacing: KineoLayout.standardSpacing) {
+                Button("Done") { model.send(.showAttentionReturn) }
+                Button("I selected that by mistake") { model.send(.startAttentionCorrection) }
+            }
         }
         .navigationTitle("Attention required")
+    }
+}
+
+private struct AttentionReturnView: View {
+    let model: ProductFlowModel
+    let prompt: AttentionPrompt
+    var body: some View {
+        FlowPage(title: "Before another check-in") {
+            Text("Has your \(prompt.area.title.lowercased()) returned to what is usual for you?")
+                .font(.headline)
+            Text("This does not create a routine. If you answer Yes, you will still complete a fresh check-in.")
+                .foregroundStyle(.secondary)
+            ChoiceCard(title: "Yes") { model.send(.answerAttentionReturn(.yes)) }
+            ChoiceCard(title: "No") { model.send(.answerAttentionReturn(.no)) }
+            ChoiceCard(title: "Not sure") { model.send(.answerAttentionReturn(.notSure)) }
+            SecondaryButton("I selected that by mistake") {
+                model.send(.startAttentionCorrection)
+            }
+        }
+    }
+}
+
+private struct AttentionCorrectionChangeView: View {
+    let model: ProductFlowModel
+    let draft: AttentionCorrectionDraft
+    var body: some View {
+        FlowPage(title: "Correct your \(draft.checkIn.area.title.lowercased()) answer") {
+            Text("How does this area feel today?")
+                .font(.headline)
+            ChoiceCard(title: "Better") { model.send(.selectCorrectionChange(.better)) }
+            ChoiceCard(title: "Similar") { model.send(.selectCorrectionChange(.similar)) }
+            ChoiceCard(title: "Worse") { model.send(.selectCorrectionChange(.worse)) }
+            SecondaryButton("Cancel correction") { model.send(.cancelAttentionCorrection) }
+        }
+    }
+}
+
+private struct AttentionCorrectionComfortView: View {
+    let model: ProductFlowModel
+    let draft: AttentionCorrectionDraft
+    var body: some View {
+        FlowPage(title: "Correct your movement answer") {
+            Text("How comfortable does movement feel?")
+                .font(.headline)
+            ChoiceCard(title: "Limited") { model.send(.selectCorrectionComfort(.limited)) }
+            ChoiceCard(title: "Okay") { model.send(.selectCorrectionComfort(.okay)) }
+            ChoiceCard(title: "Good") { model.send(.selectCorrectionComfort(.good)) }
+            SecondaryButton("Cancel correction") { model.send(.cancelAttentionCorrection) }
+        }
+    }
+}
+
+private struct AttentionCorrectionSafetyView: View {
+    let model: ProductFlowModel
+    let draft: AttentionCorrectionDraft
+    var body: some View {
+        FlowPage(title: "Correct your follow-up") {
+            NoticeCard(
+                title: "Is this new, sudden, or unusual for you?",
+                message: "Yes and Not sure keep Attention Required active."
+            )
+            ChoiceCard(title: "No") { model.send(.answerCorrectionSafety(.no)) }
+            ChoiceCard(title: "Yes") { model.send(.answerCorrectionSafety(.yes)) }
+            ChoiceCard(title: "Not sure") { model.send(.answerCorrectionSafety(.notSure)) }
+            SecondaryButton("Cancel correction") { model.send(.cancelAttentionCorrection) }
+        }
     }
 }
 
@@ -273,7 +369,24 @@ private struct PlanView: View {
                 SecondaryButton("Choose \(gentler.title) instead") { model.send(.chooseGentlerLevel(gentler)) }
             }
             PrimaryButton("Start routine") { model.send(.startRoutine) }
+            if plan.pauseTodayAvailable {
+                SecondaryButton("Pause for today") { model.send(.pauseToday) }
+            }
             Text("Changing duration changes reviewed content, not the selected movement level.").font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct PauseTodayConfirmationView: View {
+    let model: ProductFlowModel
+    let area: BodyArea
+    var body: some View {
+        ContentUnavailableView {
+            Label("Paused for today", systemImage: "pause.circle")
+        } description: {
+            Text("No \(area.title.lowercased()) routine was started. You can check in again when you choose.")
+        } actions: {
+            Button("Done") { model.send(.finishPauseToday) }
         }
     }
 }
@@ -283,18 +396,103 @@ private struct RoutineView: View {
     let routine: RoutinePresentation
     var body: some View {
         FlowPage(title: "Guided routine") {
-            Text("Step \(routine.currentStepIndex + KineoLayout.humanIndexOffset) of \(routine.totalStepCount)").font(.headline).foregroundStyle(.secondary)
-            if let item = routine.currentItem {
-                VStack(alignment: .leading, spacing: KineoLayout.standardSpacing) {
-                    Text(item.localizedTitle.rawValue).font(.title2.weight(.semibold))
-                    if let instruction = item.localizedInstruction { Text(instruction.rawValue) }
-                    if let safetyCue = item.localizedSafetyCue { Label(safetyCue.rawValue, systemImage: "info.circle").font(.callout) }
-                    if let dose = item.scheduledDose { Text(dose.presentationText).font(.headline) }
+            if routine.contentAvailable {
+                Text("Step \(routine.currentStepIndex + KineoLayout.humanIndexOffset) of \(routine.totalStepCount)").font(.headline).foregroundStyle(.secondary)
+                if routine.currentItem != nil {
+                    VStack(alignment: .leading, spacing: KineoLayout.standardSpacing) {
+                        Text(routine.presentedTitle).font(.title2.weight(.semibold))
+                        if let instruction = routine.presentedInstruction { Text(instruction) }
+                        if let safetyCue = routine.presentedSafetyCue {
+                            Label(safetyCue, systemImage: "info.circle").font(.callout)
+                        }
+                        if let dose = routine.presentedDose {
+                            Text(dose.presentationText).font(.headline)
+                            Text(routine.timerText(for: dose))
+                                .font(.title3.monospacedDigit().weight(.semibold))
+                                .accessibilityLabel("Routine timer")
+                        }
+                        if routine.selectedAlternative != nil {
+                            Label("Approved alternative selected", systemImage: "arrow.triangle.branch")
+                                .font(.callout)
+                        }
+                    }
+                    .cardStyle()
                 }
-                .cardStyle()
+                NoticeCard(title: "Prototype content", message: "Use only as an internal functional demonstration. Production movement guidance still requires professional review.")
+                if routine.status == .paused {
+                    Label("Paused", systemImage: "pause.circle.fill")
+                        .font(.headline)
+                    PrimaryButton("Resume") { model.send(.resumeRoutine) }
+                } else {
+                    PrimaryButton(routine.isLastStep ? "Complete routine" : "Complete step") {
+                        model.send(.advanceRoutine)
+                    }
+                    SecondaryButton("Pause") { model.send(.pauseRoutine) }
+                    SecondaryButton("Skip this step") { model.send(.skipRoutineStep(nil)) }
+                }
+                if routine.currentItem?.availableAlternatives.isEmpty == false {
+                    SecondaryButton("Choose an alternative") { model.send(.requestAlternative) }
+                }
+                SecondaryButton("End routine") { model.send(.requestEndRoutine) }
+                SecondaryButton("Something feels wrong") { model.send(.somethingFeelsWrong) }
+            } else {
+                NoticeCard(
+                    title: "Content unavailable",
+                    message: "A required installed asset could not be verified. Kineo will not play a partial routine."
+                )
+                PrimaryButton("End incomplete routine") { model.send(.requestEndRoutine) }
             }
-            NoticeCard(title: "Prototype content", message: "Use only as an internal functional demonstration. Production movement guidance still requires professional review.")
-            PrimaryButton(routine.isLastStep ? "Complete routine" : "Complete step") { model.send(.advanceRoutine) }
+        }
+    }
+}
+
+private struct AlternativePreviewView: View {
+    let model: ProductFlowModel
+    let routine: RoutinePresentation
+    var body: some View {
+        FlowPage(title: "Choose an alternative") {
+            Text("The routine is paused. Only alternatives frozen into this routine are shown.")
+                .foregroundStyle(.secondary)
+            ForEach(routine.currentItem?.availableAlternatives ?? [], id: \.movementID) { alternative in
+                Button {
+                    model.send(.chooseAlternative(alternative.movementID))
+                } label: {
+                    VStack(alignment: .leading, spacing: KineoLayout.compactSpacing) {
+                        Text(alternative.localizedTitle.rawValue).font(.headline)
+                        Text(alternative.localizedInstruction.rawValue)
+                    }
+                    .cardStyle()
+                }
+                .buttonStyle(.plain)
+            }
+            SecondaryButton("Cancel") { model.send(.cancelRoutineModal) }
+        }
+    }
+}
+
+private struct EndRoutineConfirmationView: View {
+    let model: ProductFlowModel
+    let routine: RoutinePresentation
+    var body: some View {
+        FlowPage(title: "End this routine?") {
+            Text("The routine is paused. Ending now saves it as incomplete, not completed.")
+            PrimaryButton("End routine") { model.send(.confirmEndRoutine) }
+            SecondaryButton("Keep it paused") { model.send(.cancelRoutineModal) }
+        }
+    }
+}
+
+private struct RoutineSafetyGuidanceView: View {
+    let model: ProductFlowModel
+    let routine: RoutinePresentation
+    var body: some View {
+        FlowPage(title: "Stop and check how you feel") {
+            NoticeCard(
+                title: "The routine is paused",
+                message: "Kineo will not resume automatically. End the routine if you do not want to continue."
+            )
+            PrimaryButton("End routine") { model.send(.confirmSafetyEnd) }
+            SecondaryButton("I tapped this by mistake") { model.send(.safetyTappedByMistake) }
         }
     }
 }
@@ -471,6 +669,41 @@ private extension Dose {
 
 private extension RoutinePresentation {
     var isLastStep: Bool { currentStepIndex == totalStepCount - KineoLayout.humanIndexOffset }
+
+    var presentedTitle: String {
+        selectedAlternative?.localizedTitle.rawValue ?? currentItem?.localizedTitle.rawValue ?? "Routine step"
+    }
+
+    var presentedInstruction: String? {
+        selectedAlternative?.localizedInstruction.rawValue ?? currentItem?.localizedInstruction?.rawValue
+    }
+
+    var presentedSafetyCue: String? {
+        selectedAlternative?.localizedSafetyCue.rawValue ?? currentItem?.localizedSafetyCue?.rawValue
+    }
+
+    var presentedDose: Dose? {
+        selectedAlternative?.scheduledDose ?? currentItem?.scheduledDose
+    }
+
+    func timerText(for dose: Dose) -> String {
+        let elapsedSeconds = stepElapsedMilliseconds / KineoLayout.millisecondsPerSecond
+        switch dose.kind {
+        case .timed:
+            let totalMilliseconds = Int64(dose.estimatedSeconds) * KineoLayout.millisecondsPerSecond
+            let remainingMilliseconds = max(KineoLayout.noElapsedMilliseconds, totalMilliseconds - stepElapsedMilliseconds)
+            let remainingSeconds = (
+                remainingMilliseconds + KineoLayout.countdownRoundingOffset
+            ) / KineoLayout.millisecondsPerSecond
+            return status == .paused ?
+                "Paused with \(remainingSeconds) seconds remaining" :
+                "\(remainingSeconds) seconds remaining"
+        case .repetitions:
+            return status == .paused ?
+                "Paused after \(elapsedSeconds) seconds" :
+                "\(elapsedSeconds) seconds elapsed"
+        }
+    }
 }
 
 private enum KineoLayout {
@@ -486,6 +719,9 @@ private enum KineoLayout {
     static let unselectedSurfaceOpacity = 0.08
     static let borderOpacity = 0.35
     static let secondsPerMinute = 60
+    static let millisecondsPerSecond: Int64 = 1_000
+    static let countdownRoundingOffset = millisecondsPerSecond - 1
+    static let noElapsedMilliseconds: Int64 = 0
     static let humanIndexOffset = 1
 }
 

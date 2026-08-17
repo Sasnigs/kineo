@@ -620,6 +620,29 @@ final class KineoGRDBStoreLifecycleTests: XCTestCase {
         do {
             let fixture = LifecycleFixture()
             let store = try await fixture.open(
+                failure: KineoStoreFailureInjection(points: [.transactionBeforeCommit("abandonCheckIn")])
+            )
+            let draft = try CheckIn(
+                id: CheckInID(validating: uuid(106)), status: .draft,
+                primaryArea: .neck, secondaryArea: nil, startedAt: time(106),
+                completedAt: nil, dayContext: day, entries: []
+            )
+            try await store.saveCheckInDraft(try SaveCheckInDraftCommand(checkIn: draft))
+            let abandoned = try CheckIn(
+                id: draft.id, status: .abandoned,
+                primaryArea: draft.primaryArea, secondaryArea: nil, startedAt: draft.startedAt,
+                completedAt: nil, dayContext: draft.dayContext, entries: []
+            )
+            await assertThrows {
+                try await store.abandonCheckIn(try AbandonCheckInCommand(checkIn: abandoned))
+            } verify: { _ in }
+            let after = try await store.loadSnapshot()
+            XCTAssertEqual(after.checkIns.first?.status, .draft)
+        }
+
+        do {
+            let fixture = LifecycleFixture()
+            let store = try await fixture.open(
                 failure: KineoStoreFailureInjection(points: [.transactionBeforeCommit("completeCheckIn")])
             )
             let entry = try CheckInEntry(
