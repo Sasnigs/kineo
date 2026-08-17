@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Technical-design version | 0.1 |
-| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
+| Status | Approved prototype contract — M1–M3 complete; M4–M12 sequentially authorized subject to documented gates |
 | Platform | Native iPhone app |
 | Minimum deployment target | iOS 17.0 |
 | Product source | `../KINEO_PRODUCT_DESIGN.md` |

@@ -124,6 +124,49 @@ struct PlanSelectionEngineTests {
         #expect(pending.transitions.isEmpty)
     }
 
+    @Test("Every triggered single-area row handles all conditional answers")
+    private func exhaustiveSingleAreaSafety() throws {
+        let conditionalAnswers: [ConditionalSafetyAnswer?] = [nil, .no, .yes, .notSure]
+        for area in PrototypeSelectionRules.supportedAreas {
+            for change in [ChangeReport.better, .similar, .worse] {
+                for comfort in [MovementComfort.limited, .okay, .good] {
+                    guard change == .worse || comfort == .limited else { continue }
+                    for unlocked in [false, true] {
+                        for duration in [DurationVariant.quick, .standard] {
+                            for answer in conditionalAnswers {
+                                let result = engine().select(
+                                    try request(
+                                        primaryArea: area,
+                                        primaryCheckIn: checkIn(
+                                            area: area,
+                                            change: change,
+                                            comfort: comfort,
+                                            safetyAnswer: answer
+                                        ),
+                                        historyByArea: try history(area: area, unlocked: unlocked),
+                                        duration: duration
+                                    )
+                                )
+                                switch answer {
+                                case nil:
+                                    let pending = try noPlan(from: result)
+                                    #expect(pending.reason == .needsPrimaryConditionalSafetyAnswer)
+                                case .no:
+                                    let plan = try selectedPlan(from: result)
+                                    #expect(plan.recommendedLevel == .gentle)
+                                case .yes, .notSure:
+                                    let blocked = try noPlan(from: result)
+                                    #expect(blocked.reason == .attentionRequired)
+                                    #expect(blocked.affectedAreas == [area])
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @Test("All two-area safety-answer pairs block when either area flags Attention")
     private func twoAreaSafetyMatrix() throws {
         let answers = [
@@ -131,41 +174,49 @@ struct PlanSelectionEngineTests {
             ConditionalSafetyAnswer.yes,
             ConditionalSafetyAnswer.notSure
         ]
-        for primaryAnswer in answers {
-            for secondaryAnswer in answers {
-                let result = engine().select(
-                    try request(
-                        secondaryArea: .upperMidBack,
-                        secondaryParticipation: .include,
-                        primaryCheckIn: checkIn(
-                            area: .neck,
-                            change: .worse,
-                            comfort: .good,
-                            safetyAnswer: primaryAnswer
-                        ),
-                        secondaryCheckIn: checkIn(
-                            area: .upperMidBack,
-                            change: .worse,
-                            comfort: .good,
-                            safetyAnswer: secondaryAnswer,
-                            role: .secondary
-                        ),
-                        requestedOverride: .active
-                    )
-                )
-                let flaggedAreas = [
-                    primaryAnswer == .no ? nil : BodyArea.neck,
-                    secondaryAnswer == .no ? nil : BodyArea.upperMidBack
-                ].compactMap { $0 }
-                if flaggedAreas.isEmpty {
-                    let plan = try selectedPlan(from: result)
-                    #expect(plan.recommendedLevel == .gentle)
-                    #expect(plan.overrideDisposition == .rejectedHigher)
-                } else {
-                    let blocked = try noPlan(from: result)
-                    #expect(blocked.reason == .attentionRequired)
-                    #expect(blocked.affectedAreas == flaggedAreas)
-                    #expect(blocked.transitions.map(\.area) == flaggedAreas)
+        for primaryArea in PrototypeSelectionRules.supportedAreas {
+            for secondaryArea in PrototypeSelectionRules.supportedAreas where secondaryArea != primaryArea {
+                for duration in [DurationVariant.quick, .standard] {
+                    for primaryAnswer in answers {
+                        for secondaryAnswer in answers {
+                            let result = engine().select(
+                                try request(
+                                    primaryArea: primaryArea,
+                                    secondaryArea: secondaryArea,
+                                    secondaryParticipation: .include,
+                                    primaryCheckIn: checkIn(
+                                        area: primaryArea,
+                                        change: .worse,
+                                        comfort: .good,
+                                        safetyAnswer: primaryAnswer
+                                    ),
+                                    secondaryCheckIn: checkIn(
+                                        area: secondaryArea,
+                                        change: .worse,
+                                        comfort: .good,
+                                        safetyAnswer: secondaryAnswer,
+                                        role: .secondary
+                                    ),
+                                    requestedOverride: .active,
+                                    duration: duration
+                                )
+                            )
+                            let flaggedAreas = [
+                                primaryAnswer == .no ? nil : primaryArea,
+                                secondaryAnswer == .no ? nil : secondaryArea
+                            ].compactMap { $0 }
+                            if flaggedAreas.isEmpty {
+                                let plan = try selectedPlan(from: result)
+                                #expect(plan.recommendedLevel == .gentle)
+                                #expect(plan.overrideDisposition == .rejectedHigher)
+                            } else {
+                                let blocked = try noPlan(from: result)
+                                #expect(blocked.reason == .attentionRequired)
+                                #expect(blocked.affectedAreas == flaggedAreas)
+                                #expect(blocked.transitions.map(\.area) == flaggedAreas)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -451,6 +502,59 @@ struct PlanSelectionEngineTests {
 
         #expect(plan.explanations.map(\.key) == [.userGentlerOverride, .balancedCheckIn])
         #expect(plan.explanations.count == 2)
+    }
+
+    @Test("Check-in explanations use exact stable keys")
+    private func explanationKeys() throws {
+        let cases: [(ChangeReport, MovementComfort, ConditionalSafetyAnswer?, Bool, SelectionExplanationKey)] = [
+            (.worse, .limited, .no, false, .reportedWorse),
+            (.similar, .limited, .no, false, .movementLimited),
+            (.better, .good, nil, true, .betterGoodActive),
+            (.similar, .good, nil, false, .balancedCheckIn),
+            (.better, .good, nil, false, .activeLocked)
+        ]
+        for (change, comfort, answer, unlocked, expectedKey) in cases {
+            let plan = try selectedPlan(
+                from: engine().select(
+                    try request(
+                        primaryCheckIn: checkIn(
+                            area: .neck,
+                            change: change,
+                            comfort: comfort,
+                            safetyAnswer: answer
+                        ),
+                        historyByArea: try history(area: .neck, unlocked: unlocked)
+                    )
+                )
+            )
+            #expect(plan.explanations.first?.key == expectedKey)
+        }
+    }
+
+    @Test("A limiting secondary gets the conservatism explanation")
+    private func secondaryConservatismExplanation() throws {
+        let plan = try selectedPlan(
+            from: engine().select(
+                try request(
+                    secondaryArea: .upperMidBack,
+                    secondaryParticipation: .include,
+                    primaryCheckIn: checkIn(
+                        area: .neck,
+                        change: .similar,
+                        comfort: .good,
+                        safetyAnswer: nil
+                    ),
+                    secondaryCheckIn: checkIn(
+                        area: .upperMidBack,
+                        change: .worse,
+                        comfort: .good,
+                        safetyAnswer: .no,
+                        role: .secondary
+                    )
+                )
+            )
+        )
+        #expect(plan.explanations.map(\.key) == [.reportedWorse, .secondaryMoreConservative])
     }
 
     @Test("Missing history locks Active without blocking selection")

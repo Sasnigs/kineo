@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved verification contract — implementation through M2 complete August 9, 2026; M3 not authorized |
+| Status | Approved verification contract — M1–M3 complete; M4–M12 sequentially authorized subject to documented gates |
 | Scope | Automated tests, manual validation, acceptance traceability, prototype and public-release gates |
 | Sources | `../KINEO_PRODUCT_DESIGN.md`, `../KINEO_UX_DESIGN_SPEC.md`, TD-01 through TD-07 |
 | Implementation authorization | Not granted by this document |

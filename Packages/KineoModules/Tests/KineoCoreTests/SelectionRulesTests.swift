@@ -159,6 +159,70 @@ struct SelectionRulesTests {
         }
     }
 
+    @Test("Every terminal history outcome follows the frozen matrix")
+    func exhaustiveTerminalOutcomeMatrix() throws {
+        let terminalStatuses = [
+            RoutineStatus.completed,
+            RoutineStatus.stopped,
+            RoutineStatus.safetyStopped,
+            RoutineStatus.abandoned
+        ]
+        let responses: [AreaResponse?] = [nil, .better, .same, .worse]
+        let startingCount = 1
+        let qualifyingCount = startingCount + 1
+        for status in terminalStatuses {
+            for level in RoutineLevel.allCases {
+                for response in responses {
+                    let result = try reducer().reducing(
+                        state(count: startingCount, latest: .same),
+                        with: outcome(status: status, level: level, response: response)
+                    )
+                    let qualifies = status == .completed &&
+                        (level == .gentle || level == .balanced) &&
+                        (response == .better || response == .same)
+                    let expectedCount = if response == .worse {
+                        0
+                    } else if qualifies {
+                        qualifyingCount
+                    } else {
+                        startingCount
+                    }
+                    #expect(result.qualifyingOutcomeCount == expectedCount)
+                    #expect(result.mostRecentRecordedResponse == (response ?? .same))
+                }
+            }
+        }
+    }
+
+    @Test("Skipped and incomplete outcomes do not interrupt qualifying sequences")
+    func qualifyingSequences() throws {
+        let historyReducer = try reducer()
+        let first = try historyReducer.reducing(
+            state(),
+            with: outcome(status: .completed, level: .gentle, response: .better)
+        )
+        let skipped = try historyReducer.reducing(
+            first,
+            with: outcome(status: .completed, level: .balanced, response: nil)
+        )
+        let incomplete = try historyReducer.reducing(
+            skipped,
+            with: outcome(status: .stopped, level: .balanced, response: .same)
+        )
+        let second = try historyReducer.reducing(
+            incomplete,
+            with: outcome(status: .completed, level: .balanced, response: .same)
+        )
+        let reset = try historyReducer.reducing(
+            second,
+            with: outcome(status: .abandoned, level: .active, response: .worse)
+        )
+
+        #expect(second.qualifyingOutcomeCount == PrototypeSelectionRules.qualifyingOutcomeCountRequired)
+        #expect(reset.qualifyingOutcomeCount == 0)
+        #expect(reset.mostRecentRecordedResponse == .worse)
+    }
+
     private func reducer() throws -> ActiveHistoryReducer {
         ActiveHistoryReducer(configuration: try ActiveUnlockConfiguration())
     }
