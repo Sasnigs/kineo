@@ -23,6 +23,7 @@ public enum CatalogValidationError: Error, Equatable, Sendable {
     case invalidMedia(String)
     case alternativeCycle(CatalogID)
     case incompatibleContent(CatalogID)
+    case invalidCompositionRequest(String)
 }
 
 /// A three-component semantic catalog version.

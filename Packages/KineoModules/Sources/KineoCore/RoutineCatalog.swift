@@ -73,7 +73,10 @@ public struct RoutineCatalog: Equatable, Codable, Sendable {
             secondaryModules: secondaryModules,
             compatibilityRules: compatibilityRules
         )
-        let fingerprint = try CatalogManifestFingerprint.make(for: manifest)
+        let fingerprint = try CanonicalSHA256Fingerprint.make(
+            for: manifest,
+            sortingStringArrays: true
+        )
         return try Self(
             schemaVersion: schemaVersion,
             catalogVersion: catalogVersion,
@@ -91,7 +94,10 @@ public struct RoutineCatalog: Equatable, Codable, Sendable {
 
     /// Recomputes the fingerprint from the catalog content.
     public func computedManifestFingerprint() throws(CatalogValidationError) -> SHA256Digest {
-        try CatalogManifestFingerprint.make(for: CatalogManifestPayload(catalog: self))
+        try CanonicalSHA256Fingerprint.make(
+            for: CatalogManifestPayload(catalog: self),
+            sortingStringArrays: true
+        )
     }
 
     public init(from decoder: any Decoder) throws {
@@ -203,14 +209,15 @@ extension PrimaryTemplateVariant: CatalogRecord {}
 extension SecondaryModuleVariant: CatalogRecord {}
 extension CompatibilityRule: CatalogRecord {}
 
-private enum CatalogManifestFingerprint {
+enum CanonicalSHA256Fingerprint {
     static func make(
-        for manifest: some Encodable
+        for value: some Encodable,
+        sortingStringArrays: Bool
     ) throws(CatalogValidationError) -> SHA256Digest {
         do {
-            let encoded = try JSONEncoder().encode(manifest)
+            let encoded = try JSONEncoder().encode(value)
             let object = try JSONSerialization.jsonObject(with: encoded)
-            let normalized = normalize(object)
+            let normalized = normalize(object, sortingStringArrays: sortingStringArrays)
             let canonical = try JSONSerialization.data(
                 withJSONObject: normalized,
                 options: [.sortedKeys]
@@ -224,13 +231,17 @@ private enum CatalogManifestFingerprint {
         }
     }
 
-    private static func normalize(_ value: Any) -> Any {
+    private static func normalize(_ value: Any, sortingStringArrays: Bool) -> Any {
         if let dictionary = value as? [String: Any] {
-            return dictionary.mapValues(normalize)
+            return dictionary.mapValues {
+                normalize($0, sortingStringArrays: sortingStringArrays)
+            }
         }
         if let array = value as? [Any] {
-            let normalized = array.map(normalize)
-            if let strings = normalized as? [String] {
+            let normalized = array.map {
+                normalize($0, sortingStringArrays: sortingStringArrays)
+            }
+            if sortingStringArrays, let strings = normalized as? [String] {
                 return strings.sorted()
             }
             return normalized
