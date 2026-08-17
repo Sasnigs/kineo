@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved build plan — M1–M2 complete; M3 awaits authorization |
+| Status | Approved build plan — M1–M3 complete; M4 next |
 | Platform | Native iPhone, SwiftUI, iOS 17 minimum |
 | Sources | Product design, UX specification, and TD-00 through TD-08 |
-| Last updated | August 9, 2026 |
+| Last updated | August 17, 2026 |
 
 ## 1. Development approach
 

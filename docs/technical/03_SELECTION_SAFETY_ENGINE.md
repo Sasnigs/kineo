@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
+| Status | Implemented and verified for M3 on August 17, 2026 |
 | Scope | Deterministic plan selection, safety state, history eligibility, overrides, explanations, and audit records |
 | Product inputs | `KINEO_PRODUCT_DESIGN.md` 0.5; `KINEO_UX_DESIGN_SPEC.md` |
 | Rules version | `selection-v1.0.0-prototype` |

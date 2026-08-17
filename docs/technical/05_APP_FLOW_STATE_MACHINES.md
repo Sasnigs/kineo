@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
+| Status | Approved prototype contract — M1–M3 complete; M4–M12 sequentially authorized subject to documented gates |
 | Scope | Onboarding, Today/check-in, attention, plan, routine, feedback, Progress, and Profile |
 | Product source | `../KINEO_PRODUCT_DESIGN.md` v0.5 |
 | UX source | `../KINEO_UX_DESIGN_SPEC.md` |

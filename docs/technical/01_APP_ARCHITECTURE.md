@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
+| Status | Approved prototype contract — M1–M3 complete; M4–M12 sequentially authorized subject to documented gates |
 | Scope | Native iPhone application architecture |
 | Sources | `../KINEO_PRODUCT_DESIGN.md`, `../KINEO_UX_DESIGN_SPEC.md` |
 | Last reviewed | August 9, 2026 |

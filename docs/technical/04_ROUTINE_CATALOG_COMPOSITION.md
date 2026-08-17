@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — implementation through M2 complete August 9, 2026; M3 not authorized |
+| Status | Approved prototype contract — M1–M3 complete; M4–M12 sequentially authorized subject to documented gates |
 | Scope | Versioned content schema, bounded composition, prototype catalog, validation, fallbacks, and session snapshots |
 | Product inputs | `KINEO_PRODUCT_DESIGN.md` 0.5; `KINEO_UX_DESIGN_SPEC.md`; `03_SELECTION_SAFETY_ENGINE.md` |
 | Schema version | `1` |
