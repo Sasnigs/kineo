@@ -5,6 +5,9 @@ public enum CatalogValidationError: Error, Equatable, Sendable {
     case invalidDuration(String)
     case invalidDose
     case invalidMetadata(String)
+    case invalidAlternative(String)
+    case invalidSequenceItem(String)
+    case invalidArtifact(String)
 }
 
 /// A stable lowercase namespaced catalog identifier.
