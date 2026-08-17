@@ -133,6 +133,8 @@ flowchart LR
 
 ### M6 — Safety, interruption, and recovery
 
+**Status:** Complete — safety, interruption, recovery, package tests, and simulator checks passed August 17, 2026.
+
 **Build outcome:** the single-area flow remains correct under safety actions and interruption.
 
 - Complete Attention return and correction flows.
