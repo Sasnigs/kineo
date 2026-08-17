@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Deterministic internal-only content used to exercise catalog mechanics.
@@ -26,6 +25,9 @@ public enum PrototypeRoutineCatalog {
         strings[PrototypeCatalogCopy.mediaAccessibilityKey] = PrototypeCatalogCopy.mediaAccessibility
         strings[PrototypeCatalogCopy.instructionKey] = PrototypeCatalogCopy.instruction
         strings[PrototypeCatalogCopy.safetyCueKey] = PrototypeCatalogCopy.safetyCue
+        strings[RoutinePresentationLocalizationKeys.transitionTitle] =
+            PrototypeCatalogCopy.contentLabel
+        strings[RoutinePresentationLocalizationKeys.restTitle] = PrototypeCatalogCopy.contentLabel
 
         for area in BodyArea.allCases {
             for ordinal in PrototypeCatalogShape.movementOrdinals {
@@ -462,10 +464,8 @@ public enum PrototypeRoutineCatalog {
     }
 
     private static func placeholderAssetDigest() throws(CatalogValidationError) -> SHA256Digest {
-        let bytes = Data(PrototypeCatalogMedia.placeholderBytes.utf8)
-        let value = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
         do {
-            return try SHA256Digest(validating: value)
+            return try SHA256Digest(validating: PrototypeCatalogMedia.sha256)
         } catch {
             throw .invalidArtifact("prototypeAssetDigest")
         }
@@ -698,5 +698,5 @@ private enum PrototypeCatalogMedia {
     static let assetID = "kineo.prototype.media.placeholder.v1"
     static let kind = "illustration"
     static let bundlePath = "PrototypeContent/prototype-placeholder.svg"
-    static let placeholderBytes = "Prototype content"
+    static let sha256 = "3c6b37676f85280ba9deaa34ee755dcac4bc0df937440c3883788b0cdd6b368e"
 }

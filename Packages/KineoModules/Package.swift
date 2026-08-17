@@ -29,6 +29,9 @@ let package = Package(
             dependencies: [
                 "KineoCore",
                 .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            resources: [
+                .copy("Resources/PrototypeContent")
             ]
         ),
         .target(
