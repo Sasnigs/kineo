@@ -1,6 +1,7 @@
 /// Validation failures at the catalog boundary.
 public enum CatalogValidationError: Error, Equatable, Sendable {
     case invalidIdentifier(String)
+    case invalidCatalogVersion(String)
     case invalidRevision
     case invalidDuration(String)
     case invalidDose
@@ -8,6 +9,54 @@ public enum CatalogValidationError: Error, Equatable, Sendable {
     case invalidAlternative(String)
     case invalidSequenceItem(String)
     case invalidArtifact(String)
+}
+
+/// A three-component semantic catalog version.
+public struct CatalogVersion: Hashable, Codable, Sendable, RawRepresentable {
+    public let rawValue: String
+
+    public init?(rawValue: String) {
+        guard Self.isValid(rawValue) else { return nil }
+        self.rawValue = rawValue
+    }
+
+    public init(validating rawValue: String) throws(CatalogValidationError) {
+        guard Self.isValid(rawValue) else { throw .invalidCatalogVersion(rawValue) }
+        self.rawValue = rawValue
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        guard Self.isValid(value) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Expected a three-component semantic version."
+            )
+        }
+        rawValue = value
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    private static func isValid(_ value: String) -> Bool {
+        let components = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard components.count == CatalogVersionLimits.componentCount else { return false }
+        return components.allSatisfy { component in
+            guard !component.isEmpty, component.allSatisfy(\.isNumber), Int(component) != nil else {
+                return false
+            }
+            return component == CatalogVersionLimits.zeroComponent || !component.hasPrefix("0")
+        }
+    }
+}
+
+private enum CatalogVersionLimits {
+    static let componentCount = 3
+    static let zeroComponent: Substring = "0"
 }
 
 /// A stable lowercase namespaced catalog identifier.

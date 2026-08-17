@@ -35,17 +35,25 @@ struct CatalogPrimitivesTests {
     @Test("Catalog scalar values round-trip and revalidate decoding")
     private func scalarCodable() throws {
         let identifier = try CatalogID(validating: "kineo.test.record.v1")
+        let catalogVersion = try CatalogVersion(validating: "1.2.3")
         let revision = try ContentRevision(validating: 1)
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
 
         #expect(try decoder.decode(CatalogID.self, from: encoder.encode(identifier)) == identifier)
+        #expect(
+            try decoder.decode(CatalogVersion.self, from: encoder.encode(catalogVersion)) ==
+                catalogVersion
+        )
         #expect(try decoder.decode(ContentRevision.self, from: encoder.encode(revision)) == revision)
         #expect(throws: DecodingError.self) {
             try decoder.decode(CatalogID.self, from: Data(#""UPPER.invalid""#.utf8))
         }
         #expect(throws: DecodingError.self) {
             try decoder.decode(ContentRevision.self, from: Data("0".utf8))
+        }
+        for invalid in ["1", "1.2", "1.02.3", "1.a.3", "1.2.3.4"] {
+            #expect(CatalogVersion(rawValue: invalid) == nil)
         }
     }
 

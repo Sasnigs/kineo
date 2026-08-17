@@ -9,7 +9,7 @@ public struct MediaReference: Equatable, Codable, Sendable {
     public let transcriptKey: NonEmptyString?
     public let accessibilityDescriptionKey: NonEmptyString
     public let licenseEvidenceID: NonEmptyString?
-    public let sha256: NonEmptyString
+    public let sha256: SHA256Digest
 
     public init(
         assetID: NonEmptyString,
@@ -19,7 +19,7 @@ public struct MediaReference: Equatable, Codable, Sendable {
         transcriptKey: NonEmptyString?,
         accessibilityDescriptionKey: NonEmptyString,
         licenseEvidenceID: NonEmptyString?,
-        sha256: NonEmptyString
+        sha256: SHA256Digest
     ) {
         self.assetID = assetID
         self.kind = kind
