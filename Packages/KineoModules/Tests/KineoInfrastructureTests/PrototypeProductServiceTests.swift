@@ -22,6 +22,9 @@ struct PrototypeProductServiceTests {
             )
         )
         try await service.saveSecondaryArea(nil)
+        #expect(
+            try await service.loadProductStartState() == .onboarding(.safetyBoundary(.neck))
+        )
         try await service.acknowledgeSafetyBoundary()
         #expect(
             try await service.loadProductStartState() == .onboarding(.firstCheckIn(.neck))
@@ -228,6 +231,39 @@ struct PrototypeProductServiceTests {
         let decision = try await fixture.snapshot().decisions.first
         #expect(decision?.secondaryOmissionReason == .secondaryUnanswered)
         #expect(decision?.notices.contains(where: { $0.code.rawValue == "notice.secondary_skipped" }) == true)
+    }
+
+    @Test("A missing approved pairing produces a disclosed primary-only routine")
+    func missingPairingFallsBackToPrimaryOnly() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        try await fixture.completeOnboarding(area: .lowerBack, secondaryArea: .neck)
+        await fixture.catalogProvider.setPairingsAvailable(false)
+        let draft = try await fixture.service.beginSingleAreaCheckIn()
+        guard case .plan(let plan) = try await fixture.service.submitCheckIn(
+            draft,
+            primary: AreaCheckInAnswers(
+                area: .lowerBack,
+                change: .similar,
+                comfort: .okay,
+                safetyAnswer: nil
+            ),
+            secondary: AreaCheckInAnswers(
+                area: .neck,
+                change: .similar,
+                comfort: .okay,
+                safetyAnswer: nil
+            )
+        ) else {
+            Issue.record("Expected an approved primary-only fallback.")
+            return
+        }
+        #expect(plan.includedAreas == [.lowerBack])
+        #expect(plan.omittedSecondaryArea == .neck)
+        let routine = try await fixture.service.startRoutine(decisionID: plan.decisionID)
+        #expect(routine.includedAreas == [.lowerBack])
+        let decision = try await fixture.snapshot().decisions.first
+        #expect(decision?.areaInputs.first(where: { $0.area == .neck })?.included == false)
     }
 
     @Test("Multiple Attention areas persist and resolve in stable order")
@@ -868,12 +904,35 @@ private struct ProductServiceFixture {
 
 private actor MutableInstalledCatalogProvider: InstalledPrototypeCatalogProviding {
     private var assetsAvailable = true
+    private var pairingsAvailable = true
 
     func load() async throws(InstalledPrototypeCatalogError) -> InstalledPrototypeCatalog {
         let installed = try InstalledPrototypeCatalogLoader.load()
-        guard !assetsAvailable else { return installed }
+        let catalog: RoutineCatalog
+        do {
+            catalog = pairingsAvailable ? installed.catalog : try RoutineCatalog.makeSigned(
+                schemaVersion: installed.catalog.schemaVersion,
+                catalogVersion: installed.catalog.catalogVersion,
+                createdAt: installed.catalog.createdAt,
+                buildEligibility: installed.catalog.buildEligibility,
+                durationPolicies: installed.catalog.durationPolicies,
+                movements: installed.catalog.movements,
+                fragments: installed.catalog.fragments,
+                primaryTemplates: installed.catalog.primaryTemplates,
+                secondaryModules: installed.catalog.secondaryModules,
+                compatibilityRules: installed.catalog.compatibilityRules.filter {
+                    !($0.primaryArea == .lowerBack && $0.secondaryArea == .neck &&
+                      $0.level == .balanced && $0.duration == .standard)
+                }
+            )
+        } catch {
+            throw .catalogInvalid(error)
+        }
+        guard !assetsAvailable else {
+            return InstalledPrototypeCatalog(catalog: catalog, resources: installed.resources)
+        }
         return InstalledPrototypeCatalog(
-            catalog: installed.catalog,
+            catalog: catalog,
             resources: CatalogValidationResources(
                 localizedStrings: installed.resources.localizedStrings,
                 assetDigestsByPath: [:]
@@ -883,6 +942,10 @@ private actor MutableInstalledCatalogProvider: InstalledPrototypeCatalogProvidin
 
     func setAssetsAvailable(_ available: Bool) {
         assetsAvailable = available
+    }
+
+    func setPairingsAvailable(_ available: Bool) {
+        pairingsAvailable = available
     }
 }
 

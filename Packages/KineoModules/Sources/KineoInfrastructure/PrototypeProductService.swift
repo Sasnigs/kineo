@@ -112,9 +112,8 @@ public actor PrototypeProductService: KineoProductServing {
             }
             guard profile.adultAcknowledged else { return .onboarding(.welcome) }
             guard let primaryArea = profile.primaryArea else { return .onboarding(.primaryArea) }
-            guard profile.safetyBoundaryVersion != nil,
-                  profile.safetyAcknowledgedAt != nil else {
-                if profile.secondaryArea == nil {
+            guard profile.safetyAcknowledgedAt != nil else {
+                if profile.safetyBoundaryVersion == nil {
                     return .onboarding(.secondaryArea(primary: primaryArea, selected: nil))
                 }
                 return .onboarding(.safetyBoundary(primaryArea))
@@ -192,8 +191,10 @@ public actor PrototypeProductService: KineoProductServing {
                 try UserProfile(
                     onboardingCompletedAt: existing.onboardingCompletedAt,
                     adultAcknowledged: existing.adultAcknowledged,
-                    safetyBoundaryVersion: existing.safetyBoundaryVersion,
-                    safetyAcknowledgedAt: existing.safetyAcknowledgedAt,
+                    safetyBoundaryVersion: existing.onboardingCompletedAt == nil ?
+                        nil : existing.safetyBoundaryVersion,
+                    safetyAcknowledgedAt: existing.onboardingCompletedAt == nil ?
+                        nil : existing.safetyAcknowledgedAt,
                     primaryArea: area,
                     secondaryArea: nil,
                     routinePreference: existing.routinePreference,
@@ -218,7 +219,10 @@ public actor PrototypeProductService: KineoProductServing {
                 return try UserProfile(
                     onboardingCompletedAt: existing.onboardingCompletedAt,
                     adultAcknowledged: existing.adultAcknowledged,
-                    safetyBoundaryVersion: existing.safetyBoundaryVersion,
+                    safetyBoundaryVersion: existing.onboardingCompletedAt == nil ?
+                        try NonEmptyString(
+                            validating: PrototypeProductConfiguration.safetyBoundaryVersion
+                        ) : existing.safetyBoundaryVersion,
                     safetyAcknowledgedAt: existing.safetyAcknowledgedAt,
                     primaryArea: primaryArea,
                     secondaryArea: area,
@@ -1296,7 +1300,7 @@ private extension PrototypeProductService {
         let request = try CatalogCompositionRequest(
             decisionID: decision.id,
             primaryArea: primary.area,
-            secondaryArea: decision.areaInputs.first(where: { $0.role == .secondary && $0.included })?.area,
+            secondaryArea: decision.areaInputs.first(where: { $0.role == .secondary })?.area,
             selectedLevel: decision.selectedLevel,
             duration: decision.durationVariant,
             catalogVersion: installed.catalog.catalogVersion,
