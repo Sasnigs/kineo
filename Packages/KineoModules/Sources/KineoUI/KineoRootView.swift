@@ -29,6 +29,7 @@ public struct KineoRootView: View {
 
 private struct ProductFlowContainer: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State var model: ProductFlowModel
 
     var body: some View {
@@ -92,6 +93,9 @@ private struct ProductFlowContainer: View {
                 }
             }
         }
+        .transaction { transaction in
+            if reduceMotion { transaction.animation = nil }
+        }
         .task(id: model.actionSequence) { await model.performPendingAction() }
         .task(id: model.activeRoutineSessionID) {
             guard model.activeRoutineSessionID != nil else { return }
@@ -116,15 +120,15 @@ private struct LaunchStateView: View {
     let state: AppLaunchState
 
     var body: some View {
-        ContentUnavailableView {
-            Label("Kineo", systemImage: "figure.walk")
-        } description: {
+        FlowPage(title: "Kineo") {
+            Image(systemName: "figure.walk")
+                .font(.largeTitle)
+                .accessibilityHidden(true)
             Text(message)
         }
-        .navigationTitle("Kineo")
     }
 
-    private var message: String {
+    private var message: LocalizedStringKey {
         switch state {
         case .preparingFoundation: "Preparing secure local storage…"
         case .foundationReady: "Local foundation is ready."
@@ -161,12 +165,12 @@ private struct AgeConfirmationView: View {
 private struct AgeUnavailableView: View {
     let model: ProductFlowModel
     var body: some View {
-        ContentUnavailableView {
-            Label("Kineo is adults only", systemImage: "person.crop.circle.badge.xmark")
-        } description: {
+        FlowPage(title: "Kineo is adults only") {
+            Image(systemName: "person.crop.circle.badge.xmark")
+                .font(.largeTitle)
+                .accessibilityHidden(true)
             Text("This prototype is not available for people under \(KineoProductCopy.minimumSupportedAge).")
-        } actions: {
-            Button("Correct my answer") { model.send(.correctAge) }
+            PrimaryButton("Correct my answer") { model.send(.correctAge) }
         }
     }
 }
@@ -178,7 +182,7 @@ private struct PrimaryAreaView: View {
         FlowPage(title: "Choose your main area") {
             Text("Start with the area you most want help planning movement for.")
             ForEach(BodyArea.allCases, id: \.self) { area in
-                ChoiceCard(title: area.title, selected: selected == area) { model.send(.selectPrimaryArea(area)) }
+                ChoiceCard(title: area.localizedTitle, selected: selected == area) { model.send(.selectPrimaryArea(area)) }
             }
             PrimaryButton("Continue") { model.send(.continuePrimaryArea) }
                 .disabled(selected == nil)
@@ -201,7 +205,7 @@ private struct SecondaryAreaView: View {
                 model.send(.selectSecondaryArea(nil))
             }
             ForEach(BodyArea.allCases.filter { $0 != primary }, id: \.self) { area in
-                ChoiceCard(title: area.title, selected: selected == area) {
+                ChoiceCard(title: area.localizedTitle, selected: selected == area) {
                     model.send(.selectSecondaryArea(area))
                 }
             }
@@ -216,7 +220,11 @@ private struct SafetyBoundaryView: View {
     var body: some View {
         FlowPage(title: "Before your first check-in") {
             Text("Kineo supports self-directed movement planning for your usual recurring \(area.title.lowercased()) discomfort.")
-            NoticeCard(title: "Pay attention to changes", message: "If something feels new, sudden, unusual, or movement feels limited, answer the follow-up honestly. Kineo may withhold a routine.")
+            NoticeCard(
+                title: "Pay attention to changes",
+                message: "If something feels new, sudden, unusual, or movement feels limited, answer the follow-up honestly. Kineo may withhold a routine.",
+                tone: .attention
+            )
             Text("Prototype wording requires professional review before use outside the product team.")
                 .font(.footnote).foregroundStyle(.secondary)
             PrimaryButton("I understand") { model.send(.acknowledgeSafety) }
@@ -268,14 +276,14 @@ private struct ProgressTabView: View {
                         message: "Completed routines, intentional stops, and Pause Today participation appear here."
                     )
                 } else {
-                    Text("\(progress.participationDayCount) participation days")
+                    Text("\(progress.participationDayCount, format: .number) participation days")
                         .font(.title2.weight(.semibold))
                     ForEach(progress.areas, id: \.area) { area in
                         VStack(alignment: .leading, spacing: KineoLayout.compactSpacing) {
                             Text(area.area.title).font(.headline)
-                            Text("\(area.recordedCheckInCount) recorded check-ins")
-                            Text("\(area.completedRoutineCount) completed routines")
-                            Text("\(area.participationCount) participation records")
+                            Text("\(area.recordedCheckInCount, format: .number) recorded check-ins")
+                            Text("\(area.completedRoutineCount, format: .number) completed routines")
+                            Text("\(area.participationCount, format: .number) participation records")
                             if let response = area.latestResponse {
                                 Text("Latest response: \(response.title)")
                             }
@@ -302,7 +310,7 @@ private struct ProfileTabView: View {
                 Text("Areas").font(.title2.weight(.semibold))
                 Text("Primary").font(.headline)
                 ForEach(BodyArea.allCases, id: \.self) { area in
-                    ChoiceCard(title: area.title, selected: model.profileDraftPrimary == area) {
+                    ChoiceCard(title: area.localizedTitle, selected: model.profileDraftPrimary == area) {
                         model.send(.selectProfilePrimary(area))
                     }
                 }
@@ -311,7 +319,7 @@ private struct ProfileTabView: View {
                     model.send(.selectProfileSecondary(nil))
                 }
                 ForEach(BodyArea.allCases.filter { $0 != model.profileDraftPrimary }, id: \.self) { area in
-                    ChoiceCard(title: area.title, selected: model.profileDraftSecondary == area) {
+                    ChoiceCard(title: area.localizedTitle, selected: model.profileDraftSecondary == area) {
                         model.send(.selectProfileSecondary(area))
                     }
                 }
@@ -407,7 +415,11 @@ private struct ConditionalSafetyView: View {
     var body: some View {
         let area = model.currentCheckInArea ?? draft.area
         FlowPage(title: "One follow-up for \(area.title.lowercased())") {
-            NoticeCard(title: "Is this new, sudden, or unusual for you?", message: "Choose the answer that best reflects today. Yes and Not sure both withhold a Kineo routine.")
+            NoticeCard(
+                title: "Is this new, sudden, or unusual for you?",
+                message: "Choose the answer that best reflects today. Yes and Not sure both withhold a Kineo routine.",
+                tone: .attention
+            )
             ChoiceCard(title: "No") { model.send(.answerConditionalSafety(.no)) }
             ChoiceCard(title: "Yes") { model.send(.answerConditionalSafety(.yes)) }
             ChoiceCard(title: "Not sure") { model.send(.answerConditionalSafety(.notSure)) }
@@ -419,17 +431,17 @@ private struct AttentionGuidanceView: View {
     let model: ProductFlowModel
     let prompt: AttentionPrompt
     var body: some View {
-        ContentUnavailableView {
-            Label("Attention required", systemImage: "exclamationmark.circle")
-        } description: {
-            Text("Kineo has withheld a routine because of your \(prompt.area.title.lowercased()) answer.")
-        } actions: {
-            VStack(spacing: KineoLayout.standardSpacing) {
-                Button("Done") { model.send(.showAttentionReturn) }
-                Button("I selected that by mistake") { model.send(.startAttentionCorrection) }
+        FlowPage(title: "Attention required") {
+            NoticeCard(
+                title: "No routine is available",
+                message: "Kineo has withheld a routine because of your \(prompt.area.title.lowercased()) answer.",
+                tone: .attention
+            )
+            PrimaryButton("Done") { model.send(.showAttentionReturn) }
+            SecondaryButton("I selected that by mistake") {
+                model.send(.startAttentionCorrection)
             }
         }
-        .navigationTitle("Attention required")
     }
 }
 
@@ -489,7 +501,8 @@ private struct AttentionCorrectionSafetyView: View {
         FlowPage(title: "Correct your follow-up") {
             NoticeCard(
                 title: "Is this new, sudden, or unusual for you?",
-                message: "Yes and Not sure keep Attention Required active."
+                message: "Yes and Not sure keep Attention Required active.",
+                tone: .attention
             )
             ChoiceCard(title: "No") { model.send(.answerCorrectionSafety(.no)) }
             ChoiceCard(title: "Yes") { model.send(.answerCorrectionSafety(.yes)) }
@@ -509,7 +522,8 @@ private struct PlanView: View {
                 Text(plan.explanationText)
                 Text("Included: \(plan.includedAreas.map(\.title).joined(separator: ", "))")
                     .foregroundStyle(.secondary)
-                Text("\(plan.itemCount) guided steps • \(plan.nominalMinutes) minutes").foregroundStyle(.secondary)
+                Text("\(plan.itemCount, format: .number) guided steps • \(plan.nominalMinutes, format: .number) minutes")
+                    .foregroundStyle(.secondary)
             }
             .cardStyle()
             if let omitted = plan.omittedSecondaryArea {
@@ -539,23 +553,25 @@ private struct PauseTodayConfirmationView: View {
     let model: ProductFlowModel
     let area: BodyArea
     var body: some View {
-        ContentUnavailableView {
-            Label("Paused for today", systemImage: "pause.circle")
-        } description: {
+        FlowPage(title: "Paused for today") {
+            Image(systemName: "pause.circle")
+                .font(.largeTitle)
+                .accessibilityHidden(true)
             Text("No \(area.title.lowercased()) routine was started. You can check in again when you choose.")
-        } actions: {
-            Button("Done") { model.send(.finishPauseToday) }
+            PrimaryButton("Done") { model.send(.finishPauseToday) }
         }
     }
 }
 
 private struct RoutineView: View {
+    @AccessibilityFocusState private var pausedFocused: Bool
     let model: ProductFlowModel
     let routine: RoutinePresentation
     var body: some View {
         FlowPage(title: "Guided routine") {
             if routine.contentAvailable {
-                Text("Step \(routine.currentStepIndex + KineoLayout.humanIndexOffset) of \(routine.totalStepCount)").font(.headline).foregroundStyle(.secondary)
+                Text("Step \(routine.currentStepIndex + KineoLayout.humanIndexOffset, format: .number) of \(routine.totalStepCount, format: .number)")
+                    .font(.headline).foregroundStyle(.secondary)
                 if routine.currentItem != nil {
                     VStack(alignment: .leading, spacing: KineoLayout.standardSpacing) {
                         Text(routine.presentedTitle).font(.title2.weight(.semibold))
@@ -568,6 +584,7 @@ private struct RoutineView: View {
                             Text(routine.timerText(for: dose))
                                 .font(.title3.monospacedDigit().weight(.semibold))
                                 .accessibilityLabel("Routine timer")
+                                .accessibilityValue(routine.timerText(for: dose))
                         }
                         if routine.selectedAlternative != nil {
                             Label("Approved alternative selected", systemImage: "arrow.triangle.branch")
@@ -580,10 +597,14 @@ private struct RoutineView: View {
                 if routine.status == .paused {
                     Label("Paused", systemImage: "pause.circle.fill")
                         .font(.headline)
+                        .accessibilityHeading(.h2)
+                        .accessibilityFocused($pausedFocused)
                     PrimaryButton("Resume") { model.send(.resumeRoutine) }
                 } else {
-                    PrimaryButton(routine.isLastStep ? "Complete routine" : "Complete step") {
-                        model.send(.advanceRoutine)
+                    if routine.isLastStep {
+                        PrimaryButton("Complete routine") { model.send(.advanceRoutine) }
+                    } else {
+                        PrimaryButton("Complete step") { model.send(.advanceRoutine) }
                     }
                     SecondaryButton("Pause") { model.send(.pauseRoutine) }
                     SecondaryButton("Skip this step") { model.send(.skipRoutineStep(nil)) }
@@ -600,6 +621,9 @@ private struct RoutineView: View {
                 )
                 PrimaryButton("End incomplete routine") { model.send(.requestEndRoutine) }
             }
+        }
+        .task(id: routine.status) {
+            if routine.status == .paused { pausedFocused = true }
         }
     }
 }
@@ -647,7 +671,8 @@ private struct RoutineSafetyGuidanceView: View {
         FlowPage(title: "Stop and check how you feel") {
             NoticeCard(
                 title: "The routine is paused",
-                message: "Kineo will not resume automatically. End the routine if you do not want to continue."
+                message: "Kineo will not resume automatically. End the routine if you do not want to continue.",
+                tone: .attention
             )
             PrimaryButton("End routine") { model.send(.confirmSafetyEnd) }
             SecondaryButton("I tapped this by mistake") { model.send(.safetyTappedByMistake) }
@@ -683,6 +708,11 @@ private struct FeedbackView: View {
             }
             PrimaryButton("Save feedback") { model.send(.submitAreaFeedback) }
                 .disabled(routine.includedAreas.allSatisfy { model.feedbackResponse(for: $0) == nil })
+            if routine.includedAreas.allSatisfy({ model.feedbackResponse(for: $0) == nil }) {
+                Text("Choose at least one response to save, or skip all feedback.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
             SecondaryButton("Skip all feedback") { model.send(.skipFeedback) }
         }
     }
@@ -692,12 +722,12 @@ private struct CompletionView: View {
     let model: ProductFlowModel
     let area: BodyArea
     var body: some View {
-        ContentUnavailableView {
-            Label("Routine complete", systemImage: "checkmark.circle")
-        } description: {
+        FlowPage(title: "Routine complete") {
+            Image(systemName: "checkmark.circle")
+                .font(.largeTitle)
+                .accessibilityHidden(true)
             Text("Your \(area.title.lowercased()) routine and optional response are saved locally.")
-        } actions: {
-            Button("Done") { model.send(.finishCompletion) }
+            PrimaryButton("Done") { model.send(.finishCompletion) }
         }
     }
 }
@@ -713,7 +743,7 @@ private struct ResetHistoryConfirmationView: View {
                 title: "Safety exception",
                 message: "Any current Attention Required area remains so Reset cannot bypass it. Your areas and reminder preference also remain."
             )
-            Button("Reset history", role: .destructive) { model.send(.confirmResetHistory) }
+            DestructiveButton("Reset history") { model.send(.confirmResetHistory) }
             SecondaryButton("Cancel") { model.send(.cancelDataControl) }
             Text("Current primary area: \(area.title)").font(.footnote).foregroundStyle(.secondary)
         }
@@ -727,7 +757,7 @@ private struct DeleteAllConfirmationView: View {
         FlowPage(title: "Delete all Kineo data?") {
             Text("This removes your profile, all local history, current Attention rows, and Kineo reminders. It cannot be undone.")
             Text("It does not change iPhone notification permission history or data and diagnostics held independently by Apple.")
-            Button("Delete all data", role: .destructive) { model.send(.confirmDeleteAll) }
+            DestructiveButton("Delete all data") { model.send(.confirmDeleteAll) }
             SecondaryButton("Cancel") { model.send(.cancelDataControl) }
             Text("You will return to onboarding.")
                 .font(.footnote).foregroundStyle(.secondary)
@@ -736,69 +766,138 @@ private struct DeleteAllConfirmationView: View {
 }
 
 private struct FlowPage<Content: View>: View {
-    let title: String
+    @AccessibilityFocusState private var titleFocused: Bool
+    let title: LocalizedStringKey
     @ViewBuilder let content: Content
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: KineoLayout.sectionSpacing) { content }
+            VStack(alignment: .leading, spacing: KineoLayout.sectionSpacing) {
+                Text(title)
+                    .font(.largeTitle.bold())
+                    .accessibilityHeading(.h1)
+                    .accessibilityFocused($titleFocused)
+                content
+            }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(KineoLayout.screenMargin)
         }
-        .navigationTitle(title)
+        .navigationTitle("Kineo")
+        .kineoInlineNavigationTitle()
+        .task { titleFocused = true }
     }
 }
 
 private struct ChoiceCard: View {
-    let title: String
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    let title: LocalizedStringKey
     var symbol: String?
     var selected = false
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            HStack(spacing: KineoLayout.standardSpacing) {
-                if let symbol { Image(systemName: symbol) }
-                Text(title).frame(maxWidth: .infinity, alignment: .leading)
-                if selected { Image(systemName: "checkmark.circle.fill") }
+            HStack(alignment: .firstTextBaseline, spacing: KineoLayout.standardSpacing) {
+                if let symbol {
+                    Image(systemName: symbol).accessibilityHidden(true)
+                }
+                Text(title)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if selected {
+                    Image(systemName: "checkmark.circle.fill").accessibilityHidden(true)
+                }
             }
             .padding(KineoLayout.standardSpacing)
             .frame(minHeight: KineoLayout.minimumPrimaryControlHeight)
             .background(selected ? Color.accentColor.opacity(KineoLayout.selectedSurfaceOpacity) : Color.secondary.opacity(KineoLayout.unselectedSurfaceOpacity))
             .clipShape(RoundedRectangle(cornerRadius: KineoLayout.controlRadius))
-            .overlay { RoundedRectangle(cornerRadius: KineoLayout.controlRadius).stroke(selected ? Color.accentColor : Color.secondary.opacity(KineoLayout.borderOpacity)) }
+            .overlay {
+                RoundedRectangle(cornerRadius: KineoLayout.controlRadius)
+                    .stroke(
+                        selected ? Color.accentColor : Color.secondary.opacity(KineoLayout.borderOpacity),
+                        lineWidth: contrast == .increased ? KineoLayout.increasedBorderWidth : KineoLayout.standardBorderWidth
+                    )
+            }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text(title))
+        .accessibilityValue(Text(selectionValue))
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityHint(
+            differentiateWithoutColor && selected ?
+                "A checkmark also shows this choice is selected." : ""
+        )
+    }
+
+    private var selectionValue: LocalizedStringKey {
+        selected ? "Selected" : "Not selected"
     }
 }
 
 private struct NoticeCard: View {
-    let title: String
-    let message: String
+    enum Tone: Equatable { case information, attention }
+
+    let title: LocalizedStringKey
+    let message: LocalizedStringKey
+    var tone: Tone = .information
     var body: some View {
-        VStack(alignment: .leading, spacing: KineoLayout.compactSpacing) { Text(title).font(.headline); Text(message) }
-            .cardStyle()
+        VStack(alignment: .leading, spacing: KineoLayout.compactSpacing) {
+            Label(title, systemImage: tone == .attention ? "exclamationmark.circle" : "info.circle")
+                .font(.headline)
+            Text(message).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(KineoLayout.standardSpacing)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tone == .attention ? Color.orange.opacity(KineoLayout.attentionSurfaceOpacity) : Color.secondary.opacity(KineoLayout.unselectedSurfaceOpacity))
+        .clipShape(RoundedRectangle(cornerRadius: KineoLayout.cardRadius))
+        .accessibilityElement(children: .combine)
     }
 }
 
 private struct PrimaryButton: View {
-    let title: String
+    let title: LocalizedStringKey
     let action: () -> Void
-    init(_ title: String, action: @escaping () -> Void) { self.title = title; self.action = action }
+    init(_ title: LocalizedStringKey, action: @escaping () -> Void) { self.title = title; self.action = action }
     var body: some View {
-        Button(title, action: action).font(.headline)
+        Button(action: action) {
+            Text(title).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        }
+            .font(.headline)
             .frame(maxWidth: .infinity, minHeight: KineoLayout.minimumPrimaryControlHeight)
             .buttonStyle(.borderedProminent).controlSize(.large)
     }
 }
 
 private struct SecondaryButton: View {
-    let title: String
+    let title: LocalizedStringKey
     let action: () -> Void
-    init(_ title: String, action: @escaping () -> Void) { self.title = title; self.action = action }
+    init(_ title: LocalizedStringKey, action: @escaping () -> Void) { self.title = title; self.action = action }
     var body: some View {
-        Button(title, action: action)
+        Button(action: action) {
+            Text(title).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        }
             .frame(maxWidth: .infinity, minHeight: KineoLayout.minimumTouchTarget)
             .buttonStyle(.bordered).controlSize(.large)
+    }
+}
+
+private struct DestructiveButton: View {
+    let title: LocalizedStringKey
+    let action: () -> Void
+
+    init(_ title: LocalizedStringKey, action: @escaping () -> Void) {
+        self.title = title
+        self.action = action
+    }
+
+    var body: some View {
+        Button(role: .destructive, action: action) {
+            Text(title).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: KineoLayout.minimumTouchTarget)
+        .buttonStyle(.bordered)
+        .controlSize(.large)
     }
 }
 
@@ -806,26 +905,38 @@ private struct DurationButton: View {
     let duration: DurationVariant
     let selected: Bool
     let action: () -> Void
-    var body: some View { ChoiceCard(title: duration.title, selected: selected, action: action) }
-}
-
-private struct PlaceholderTab: View {
-    let title: String
-    let message: String
-    let symbol: String
-    var body: some View { ContentUnavailableView(title, systemImage: symbol, description: Text(message)) }
+    var body: some View {
+        ChoiceCard(title: duration.localizedTitle, selected: selected, action: action)
+    }
 }
 
 private struct ErrorNotice: View {
+    @AccessibilityFocusState private var errorFocused: Bool
     let message: String
     let retry: () -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: KineoLayout.compactSpacing) { Text(message); Button("Retry", action: retry) }
+        VStack(alignment: .leading, spacing: KineoLayout.compactSpacing) {
+            Text("Something needs your attention").font(.headline).accessibilityHeading(.h2)
+            Text(message)
+            Button("Retry", action: retry).frame(minHeight: KineoLayout.minimumTouchTarget)
+        }
             .padding(KineoLayout.standardSpacing).frame(maxWidth: .infinity, alignment: .leading).background(.regularMaterial)
+            .accessibilityElement(children: .contain)
+            .accessibilityFocused($errorFocused)
+            .task { errorFocused = true }
     }
 }
 
 private extension View {
+    @ViewBuilder
+    func kineoInlineNavigationTitle() -> some View {
+        #if os(iOS)
+        navigationBarTitleDisplayMode(.inline)
+        #else
+        self
+        #endif
+    }
+
     func cardStyle() -> some View {
         padding(KineoLayout.standardSpacing).frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.secondary.opacity(KineoLayout.unselectedSurfaceOpacity))
@@ -835,6 +946,13 @@ private extension View {
 
 private extension BodyArea {
     var title: String { switch self { case .neck: "Neck"; case .upperMidBack: "Upper or mid-back"; case .lowerBack: "Lower back" } }
+    var localizedTitle: LocalizedStringKey {
+        switch self {
+        case .neck: "Neck"
+        case .upperMidBack: "Upper or mid-back"
+        case .lowerBack: "Lower back"
+        }
+    }
 }
 
 private extension RoutineLevel {
@@ -845,6 +963,12 @@ private extension RoutineLevel {
 
 private extension DurationVariant {
     var title: String { switch self { case .quick: "Quick"; case .standard: "Standard" } }
+    var localizedTitle: LocalizedStringKey {
+        switch self {
+        case .quick: "Quick"
+        case .standard: "Standard"
+        }
+    }
 }
 
 private extension AreaResponse {
@@ -876,10 +1000,10 @@ private extension PlanPresentation {
 private extension Dose {
     var presentationText: String {
         switch kind {
-        case .timed: "About \(estimatedSeconds) seconds"
+        case .timed: "About \(estimatedSeconds.formatted()) seconds"
         case .repetitions:
             if let repetitionCount {
-                "\(repetitionCount) repetitions"
+                "\(repetitionCount.formatted()) repetitions"
             } else {
                 "Repetitions"
             }
@@ -916,12 +1040,12 @@ private extension RoutinePresentation {
                 remainingMilliseconds + KineoLayout.countdownRoundingOffset
             ) / KineoLayout.millisecondsPerSecond
             return status == .paused ?
-                "Paused with \(remainingSeconds) seconds remaining" :
-                "\(remainingSeconds) seconds remaining"
+                "Paused with \(remainingSeconds.formatted()) seconds remaining" :
+                "\(remainingSeconds.formatted()) seconds remaining"
         case .repetitions:
             return status == .paused ?
-                "Paused after \(elapsedSeconds) seconds" :
-                "\(elapsedSeconds) seconds elapsed"
+                "Paused after \(elapsedSeconds.formatted()) seconds" :
+                "\(elapsedSeconds.formatted()) seconds elapsed"
         }
     }
 }
@@ -938,6 +1062,9 @@ private enum KineoLayout {
     static let selectedSurfaceOpacity = 0.14
     static let unselectedSurfaceOpacity = 0.08
     static let borderOpacity = 0.35
+    static let attentionSurfaceOpacity = 0.16
+    static let standardBorderWidth: CGFloat = 1
+    static let increasedBorderWidth: CGFloat = 2
     static let secondsPerMinute = 60
     static let millisecondsPerSecond: Int64 = 1_000
     static let countdownRoundingOffset = millisecondsPerSecond - 1
