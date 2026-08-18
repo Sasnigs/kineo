@@ -12,10 +12,18 @@
 		A00000000000000000000203 /* KineoUI in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000902 /* KineoUI */; };
 		A00000000000000000000204 /* KineoInfrastructure in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000903 /* KineoInfrastructure */; };
 		A00000000000000000000205 /* KineoInfrastructure in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000904 /* KineoInfrastructure */; };
+		A00000000000000000000206 /* KineoAppUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000110 /* KineoAppUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		A00000000000000000000801 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000501 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000000000000000000401;
+			remoteInfo = KineoApp;
+		};
+		A00000000000000000000803 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A00000000000000000000501 /* Project object */;
 			proxyType = 1;
@@ -34,6 +42,8 @@
 		A00000000000000000000107 /* InternalPrototype.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = InternalPrototype.xcconfig; sourceTree = "<group>"; };
 		A00000000000000000000108 /* ReleaseCandidate.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ReleaseCandidate.xcconfig; sourceTree = "<group>"; };
 		A00000000000000000000109 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		A00000000000000000000110 /* KineoAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KineoAppUITests.swift; sourceTree = "<group>"; };
+		A00000000000000000000111 /* KineoAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KineoAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,6 +64,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A00000000000000000000308 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -62,6 +79,7 @@
 			children = (
 				A00000000000000000000003 /* App */,
 				A00000000000000000000004 /* Tests */,
+				A00000000000000000000007 /* UI Tests */,
 				A00000000000000000000005 /* Configurations */,
 				A00000000000000000000006 /* Frameworks */,
 				A00000000000000000000002 /* Products */,
@@ -73,6 +91,7 @@
 			children = (
 				A00000000000000000000103 /* Kineo.app */,
 				A00000000000000000000104 /* KineoAppTests.xctest */,
+				A00000000000000000000111 /* KineoAppUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -91,6 +110,14 @@
 				A00000000000000000000102 /* KineoAppTests.swift */,
 			);
 			path = Tests/KineoAppTests;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000007 /* UI Tests */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000110 /* KineoAppUITests.swift */,
+			);
+			path = Tests/KineoAppUITests;
 			sourceTree = "<group>";
 		};
 		A00000000000000000000005 /* Configurations */ = {
@@ -157,6 +184,26 @@
 			productReference = A00000000000000000000104 /* KineoAppTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		A00000000000000000000403 /* KineoAppUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000000000000000000604 /* Build configuration list for PBXNativeTarget "KineoAppUITests" */;
+			buildPhases = (
+				A00000000000000000000307 /* Sources */,
+				A00000000000000000000308 /* Frameworks */,
+				A00000000000000000000309 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A00000000000000000000804 /* PBXTargetDependency */,
+			);
+			name = KineoAppUITests;
+			packageProductDependencies = (
+			);
+			productName = KineoAppUITests;
+			productReference = A00000000000000000000111 /* KineoAppUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -171,6 +218,10 @@
 						CreatedOnToolsVersion = 16.3;
 					};
 					A00000000000000000000402 = {
+						CreatedOnToolsVersion = 16.3;
+						TestTargetID = A00000000000000000000401;
+					};
+					A00000000000000000000403 = {
 						CreatedOnToolsVersion = 16.3;
 						TestTargetID = A00000000000000000000401;
 					};
@@ -194,6 +245,7 @@
 			targets = (
 				A00000000000000000000401 /* KineoApp */,
 				A00000000000000000000402 /* KineoAppTests */,
+				A00000000000000000000403 /* KineoAppUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -207,6 +259,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A00000000000000000000306 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000000000000000000309 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -232,6 +291,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A00000000000000000000307 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00000000000000000000206 /* KineoAppUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -239,6 +306,11 @@
 			isa = PBXTargetDependency;
 			target = A00000000000000000000401 /* KineoApp */;
 			targetProxy = A00000000000000000000801 /* PBXContainerItemProxy */;
+		};
+		A00000000000000000000804 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000000000000000000401 /* KineoApp */;
+			targetProxy = A00000000000000000000803 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -323,12 +395,17 @@
 		A00000000000000000000722 /* InternalPrototype */ = {isa = XCBuildConfiguration; baseConfigurationReference = A00000000000000000000107 /* InternalPrototype.xcconfig */; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = app.kineo.prototype.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Kineo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Kineo";}; name = InternalPrototype; };
 		A00000000000000000000723 /* ReleaseCandidate */ = {isa = XCBuildConfiguration; baseConfigurationReference = A00000000000000000000108 /* ReleaseCandidate.xcconfig */; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = app.kineo.prototype.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Kineo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Kineo";}; name = ReleaseCandidate; };
 		A00000000000000000000724 /* Release */ = {isa = XCBuildConfiguration; baseConfigurationReference = A00000000000000000000109 /* Release.xcconfig */; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = app.kineo.prototype.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Kineo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Kineo";}; name = Release; };
+		A00000000000000000000731 /* DebugPrototype */ = {isa = XCBuildConfiguration; baseConfigurationReference = A00000000000000000000106 /* DebugPrototype.xcconfig */; buildSettings = {GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = app.kineo.prototype.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = KineoApp;}; name = DebugPrototype; };
+		A00000000000000000000732 /* InternalPrototype */ = {isa = XCBuildConfiguration; baseConfigurationReference = A00000000000000000000107 /* InternalPrototype.xcconfig */; buildSettings = {GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = app.kineo.prototype.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = KineoApp;}; name = InternalPrototype; };
+		A00000000000000000000733 /* ReleaseCandidate */ = {isa = XCBuildConfiguration; baseConfigurationReference = A00000000000000000000108 /* ReleaseCandidate.xcconfig */; buildSettings = {GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = app.kineo.prototype.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = KineoApp;}; name = ReleaseCandidate; };
+		A00000000000000000000734 /* Release */ = {isa = XCBuildConfiguration; baseConfigurationReference = A00000000000000000000109 /* Release.xcconfig */; buildSettings = {GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = app.kineo.prototype.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = KineoApp;}; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
 		A00000000000000000000601 /* Build configuration list for PBXProject "Kineo" */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000701 /* DebugPrototype */, A00000000000000000000702 /* InternalPrototype */, A00000000000000000000703 /* ReleaseCandidate */, A00000000000000000000704 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		A00000000000000000000602 /* Build configuration list for PBXNativeTarget "KineoApp" */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000711 /* DebugPrototype */, A00000000000000000000712 /* InternalPrototype */, A00000000000000000000713 /* ReleaseCandidate */, A00000000000000000000714 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		A00000000000000000000603 /* Build configuration list for PBXNativeTarget "KineoAppTests" */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000721 /* DebugPrototype */, A00000000000000000000722 /* InternalPrototype */, A00000000000000000000723 /* ReleaseCandidate */, A00000000000000000000724 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A00000000000000000000604 /* Build configuration list for PBXNativeTarget "KineoAppUITests" */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000731 /* DebugPrototype */, A00000000000000000000732 /* InternalPrototype */, A00000000000000000000733 /* ReleaseCandidate */, A00000000000000000000734 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
