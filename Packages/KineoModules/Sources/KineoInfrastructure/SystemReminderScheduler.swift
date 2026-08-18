@@ -2,7 +2,8 @@ import KineoCore
 
 #if canImport(UserNotifications)
 import Foundation
-import UserNotifications
+// Xcode 16.4's UserNotifications module predates Sendable annotations.
+@preconcurrency import UserNotifications
 
 public actor SystemReminderScheduler: ReminderScheduling {
     private static let requestIdentifier = "kineo.daily-check-in"
