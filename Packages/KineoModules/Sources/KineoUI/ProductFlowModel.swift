@@ -32,6 +32,8 @@ enum ProductScreenState: Equatable {
     case safetyGuidance(RoutinePresentation)
     case feedback(RoutinePresentation)
     case completion(BodyArea)
+    case resetHistoryConfirmation(BodyArea)
+    case deleteAllConfirmation(BodyArea)
 }
 
 enum ProductFlowAction: Equatable {
@@ -81,6 +83,17 @@ enum ProductFlowAction: Equatable {
     case selectFeedback(BodyArea, AreaResponse)
     case submitAreaFeedback
     case skipFeedback
+    case loadDashboard
+    case selectProfilePrimary(BodyArea)
+    case selectProfileSecondary(BodyArea?)
+    case saveProfileAreas
+    case enableReminder(ReminderWindowChoice)
+    case disableReminder
+    case requestResetHistory
+    case confirmResetHistory
+    case requestDeleteAll
+    case confirmDeleteAll
+    case cancelDataControl
     case finishCompletion
     case retry
 }
@@ -99,6 +112,10 @@ final class ProductFlowModel {
     private(set) var actionSequence = ProductFlowModelConstants.initialActionSequence
     private(set) var isSubmitting = false
     private(set) var errorMessage: String?
+    private(set) var progress: ProgressPresentation?
+    private(set) var profile: ProfilePresentation?
+    private(set) var profileDraftPrimary: BodyArea?
+    private(set) var profileDraftSecondary: BodyArea?
 
     var activeRoutineSessionID: RoutineSessionID? {
         guard case .routine(let routine) = state, routine.status == .inProgress else { return nil }
@@ -222,6 +239,27 @@ final class ProductFlowModel {
             guard case .feedback(let routine) = state,
                   routine.includedAreas.contains(area) else { return true }
             feedbackResponses[area] = response
+        case .selectProfilePrimary(let area):
+            guard case .today = state else { return true }
+            profileDraftPrimary = area
+            if profileDraftSecondary == area { profileDraftSecondary = nil }
+        case .selectProfileSecondary(let area):
+            guard case .today = state,
+                  area != profileDraftPrimary else { return true }
+            profileDraftSecondary = area
+        case .requestResetHistory:
+            guard case .today(let area) = state else { return true }
+            state = .resetHistoryConfirmation(area)
+        case .requestDeleteAll:
+            guard case .today(let area) = state else { return true }
+            state = .deleteAllConfirmation(area)
+        case .cancelDataControl:
+            switch state {
+            case .resetHistoryConfirmation(let area), .deleteAllConfirmation(let area):
+                state = .today(area)
+            default:
+                return true
+            }
         case .load, .confirmAdult, .continuePrimaryArea, .continueSecondaryArea, .acknowledgeSafety,
              .completeOnboarding, .startCheckIn, .selectComfort,
              .answerConditionalSafety, .skipSecondaryArea,
@@ -233,6 +271,9 @@ final class ProductFlowModel {
              .requestEndRoutine, .confirmEndRoutine, .somethingFeelsWrong,
              .confirmSafetyEnd, .backgroundRoutine,
              .advanceRoutine, .submitFeedback, .submitAreaFeedback, .skipFeedback, .retry:
+            return false
+        case .loadDashboard, .saveProfileAreas, .enableReminder, .disableReminder,
+             .confirmResetHistory, .confirmDeleteAll:
             return false
         default:
             return true
@@ -457,13 +498,51 @@ final class ProductFlowModel {
             guard case .feedback(let routine) = state else { throw .invalidState }
             try await service.submitFeedback(sessionID: routine.sessionID, responses: [:])
             state = .completion(routine.area)
+        case .loadDashboard:
+            guard case .today = state else { throw .invalidState }
+            progress = try await service.loadProgress()
+            let loadedProfile = try await service.loadProfile()
+            profile = loadedProfile
+            profileDraftPrimary = loadedProfile.primaryArea
+            profileDraftSecondary = loadedProfile.secondaryArea
+        case .saveProfileAreas:
+            guard case .today = state,
+                  let primary = profileDraftPrimary else { throw .invalidState }
+            let updated = try await service.saveAreaPreferences(
+                primary: primary,
+                secondary: profileDraftSecondary
+            )
+            profile = updated
+            state = .today(updated.primaryArea)
+        case .enableReminder(let choice):
+            guard case .today = state else { throw .invalidState }
+            profile = try await service.enableReminder(window: try choice.window())
+        case .disableReminder:
+            guard case .today = state else { throw .invalidState }
+            profile = try await service.disableReminder()
+        case .confirmResetHistory:
+            guard case .resetHistoryConfirmation(let area) = state else { throw .invalidState }
+            try await service.resetHistory()
+            progress = try await service.loadProgress()
+            profile = try await service.loadProfile()
+            state = .today(area)
+        case .confirmDeleteAll:
+            guard case .deleteAllConfirmation = state else { throw .invalidState }
+            try await service.deleteAllData()
+            progress = nil
+            profile = nil
+            profileDraftPrimary = nil
+            profileDraftSecondary = nil
+            state = .welcome
         case .retry:
             guard let failedAction, failedAction != .retry else { throw .invalidState }
             try await perform(failedAction)
         case .getStarted, .underAge, .correctAge, .selectPrimaryArea, .selectSecondaryArea,
              .selectChange, .selectFeedback, .showAttentionReturn, .selectCorrectionChange,
              .cancelAttentionCorrection, .finishPauseToday, .cancelRoutineModal,
-             .safetyTappedByMistake, .finishCompletion:
+             .safetyTappedByMistake, .finishCompletion, .selectProfilePrimary,
+             .selectProfileSecondary, .requestResetHistory, .requestDeleteAll,
+             .cancelDataControl:
             throw .invalidState
         }
     }
@@ -614,6 +693,7 @@ final class ProductFlowModel {
         case .persistence: "Kineo couldn't save that change. Try again."
         case .foundationNotReady: "Local storage isn't ready yet. Try again."
         case .contentUnavailable: "No approved prototype routine is available for this plan."
+        case .reminderUnavailable: "Kineo couldn't update reminders. Your movement flow is unchanged."
         case .attentionRequired: "Attention Required is active. Reload Today to continue safely."
         case .invalidState, .invalidData: "Kineo couldn't continue from this state. Try again."
         }
@@ -663,4 +743,40 @@ private enum ProductFlowModelConstants {
     static let initialActionSequence = 0
     static let actionSequenceIncrement = 1
     static let refreshIntervalSeconds = 1
+}
+
+enum ReminderWindowChoice: String, CaseIterable, Equatable {
+    case morning
+    case evening
+
+    var title: String {
+        switch self {
+        case .morning: "Morning"
+        case .evening: "Evening"
+        }
+    }
+
+    func window() throws(ProductFlowError) -> ReminderWindow {
+        do {
+            return try ReminderWindow(
+                startMinutes: startHour * Self.minutesPerHour,
+                endMinutes: endHour * Self.minutesPerHour
+            )
+        } catch {
+            throw .invalidData
+        }
+    }
+
+    private var startHour: Int {
+        switch self {
+        case .morning: Self.morningStartHour
+        case .evening: Self.eveningStartHour
+        }
+    }
+
+    private var endHour: Int { startHour + Self.windowHourCount }
+    private static let morningStartHour = 8
+    private static let eveningStartHour = 18
+    private static let windowHourCount = 1
+    private static let minutesPerHour = 60
 }
