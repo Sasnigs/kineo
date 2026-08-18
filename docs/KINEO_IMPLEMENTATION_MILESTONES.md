@@ -148,6 +148,8 @@ flowchart LR
 
 ### M7 — Two-area experience
 
+**Status:** Complete — ordered-pair flows, recovery, package tests, and simulator checks passed August 17, 2026.
+
 **Build outcome:** one primary and one optional secondary area work end to end.
 
 - Add compact two-area check-in and ordered safety questions.
