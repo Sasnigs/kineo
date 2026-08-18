@@ -11,9 +11,9 @@ enum ProductScreenState: Equatable {
     case safetyBoundary(BodyArea)
     case firstCheckIn(BodyArea)
     case today(BodyArea)
-    case checkInChange(SingleAreaCheckInDraft)
-    case checkInComfort(SingleAreaCheckInDraft, ChangeReport)
-    case conditionalSafety(SingleAreaCheckInDraft, ChangeReport, MovementComfort)
+    case checkInChange(CheckInDraft)
+    case checkInComfort(CheckInDraft, ChangeReport)
+    case conditionalSafety(CheckInDraft, ChangeReport, MovementComfort)
     case attentionGuidance(AttentionPrompt)
     case attentionReturn(AttentionPrompt)
     case attentionCorrectionChange(AttentionPrompt, AttentionCorrectionDraft)
@@ -275,7 +275,7 @@ final class ProductFlowModel {
             pendingPrimaryAnswers = nil
             pendingSecondaryAnswers = nil
             safetyQuestionArea = nil
-            state = .checkInChange(try await service.beginSingleAreaCheckIn())
+            state = .checkInChange(try await service.beginCheckIn())
         case .selectComfort(let comfort):
             guard case .checkInComfort(let draft, let change) = state else {
                 throw .invalidState
@@ -469,7 +469,7 @@ final class ProductFlowModel {
     }
 
     private func collectBasicAnswers(
-        draft: SingleAreaCheckInDraft,
+        draft: CheckInDraft,
         change: ChangeReport,
         comfort: MovementComfort
     ) async throws(ProductFlowError) {
@@ -493,7 +493,7 @@ final class ProductFlowModel {
     }
 
     private func answerSafetyQuestion(
-        draft: SingleAreaCheckInDraft,
+        draft: CheckInDraft,
         change: ChangeReport,
         comfort: MovementComfort,
         answer: ConditionalSafetyAnswer
@@ -517,7 +517,7 @@ final class ProductFlowModel {
     }
 
     private func omitSecondary(
-        draft: SingleAreaCheckInDraft,
+        draft: CheckInDraft,
         primary: AreaCheckInAnswers
     ) async throws(ProductFlowError) {
         pendingSecondaryAnswers = nil
@@ -531,7 +531,7 @@ final class ProductFlowModel {
     }
 
     private func routeNextSafetyQuestionOrSubmit(
-        draft: SingleAreaCheckInDraft
+        draft: CheckInDraft
     ) async throws(ProductFlowError) {
         guard let primary = pendingPrimaryAnswers else { throw .invalidState }
         if primary.requiresSafetyAnswer,
@@ -551,7 +551,7 @@ final class ProductFlowModel {
     }
 
     private func submit(
-        draft: SingleAreaCheckInDraft,
+        draft: CheckInDraft,
         primary: AreaCheckInAnswers,
         secondary: AreaCheckInAnswers?
     ) async throws(ProductFlowError) {

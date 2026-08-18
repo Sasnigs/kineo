@@ -31,8 +31,8 @@ struct PrototypeProductServiceTests {
         )
         #expect(try await service.completeOnboarding() == .neck)
 
-        let draft = try await service.beginSingleAreaCheckIn()
-        let result = try await service.submitSingleAreaCheckIn(
+        let draft = try await service.beginCheckIn()
+        let result = try await service.submitPrimaryOnlyCheckIn(
             draft,
             change: .similar,
             comfort: .okay,
@@ -93,7 +93,7 @@ struct PrototypeProductServiceTests {
             let fixture = try ProductServiceFixture()
             defer { fixture.removeFiles() }
             try await fixture.completeOnboarding(area: primaryArea, secondaryArea: secondaryArea)
-            let draft = try await fixture.service.beginSingleAreaCheckIn()
+            let draft = try await fixture.service.beginCheckIn()
             guard case .plan(let plan) = try await fixture.service.submitCheckIn(
                 draft,
                 primary: AreaCheckInAnswers(
@@ -129,7 +129,7 @@ struct PrototypeProductServiceTests {
                 responses: [primaryArea: .better, secondaryArea: .worse]
             )
 
-            let nextDraft = try await fixture.service.beginSingleAreaCheckIn()
+            let nextDraft = try await fixture.service.beginCheckIn()
             guard case .plan(let nextPlan) = try await fixture.service.submitCheckIn(
                 nextDraft,
                 primary: AreaCheckInAnswers(
@@ -167,7 +167,7 @@ struct PrototypeProductServiceTests {
             let fixture = try ProductServiceFixture()
             defer { fixture.removeFiles() }
             try await fixture.completeOnboarding(area: primaryArea, secondaryArea: secondaryArea)
-            let draft = try await fixture.service.beginSingleAreaCheckIn()
+            let draft = try await fixture.service.beginCheckIn()
             guard case .attentionRequired(let prompt) = try await fixture.service.submitCheckIn(
                 draft,
                 primary: AreaCheckInAnswers(
@@ -199,7 +199,7 @@ struct PrototypeProductServiceTests {
         let fixture = try ProductServiceFixture()
         defer { fixture.removeFiles() }
         try await fixture.completeOnboarding(area: .neck, secondaryArea: .upperMidBack)
-        let draft = try await fixture.service.beginSingleAreaCheckIn()
+        let draft = try await fixture.service.beginCheckIn()
         guard case .plan(let plan) = try await fixture.service.submitCheckIn(
             draft,
             primary: AreaCheckInAnswers(
@@ -239,7 +239,7 @@ struct PrototypeProductServiceTests {
         defer { fixture.removeFiles() }
         try await fixture.completeOnboarding(area: .lowerBack, secondaryArea: .neck)
         await fixture.catalogProvider.setPairingsAvailable(false)
-        let draft = try await fixture.service.beginSingleAreaCheckIn()
+        let draft = try await fixture.service.beginCheckIn()
         guard case .plan(let plan) = try await fixture.service.submitCheckIn(
             draft,
             primary: AreaCheckInAnswers(
@@ -271,7 +271,7 @@ struct PrototypeProductServiceTests {
         let fixture = try ProductServiceFixture()
         defer { fixture.removeFiles() }
         try await fixture.completeOnboarding(area: .neck, secondaryArea: .lowerBack)
-        let draft = try await fixture.service.beginSingleAreaCheckIn()
+        let draft = try await fixture.service.beginCheckIn()
         guard case .attentionRequired(let firstPrompt) = try await fixture.service.submitCheckIn(
             draft,
             primary: AreaCheckInAnswers(
@@ -307,7 +307,7 @@ struct PrototypeProductServiceTests {
         let fixture = try ProductServiceFixture()
         defer { fixture.removeFiles() }
         try await fixture.completeOnboarding(area: .upperMidBack, secondaryArea: .neck)
-        let draft = try await fixture.service.beginSingleAreaCheckIn()
+        let draft = try await fixture.service.beginCheckIn()
         let primary = AreaCheckInAnswers(
             area: .upperMidBack,
             change: .similar,
@@ -343,13 +343,13 @@ struct PrototypeProductServiceTests {
         let fixture = try ProductServiceFixture()
         defer { fixture.removeFiles() }
         try await fixture.completeOnboarding(area: .neck, secondaryArea: .lowerBack)
-        let stale = try await fixture.service.beginSingleAreaCheckIn()
+        let stale = try await fixture.service.beginCheckIn()
         try await fixture.service.saveSecondaryArea(.upperMidBack)
 
         let reopened = fixture.reopenedService()
         #expect(await reopened.initialState() == .foundationReady)
         #expect(try await reopened.loadProductStartState() == .today(.neck))
-        let fresh = try await reopened.beginSingleAreaCheckIn()
+        let fresh = try await reopened.beginCheckIn()
         #expect(fresh.secondaryArea == .upperMidBack)
         #expect(
             try await fixture.snapshot().checkIns.first(where: { $0.id == stale.checkInID })?.status ==
@@ -362,7 +362,7 @@ struct PrototypeProductServiceTests {
         let fixture = try ProductServiceFixture()
         defer { fixture.removeFiles() }
         try await fixture.completeOnboarding(area: .neck)
-        let original = try await fixture.service.beginSingleAreaCheckIn()
+        let original = try await fixture.service.beginCheckIn()
 
         let reopened = fixture.reopenedService()
         #expect(await reopened.initialState() == .foundationReady)
@@ -371,7 +371,7 @@ struct PrototypeProductServiceTests {
             return
         }
         #expect(restored.checkInID == original.checkInID)
-        #expect(try await reopened.beginSingleAreaCheckIn().checkInID == original.checkInID)
+        #expect(try await reopened.beginCheckIn().checkInID == original.checkInID)
         #expect(try await fixture.snapshot().checkIns.count == ProductServiceFixture.completedCheckInCount)
     }
 
@@ -380,7 +380,7 @@ struct PrototypeProductServiceTests {
         let fixture = try ProductServiceFixture()
         defer { fixture.removeFiles() }
         try await fixture.completeOnboarding(area: .lowerBack)
-        let stale = try await fixture.service.beginSingleAreaCheckIn()
+        let stale = try await fixture.service.beginCheckIn()
 
         let reopened = fixture.reopenedService(clock: FixedProductClock(localDay: .followingDay))
         #expect(await reopened.initialState() == .foundationReady)
@@ -423,8 +423,8 @@ struct PrototypeProductServiceTests {
         try await service.acknowledgeSafetyBoundary()
         _ = try await service.completeOnboarding()
 
-        let draft = try await service.beginSingleAreaCheckIn()
-        let result = try await service.submitSingleAreaCheckIn(
+        let draft = try await service.beginCheckIn()
+        let result = try await service.submitPrimaryOnlyCheckIn(
             draft,
             change: .worse,
             comfort: .limited,
@@ -436,7 +436,7 @@ struct PrototypeProductServiceTests {
         }
         #expect(prompt.area == .lowerBack)
         await #expect(throws: ProductFlowError.attentionRequired([.lowerBack])) {
-            _ = try await service.beginSingleAreaCheckIn()
+            _ = try await service.beginCheckIn()
         }
 
         let persisted = try await fixture.snapshot()
@@ -452,8 +452,8 @@ struct PrototypeProductServiceTests {
         let service = fixture.service
         try await fixture.completeOnboarding(area: .upperMidBack)
 
-        let draft = try await service.beginSingleAreaCheckIn()
-        guard case .attentionRequired = try await service.submitSingleAreaCheckIn(
+        let draft = try await service.beginCheckIn()
+        guard case .attentionRequired = try await service.submitPrimaryOnlyCheckIn(
             draft,
             change: .worse,
             comfort: .okay,
@@ -512,8 +512,8 @@ struct PrototypeProductServiceTests {
         defer { fixture.removeFiles() }
         let service = fixture.service
         try await fixture.completeOnboarding(area: .lowerBack)
-        let draft = try await service.beginSingleAreaCheckIn()
-        guard case .attentionRequired(let prompt) = try await service.submitSingleAreaCheckIn(
+        let draft = try await service.beginCheckIn()
+        guard case .attentionRequired(let prompt) = try await service.submitPrimaryOnlyCheckIn(
             draft,
             change: .similar,
             comfort: .limited,
@@ -525,7 +525,7 @@ struct PrototypeProductServiceTests {
 
         #expect(try await service.respondToAttentionReturn(prompt, answer: .yes) == .ready(.lowerBack))
         #expect(try await service.respondToAttentionReturn(prompt, answer: .yes) == .ready(.lowerBack))
-        _ = try await service.beginSingleAreaCheckIn()
+        _ = try await service.beginCheckIn()
 
         let persisted = try await fixture.snapshot()
         #expect(persisted.attentionStates.isEmpty)
@@ -542,8 +542,8 @@ struct PrototypeProductServiceTests {
         defer { fixture.removeFiles() }
         let service = fixture.service
         try await fixture.completeOnboarding(area: .neck)
-        let draft = try await service.beginSingleAreaCheckIn()
-        guard case .attentionRequired(let prompt) = try await service.submitSingleAreaCheckIn(
+        let draft = try await service.beginCheckIn()
+        guard case .attentionRequired(let prompt) = try await service.submitPrimaryOnlyCheckIn(
             draft,
             change: .worse,
             comfort: .good,
@@ -581,8 +581,8 @@ struct PrototypeProductServiceTests {
         let service = fixture.service
         try await fixture.completeOnboarding(area: .neck)
 
-        let draft = try await service.beginSingleAreaCheckIn()
-        guard case .plan(let plan) = try await service.submitSingleAreaCheckIn(
+        let draft = try await service.beginCheckIn()
+        guard case .plan(let plan) = try await service.submitPrimaryOnlyCheckIn(
             draft,
             change: .similar,
             comfort: .limited,
@@ -868,8 +868,8 @@ private struct ProductServiceFixture {
 
     func makePlan(area: BodyArea) async throws -> PlanPresentation {
         try await completeOnboarding(area: area)
-        let draft = try await service.beginSingleAreaCheckIn()
-        guard case .plan(let plan) = try await service.submitSingleAreaCheckIn(
+        let draft = try await service.beginCheckIn()
+        guard case .plan(let plan) = try await service.submitPrimaryOnlyCheckIn(
             draft,
             change: .similar,
             comfort: .okay,

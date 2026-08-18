@@ -428,7 +428,7 @@ private actor ProductFlowServiceStub: KineoProductServing {
         _ prompt: AttentionPrompt
     ) async throws(ProductFlowError) -> AttentionCorrectionDraft {
         AttentionCorrectionDraft(
-            checkIn: try await beginSingleAreaCheckIn(),
+            checkIn: try await beginCheckIn(),
             safetyEventID: SafetyEventID(UUID()),
             expectedAttentionUpdatedAt: prompt.expectedAttentionUpdatedAt
         )
@@ -443,7 +443,7 @@ private actor ProductFlowServiceStub: KineoProductServing {
         .ready(draft.checkIn.area)
     }
 
-    func beginSingleAreaCheckIn() async throws(ProductFlowError) -> SingleAreaCheckInDraft {
+    func beginCheckIn() async throws(ProductFlowError) -> CheckInDraft {
         if failBeginCheckInWithAttention {
             throw .attentionRequired([.lowerBack])
         }
@@ -452,7 +452,7 @@ private actor ProductFlowServiceStub: KineoProductServing {
               let calendar = NonEmptyString(rawValue: ProductFlowStubValues.calendar) else {
             throw .invalidData
         }
-        return SingleAreaCheckInDraft(
+        return CheckInDraft(
             checkInID: checkInID,
             entryID: entryID,
             area: .neck,
@@ -463,20 +463,20 @@ private actor ProductFlowServiceStub: KineoProductServing {
         )
     }
 
-    func submitSingleAreaCheckIn(
-        _ draft: SingleAreaCheckInDraft,
+    func submitPrimaryOnlyCheckIn(
+        _ draft: CheckInDraft,
         change: ChangeReport,
         comfort: MovementComfort,
         safetyAnswer: ConditionalSafetyAnswer?
-    ) async throws(ProductFlowError) -> SingleAreaCheckInResult {
+    ) async throws(ProductFlowError) -> CheckInResult {
         .plan(plan(checkInID: draft.checkInID, duration: .standard))
     }
 
     func submitCheckIn(
-        _ draft: SingleAreaCheckInDraft,
+        _ draft: CheckInDraft,
         primary: AreaCheckInAnswers,
         secondary: AreaCheckInAnswers?
-    ) async throws(ProductFlowError) -> SingleAreaCheckInResult {
+    ) async throws(ProductFlowError) -> CheckInResult {
         .plan(plan(checkInID: draft.checkInID, duration: .standard))
     }
 

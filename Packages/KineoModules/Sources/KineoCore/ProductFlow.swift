@@ -37,7 +37,7 @@ public enum OnboardingProgress: Equatable, Sendable {
 public enum ProductStartState: Equatable, Sendable {
     case onboarding(OnboardingProgress)
     case attentionRequired(AttentionPrompt)
-    case unfinishedCheckIn(SingleAreaCheckInDraft)
+    case unfinishedCheckIn(CheckInDraft)
     case unfinishedPlan(PlanPresentation)
     case unfinishedRoutine(RoutinePresentation)
     case today(BodyArea)
@@ -72,7 +72,7 @@ public enum AttentionResolution: Equatable, Sendable {
 }
 
 /// Stable identity and context for one in-progress single-area check-in.
-public struct SingleAreaCheckInDraft: Equatable, Sendable {
+public struct CheckInDraft: Equatable, Sendable {
     public let checkInID: CheckInID
     public let entryID: CheckInEntryID
     public let area: BodyArea
@@ -126,12 +126,12 @@ public struct AreaCheckInAnswers: Equatable, Sendable {
 
 /// Stable identities and safety version for one fresh Attention correction.
 public struct AttentionCorrectionDraft: Equatable, Sendable {
-    public let checkIn: SingleAreaCheckInDraft
+    public let checkIn: CheckInDraft
     public let safetyEventID: SafetyEventID
     public let expectedAttentionUpdatedAt: TimestampMilliseconds
 
     public init(
-        checkIn: SingleAreaCheckInDraft,
+        checkIn: CheckInDraft,
         safetyEventID: SafetyEventID,
         expectedAttentionUpdatedAt: TimestampMilliseconds
     ) {
@@ -189,7 +189,7 @@ public struct PlanPresentation: Equatable, Sendable {
 }
 
 /// Result after a complete check-in commits.
-public enum SingleAreaCheckInResult: Equatable, Sendable {
+public enum CheckInResult: Equatable, Sendable {
     case attentionRequired(AttentionPrompt)
     case plan(PlanPresentation)
 }
@@ -262,18 +262,18 @@ public protocol KineoProductServing: AppBootstrapping {
         comfort: MovementComfort,
         safetyAnswer: ConditionalSafetyAnswer?
     ) async throws(ProductFlowError) -> AttentionResolution
-    func beginSingleAreaCheckIn() async throws(ProductFlowError) -> SingleAreaCheckInDraft
-    func submitSingleAreaCheckIn(
-        _ draft: SingleAreaCheckInDraft,
+    func beginCheckIn() async throws(ProductFlowError) -> CheckInDraft
+    func submitPrimaryOnlyCheckIn(
+        _ draft: CheckInDraft,
         change: ChangeReport,
         comfort: MovementComfort,
         safetyAnswer: ConditionalSafetyAnswer?
-    ) async throws(ProductFlowError) -> SingleAreaCheckInResult
+    ) async throws(ProductFlowError) -> CheckInResult
     func submitCheckIn(
-        _ draft: SingleAreaCheckInDraft,
+        _ draft: CheckInDraft,
         primary: AreaCheckInAnswers,
         secondary: AreaCheckInAnswers?
-    ) async throws(ProductFlowError) -> SingleAreaCheckInResult
+    ) async throws(ProductFlowError) -> CheckInResult
     func revisePlan(
         checkInID: CheckInID,
         duration: DurationVariant,

@@ -355,9 +355,9 @@ public actor PrototypeProductService: KineoProductServing {
                         $0.dayContext.localDay == moment.dayContext.localDay
                 }
                 .max { $0.startedAt < $1.startedAt }
-            let checkInDraft: SingleAreaCheckInDraft
+            let checkInDraft: CheckInDraft
             if let existing {
-                checkInDraft = SingleAreaCheckInDraft(
+                checkInDraft = CheckInDraft(
                     checkInID: existing.id,
                     entryID: CheckInEntryID(UUID()),
                     area: prompt.area,
@@ -365,7 +365,7 @@ public actor PrototypeProductService: KineoProductServing {
                     dayContext: existing.dayContext
                 )
             } else {
-                checkInDraft = SingleAreaCheckInDraft(
+                checkInDraft = CheckInDraft(
                     checkInID: CheckInID(UUID()),
                     entryID: CheckInEntryID(UUID()),
                     area: prompt.area,
@@ -488,7 +488,7 @@ public actor PrototypeProductService: KineoProductServing {
         }
     }
 
-    public func beginSingleAreaCheckIn() async throws(ProductFlowError) -> SingleAreaCheckInDraft {
+    public func beginCheckIn() async throws(ProductFlowError) -> CheckInDraft {
         do {
             let store = try requiredStore()
             let snapshot = try await store.loadSnapshot()
@@ -509,7 +509,7 @@ public actor PrototypeProductService: KineoProductServing {
                 }
                 try await abandon(existing, store: store)
             }
-            let draft = SingleAreaCheckInDraft(
+            let draft = CheckInDraft(
                 checkInID: CheckInID(UUID()),
                 entryID: CheckInEntryID(UUID()),
                 area: area,
@@ -535,12 +535,12 @@ public actor PrototypeProductService: KineoProductServing {
         }
     }
 
-    public func submitSingleAreaCheckIn(
-        _ draft: SingleAreaCheckInDraft,
+    public func submitPrimaryOnlyCheckIn(
+        _ draft: CheckInDraft,
         change: ChangeReport,
         comfort: MovementComfort,
         safetyAnswer: ConditionalSafetyAnswer?
-    ) async throws(ProductFlowError) -> SingleAreaCheckInResult {
+    ) async throws(ProductFlowError) -> CheckInResult {
         try await submitCheckIn(
             draft,
             primary: AreaCheckInAnswers(
@@ -554,10 +554,10 @@ public actor PrototypeProductService: KineoProductServing {
     }
 
     public func submitCheckIn(
-        _ draft: SingleAreaCheckInDraft,
+        _ draft: CheckInDraft,
         primary: AreaCheckInAnswers,
         secondary: AreaCheckInAnswers?
-    ) async throws(ProductFlowError) -> SingleAreaCheckInResult {
+    ) async throws(ProductFlowError) -> CheckInResult {
         do {
             let store = try requiredStore()
             guard primary.area == draft.area,
@@ -1728,8 +1728,8 @@ private extension PrototypeProductService {
             .max { $0.startedAt < $1.startedAt }
     }
 
-    func checkInDraft(from checkIn: CheckIn) -> SingleAreaCheckInDraft {
-        SingleAreaCheckInDraft(
+    func checkInDraft(from checkIn: CheckIn) -> CheckInDraft {
+        CheckInDraft(
             checkInID: checkIn.id,
             entryID: CheckInEntryID(UUID()),
             area: checkIn.primaryArea,

@@ -248,7 +248,7 @@ private struct TodayTabsView: View {
 
 private struct ChangeCheckInView: View {
     let model: ProductFlowModel
-    let draft: SingleAreaCheckInDraft
+    let draft: CheckInDraft
     var body: some View {
         let area = model.currentCheckInArea ?? draft.area
         FlowPage(title: "How does \(area.title.lowercased()) feel today?") {
@@ -266,7 +266,7 @@ private struct ChangeCheckInView: View {
 
 private struct ComfortCheckInView: View {
     let model: ProductFlowModel
-    let draft: SingleAreaCheckInDraft
+    let draft: CheckInDraft
     let change: ChangeReport
     var body: some View {
         let area = model.currentCheckInArea ?? draft.area
@@ -284,7 +284,7 @@ private struct ComfortCheckInView: View {
 
 private struct ConditionalSafetyView: View {
     let model: ProductFlowModel
-    let draft: SingleAreaCheckInDraft
+    let draft: CheckInDraft
     let change: ChangeReport
     let comfort: MovementComfort
     var body: some View {
