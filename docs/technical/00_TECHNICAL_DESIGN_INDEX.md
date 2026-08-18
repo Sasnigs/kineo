@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Technical-design version | 0.1 |
-| Status | Approved prototype contract — M1–M5 complete; M6–M12 sequentially authorized subject to documented gates |
+| Status | Approved prototype contract — M1–M8 complete; M9 software complete with physical-device gate pending; M10–M12 authorized subject to documented gates |
 | Platform | Native iPhone app |
 | Minimum deployment target | iOS 17.0 |
 | Product source | `../KINEO_PRODUCT_DESIGN.md` |

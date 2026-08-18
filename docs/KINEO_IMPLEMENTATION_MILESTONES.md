@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved build plan — M1–M8 complete; M9 next |
+| Status | Approved build plan — M1–M8 complete; M9 software complete with physical-device gate pending |
 | Platform | Native iPhone, SwiftUI, iOS 17 minimum |
 | Sources | Product design, UX specification, and TD-00 through TD-08 |
 | Last updated | August 17, 2026 |
@@ -177,6 +177,8 @@ flowchart LR
 **Complete when:** every core feature works offline and optional permissions cannot block it.
 
 ### M9 — UI and accessibility refinement
+
+**Status:** Software implementation complete — automated adaptive-layout and accessibility checks passed August 17, 2026; TD-06 physical-device common-task evidence remains open. See the [M9 implementation report](reviews/M9_IMPLEMENTATION_REPORT_2026-08-17.md).
 
 **Build outcome:** the functional product becomes coherent and assistive-technology ready.
 
