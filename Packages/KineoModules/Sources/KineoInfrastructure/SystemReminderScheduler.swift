@@ -17,8 +17,12 @@ public actor SystemReminderScheduler: ReminderScheduling {
     }
 
     public func authorizationStatus() async -> ReminderAuthorization {
-        let settings = await center.notificationSettings()
-        return Self.authorization(from: settings.authorizationStatus)
+        let status = await withCheckedContinuation { continuation in
+            center.getNotificationSettings { settings in
+                continuation.resume(returning: settings.authorizationStatus)
+            }
+        }
+        return Self.authorization(from: status)
     }
 
     public func requestAuthorization() async throws(ReminderServiceError) -> ReminderAuthorization {
