@@ -20,8 +20,98 @@ public enum ProductFlowError: Error, Equatable, Sendable {
     case invalidState
     case attentionRequired([BodyArea])
     case contentUnavailable
+    case reminderUnavailable
     case invalidData
     case persistence(PersistenceError)
+}
+
+public enum ReminderAuthorization: String, Equatable, Sendable {
+    case notDetermined
+    case denied
+    case authorized
+    case provisional
+}
+
+public enum ReminderServiceError: Error, Equatable, Sendable {
+    case unavailable
+    case schedulingFailed
+    case cancellationFailed
+}
+
+public protocol ReminderScheduling: Sendable {
+    func authorizationStatus() async -> ReminderAuthorization
+    func requestAuthorization() async throws(ReminderServiceError) -> ReminderAuthorization
+    func replaceDailyReminder(
+        window: ReminderWindow,
+        timeZoneID: NonEmptyString
+    ) async throws(ReminderServiceError)
+    func cancelAll() async throws(ReminderServiceError)
+}
+
+public struct AreaProgressPresentation: Equatable, Sendable {
+    public let area: BodyArea
+    public let recordedCheckInCount: Int
+    public let completedRoutineCount: Int
+    public let participationCount: Int
+    public let qualifyingActiveCount: Int
+    public let latestResponse: AreaResponse?
+
+    public init(
+        area: BodyArea,
+        recordedCheckInCount: Int,
+        completedRoutineCount: Int,
+        participationCount: Int,
+        qualifyingActiveCount: Int,
+        latestResponse: AreaResponse?
+    ) {
+        self.area = area
+        self.recordedCheckInCount = recordedCheckInCount
+        self.completedRoutineCount = completedRoutineCount
+        self.participationCount = participationCount
+        self.qualifyingActiveCount = qualifyingActiveCount
+        self.latestResponse = latestResponse
+    }
+}
+
+public struct ProgressPresentation: Equatable, Sendable {
+    public let areas: [AreaProgressPresentation]
+    public let participationDayCount: Int
+
+    public init(areas: [AreaProgressPresentation], participationDayCount: Int) {
+        self.areas = areas
+        self.participationDayCount = participationDayCount
+    }
+
+    public var isEmpty: Bool {
+        areas.allSatisfy {
+            $0.recordedCheckInCount == 0 && $0.participationCount == 0
+        }
+    }
+}
+
+public struct ProfilePresentation: Equatable, Sendable {
+    public let primaryArea: BodyArea
+    public let secondaryArea: BodyArea?
+    public let reminderSettings: ReminderSettings?
+    public let reminderAuthorization: ReminderAuthorization
+    public let healthContextEnabled: Bool
+    public let telemetryEnabled: Bool
+
+    public init(
+        primaryArea: BodyArea,
+        secondaryArea: BodyArea?,
+        reminderSettings: ReminderSettings?,
+        reminderAuthorization: ReminderAuthorization,
+        healthContextEnabled: Bool,
+        telemetryEnabled: Bool
+    ) {
+        self.primaryArea = primaryArea
+        self.secondaryArea = secondaryArea
+        self.reminderSettings = reminderSettings
+        self.reminderAuthorization = reminderAuthorization
+        self.healthContextEnabled = healthContextEnabled
+        self.telemetryEnabled = telemetryEnabled
+    }
 }
 
 /// Durable onboarding progress reconstructed from the local store.
@@ -310,4 +400,14 @@ public protocol KineoProductServing: AppBootstrapping {
         sessionID: RoutineSessionID,
         responses: [BodyArea: AreaResponse]
     ) async throws(ProductFlowError)
+    func loadProgress() async throws(ProductFlowError) -> ProgressPresentation
+    func loadProfile() async throws(ProductFlowError) -> ProfilePresentation
+    func saveAreaPreferences(
+        primary: BodyArea,
+        secondary: BodyArea?
+    ) async throws(ProductFlowError) -> ProfilePresentation
+    func enableReminder(window: ReminderWindow) async throws(ProductFlowError) -> ProfilePresentation
+    func disableReminder() async throws(ProductFlowError) -> ProfilePresentation
+    func resetHistory() async throws(ProductFlowError)
+    func deleteAllData() async throws(ProductFlowError)
 }

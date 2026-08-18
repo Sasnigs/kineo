@@ -1,5 +1,8 @@
 import KineoCore
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 public struct KineoRootView: View {
     @State private var model: ProductFlowModel?
@@ -69,6 +72,10 @@ private struct ProductFlowContainer: View {
                     RoutineSafetyGuidanceView(model: model, routine: routine)
                 case .feedback(let routine): FeedbackView(model: model, routine: routine)
                 case .completion(let area): CompletionView(model: model, area: area)
+                case .resetHistoryConfirmation(let area):
+                    ResetHistoryConfirmationView(model: model, area: area)
+                case .deleteAllConfirmation:
+                    DeleteAllConfirmationView(model: model)
                 }
             }
             .disabled(model.isSubmitting)
@@ -95,6 +102,8 @@ private struct ProductFlowContainer: View {
                case .launching(let launchState) = model.state,
                launchState != .foundationReady {
                 model.send(.load)
+            } else if scenePhase == .active, case .today = model.state {
+                model.send(.loadDashboard)
             } else if scenePhase != .active {
                 await model.pauseActiveRoutineForLifecycle()
             }
@@ -238,10 +247,118 @@ private struct TodayTabsView: View {
                 PrimaryButton("Start today's check-in") { model.send(.startCheckIn) }
             }
             .tabItem { Label("Today", systemImage: "sun.max") }
-            PlaceholderTab(title: "Progress", message: "Your local history and patterns arrive in a later milestone.", symbol: "chart.line.uptrend.xyaxis")
+            ProgressTabView(progress: model.progress)
                 .tabItem { Label("Progress", systemImage: "chart.line.uptrend.xyaxis") }
-            PlaceholderTab(title: "Profile", message: "Area settings, reminders, privacy, and data controls arrive in a later milestone.", symbol: "person.crop.circle")
+            ProfileTabView(model: model)
                 .tabItem { Label("Profile", systemImage: "person.crop.circle") }
+        }
+        .task { model.send(.loadDashboard) }
+    }
+}
+
+private struct ProgressTabView: View {
+    let progress: ProgressPresentation?
+
+    var body: some View {
+        FlowPage(title: "Progress") {
+            if let progress {
+                if progress.isEmpty {
+                    NoticeCard(
+                        title: "No history yet",
+                        message: "Completed routines, intentional stops, and Pause Today participation appear here."
+                    )
+                } else {
+                    Text("\(progress.participationDayCount) participation days")
+                        .font(.title2.weight(.semibold))
+                    ForEach(progress.areas, id: \.area) { area in
+                        VStack(alignment: .leading, spacing: KineoLayout.compactSpacing) {
+                            Text(area.area.title).font(.headline)
+                            Text("\(area.recordedCheckInCount) recorded check-ins")
+                            Text("\(area.completedRoutineCount) completed routines")
+                            Text("\(area.participationCount) participation records")
+                            if let response = area.latestResponse {
+                                Text("Latest response: \(response.title)")
+                            }
+                        }
+                        .cardStyle()
+                    }
+                }
+                Text("These are your local records, not a measure of recovery or a causal claim.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else {
+                ProgressView("Loading local progress…")
+            }
+        }
+    }
+}
+
+private struct ProfileTabView: View {
+    @Environment(\.openURL) private var openURL
+    let model: ProductFlowModel
+
+    var body: some View {
+        FlowPage(title: "Profile") {
+            if let profile = model.profile {
+                Text("Areas").font(.title2.weight(.semibold))
+                Text("Primary").font(.headline)
+                ForEach(BodyArea.allCases, id: \.self) { area in
+                    ChoiceCard(title: area.title, selected: model.profileDraftPrimary == area) {
+                        model.send(.selectProfilePrimary(area))
+                    }
+                }
+                Text("Optional secondary").font(.headline)
+                ChoiceCard(title: "None", selected: model.profileDraftSecondary == nil) {
+                    model.send(.selectProfileSecondary(nil))
+                }
+                ForEach(BodyArea.allCases.filter { $0 != model.profileDraftPrimary }, id: \.self) { area in
+                    ChoiceCard(title: area.title, selected: model.profileDraftSecondary == area) {
+                        model.send(.selectProfileSecondary(area))
+                    }
+                }
+                PrimaryButton("Save areas") { model.send(.saveProfileAreas) }
+
+                Text("Reminders").font(.title2.weight(.semibold))
+                if profile.reminderAuthorization == .denied {
+                    NoticeCard(
+                        title: "Notifications are off",
+                        message: "Your preferred window stays saved, and Kineo still works normally."
+                    )
+                    #if canImport(UIKit)
+                    if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                        SecondaryButton("Open iPhone Settings") { openURL(settingsURL) }
+                    }
+                    #endif
+                } else if profile.reminderSettings?.enabled == true {
+                    Label("One generic daily reminder is on", systemImage: "bell.fill")
+                    SecondaryButton("Turn reminders off") { model.send(.disableReminder) }
+                } else {
+                    ForEach(ReminderWindowChoice.allCases, id: \.self) { choice in
+                        SecondaryButton("Use a \(choice.title.lowercased()) reminder") {
+                            model.send(.enableReminder(choice))
+                        }
+                    }
+                }
+
+                Text("Privacy and data").font(.title2.weight(.semibold))
+                NoticeCard(
+                    title: "Local by design",
+                    message: "Your areas, check-ins, routines, and responses stay in Kineo on this iPhone. This prototype sends no Kineo analytics."
+                )
+                SecondaryButton("Reset history") { model.send(.requestResetHistory) }
+                SecondaryButton("Delete all Kineo data") { model.send(.requestDeleteAll) }
+
+                Text("Safety and support").font(.title2.weight(.semibold))
+                NoticeCard(
+                    title: "Movement planning, not treatment",
+                    message: "Kineo does not diagnose or treat a condition. If an answer activates Attention Required, Kineo withholds new routines until you confirm that area has returned to its usual recurring pattern."
+                )
+                NoticeCard(
+                    title: "Internal prototype",
+                    message: "Use the in-app safety control whenever something feels wrong during a routine. Public-facing guidance and support details require professional review before release."
+                )
+            } else {
+                ProgressView("Loading profile…")
+            }
         }
     }
 }
@@ -585,6 +702,39 @@ private struct CompletionView: View {
     }
 }
 
+private struct ResetHistoryConfirmationView: View {
+    let model: ProductFlowModel
+    let area: BodyArea
+
+    var body: some View {
+        FlowPage(title: "Reset history?") {
+            Text("This removes check-ins, plans, routines, feedback, and Progress history.")
+            NoticeCard(
+                title: "Safety exception",
+                message: "Any current Attention Required area remains so Reset cannot bypass it. Your areas and reminder preference also remain."
+            )
+            Button("Reset history", role: .destructive) { model.send(.confirmResetHistory) }
+            SecondaryButton("Cancel") { model.send(.cancelDataControl) }
+            Text("Current primary area: \(area.title)").font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct DeleteAllConfirmationView: View {
+    let model: ProductFlowModel
+
+    var body: some View {
+        FlowPage(title: "Delete all Kineo data?") {
+            Text("This removes your profile, all local history, current Attention rows, and Kineo reminders. It cannot be undone.")
+            Text("It does not change iPhone notification permission history or data and diagnostics held independently by Apple.")
+            Button("Delete all data", role: .destructive) { model.send(.confirmDeleteAll) }
+            SecondaryButton("Cancel") { model.send(.cancelDataControl) }
+            Text("You will return to onboarding.")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+}
+
 private struct FlowPage<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
@@ -695,6 +845,16 @@ private extension RoutineLevel {
 
 private extension DurationVariant {
     var title: String { switch self { case .quick: "Quick"; case .standard: "Standard" } }
+}
+
+private extension AreaResponse {
+    var title: String {
+        switch self {
+        case .better: "Better"
+        case .same: "Same"
+        case .worse: "Worse"
+        }
+    }
 }
 
 private extension PlanPresentation {

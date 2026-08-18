@@ -172,6 +172,47 @@ struct ProductFlowModelTests {
         #expect(model.currentCheckInArea == .neck)
     }
 
+    @Test("Dashboard preferences, reminders, Reset, and Delete use committed projections")
+    func dashboardAndDataControls() async {
+        let service = ProductFlowServiceStub(productStartState: .today(.neck))
+        let model = ProductFlowModel(service: service)
+        await model.performPendingAction()
+        model.send(.loadDashboard)
+        await model.performPendingAction()
+        #expect(model.progress?.isEmpty == true)
+        #expect(model.profile?.primaryArea == .neck)
+        #expect(model.profile?.healthContextEnabled == false)
+        #expect(model.profile?.telemetryEnabled == false)
+
+        model.send(.selectProfilePrimary(.upperMidBack))
+        model.send(.selectProfileSecondary(.lowerBack))
+        model.send(.saveProfileAreas)
+        await model.performPendingAction()
+        #expect(model.profile?.primaryArea == .upperMidBack)
+        #expect(model.profile?.secondaryArea == .lowerBack)
+
+        model.send(.enableReminder(.morning))
+        await model.performPendingAction()
+        #expect(model.profile?.reminderSettings?.enabled == true)
+        model.send(.disableReminder)
+        await model.performPendingAction()
+        #expect(model.profile?.reminderSettings == nil)
+
+        model.send(.requestResetHistory)
+        #expect(model.state == .resetHistoryConfirmation(.upperMidBack))
+        model.send(.confirmResetHistory)
+        await model.performPendingAction()
+        #expect(model.state == .today(.upperMidBack))
+        #expect(await service.dataControlSnapshot().0)
+
+        model.send(.requestDeleteAll)
+        #expect(model.state == .deleteAllConfirmation(.upperMidBack))
+        model.send(.confirmDeleteAll)
+        await model.performPendingAction()
+        #expect(model.state == .welcome)
+        #expect(await service.dataControlSnapshot().1)
+    }
+
     @Test("A recoverable write failure keeps the truthful screen and retries the same intent")
     func retryPreservesScreen() async {
         let service = ProductFlowServiceStub(failAdultConfirmationOnce: true)
@@ -370,6 +411,10 @@ private actor ProductFlowServiceStub: KineoProductServing {
     private let failBeginCheckInWithAttention: Bool
     private let secondaryArea: BodyArea?
     private var submittedFeedback = [BodyArea: AreaResponse]()
+    private var progressProjection = ProgressPresentation(areas: [], participationDayCount: 0)
+    private var profileProjection: ProfilePresentation
+    private var resetWasCalled = false
+    private var deleteWasCalled = false
     private let checkInID = CheckInID(UUID())
     private let entryID = CheckInEntryID(UUID())
     private let decisionID = SelectionDecisionID(UUID())
@@ -390,6 +435,14 @@ private actor ProductFlowServiceStub: KineoProductServing {
         self.pauseTodayAvailable = pauseTodayAvailable
         self.failBeginCheckInWithAttention = failBeginCheckInWithAttention
         self.secondaryArea = secondaryArea
+        profileProjection = ProfilePresentation(
+            primaryArea: .neck,
+            secondaryArea: secondaryArea,
+            reminderSettings: nil,
+            reminderAuthorization: .notDetermined,
+            healthContextEnabled: false,
+            telemetryEnabled: false
+        )
     }
 
     func initialState() async -> AppLaunchState {
@@ -582,6 +635,63 @@ private actor ProductFlowServiceStub: KineoProductServing {
 
     func feedbackSnapshot() -> [BodyArea: AreaResponse] { submittedFeedback }
 
+    func loadProgress() async throws(ProductFlowError) -> ProgressPresentation {
+        progressProjection
+    }
+
+    func loadProfile() async throws(ProductFlowError) -> ProfilePresentation {
+        profileProjection
+    }
+
+    func saveAreaPreferences(
+        primary: BodyArea,
+        secondary: BodyArea?
+    ) async throws(ProductFlowError) -> ProfilePresentation {
+        profileProjection = profile(primary: primary, secondary: secondary)
+        return profileProjection
+    }
+
+    func enableReminder(window: ReminderWindow) async throws(ProductFlowError) -> ProfilePresentation {
+        guard let timeZone = NonEmptyString(rawValue: ProductFlowStubValues.timeZone) else {
+            throw .invalidData
+        }
+        let settings: ReminderSettings
+        do {
+            settings = try ReminderSettings(
+                enabled: true,
+                window: window,
+                timeZoneID: timeZone,
+                updatedAt: ProductFlowStubValues.timestamp
+            )
+        } catch {
+            throw .invalidData
+        }
+        profileProjection = ProfilePresentation(
+            primaryArea: profileProjection.primaryArea,
+            secondaryArea: profileProjection.secondaryArea,
+            reminderSettings: settings,
+            reminderAuthorization: .authorized,
+            healthContextEnabled: false,
+            telemetryEnabled: false
+        )
+        return profileProjection
+    }
+
+    func disableReminder() async throws(ProductFlowError) -> ProfilePresentation {
+        profileProjection = profile(
+            primary: profileProjection.primaryArea,
+            secondary: profileProjection.secondaryArea
+        )
+        return profileProjection
+    }
+    func resetHistory() async throws(ProductFlowError) {
+        resetWasCalled = true
+        progressProjection = ProgressPresentation(areas: [], participationDayCount: 0)
+    }
+    func deleteAllData() async throws(ProductFlowError) { deleteWasCalled = true }
+
+    func dataControlSnapshot() -> (Bool, Bool) { (resetWasCalled, deleteWasCalled) }
+
     private func routine(status: RoutineStatus) throws(ProductFlowError) -> RoutinePresentation {
         RoutinePresentation(
             sessionID: sessionID,
@@ -613,6 +723,20 @@ private actor ProductFlowServiceStub: KineoProductServing {
                 PrototypeCatalogDurations.quickNominalSeconds :
                 PrototypeCatalogDurations.standardNominalSeconds,
             pauseTodayAvailable: pauseTodayAvailable
+        )
+    }
+
+    private func profile(
+        primary: BodyArea = .neck,
+        secondary: BodyArea? = nil
+    ) -> ProfilePresentation {
+        ProfilePresentation(
+            primaryArea: primary,
+            secondaryArea: secondary,
+            reminderSettings: nil,
+            reminderAuthorization: .notDetermined,
+            healthContextEnabled: false,
+            telemetryEnabled: false
         )
     }
 }

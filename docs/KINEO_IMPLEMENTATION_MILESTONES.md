@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved build plan — M1–M5 complete; M6 next |
+| Status | Approved build plan — M1–M8 complete; M9 next |
 | Platform | Native iPhone, SwiftUI, iOS 17 minimum |
 | Sources | Product design, UX specification, and TD-00 through TD-08 |
 | Last updated | August 17, 2026 |
@@ -162,6 +162,8 @@ flowchart LR
 **Complete when:** every ordered area pair passes selection, safety, composition, feedback, and history-isolation tests.
 
 ### M8 — Progress, Profile, and local services
+
+**Status:** Complete — offline Progress/Profile flows, local reminders, scoped data controls, package tests, and simulator checks passed August 17, 2026. See the [M8 completion report](reviews/M8_COMPLETION_REPORT_2026-08-17.md).
 
 **Build outcome:** the full functional prototype feature set.
 

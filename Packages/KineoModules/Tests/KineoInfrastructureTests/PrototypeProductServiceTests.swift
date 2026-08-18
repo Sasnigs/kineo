@@ -357,6 +357,172 @@ struct PrototypeProductServiceTests {
         )
     }
 
+    @Test("Progress is local, per-area, and neutral across one participation day")
+    func progressProjectionIsAreaSpecific() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        try await fixture.completeOnboarding(area: .neck, secondaryArea: .lowerBack)
+        let draft = try await fixture.service.beginCheckIn()
+        guard case .plan(let plan) = try await fixture.service.submitCheckIn(
+            draft,
+            primary: AreaCheckInAnswers(
+                area: .neck,
+                change: .similar,
+                comfort: .okay,
+                safetyAnswer: nil
+            ),
+            secondary: AreaCheckInAnswers(
+                area: .lowerBack,
+                change: .worse,
+                comfort: .okay,
+                safetyAnswer: .no
+            )
+        ) else {
+            Issue.record("Expected a two-area plan.")
+            return
+        }
+        var routine = try await fixture.service.startRoutine(decisionID: plan.decisionID)
+        while !routine.status.isTerminal {
+            routine = try await fixture.service.advanceRoutine(
+                sessionID: routine.sessionID,
+                expectedStepIndex: routine.currentStepIndex
+            )
+        }
+        try await fixture.service.submitFeedback(
+            sessionID: routine.sessionID,
+            responses: [.neck: .better, .lowerBack: .worse]
+        )
+
+        let progress = try await fixture.service.loadProgress()
+        #expect(progress.participationDayCount == ProductServiceFixture.singleParticipationDay)
+        #expect(
+            progress.areas.first(where: { $0.area == .neck })?.recordedCheckInCount ==
+                ProductServiceFixture.singleRecordedCheckIn
+        )
+        #expect(
+            progress.areas.first(where: { $0.area == .neck })?.completedRoutineCount ==
+                ProductServiceFixture.singleCompletedRoutine
+        )
+        #expect(
+            progress.areas.first(where: { $0.area == .neck })?.qualifyingActiveCount ==
+                ProductServiceFixture.oneQualifyingOutcome
+        )
+        #expect(
+            progress.areas.first(where: { $0.area == .lowerBack })?.qualifyingActiveCount ==
+                ProductServiceFixture.noQualifyingOutcomes
+        )
+        #expect(progress.areas.first(where: { $0.area == .lowerBack })?.latestResponse == .worse)
+
+        _ = try await fixture.service.saveAreaPreferences(primary: .upperMidBack, secondary: .neck)
+        let retained = try await fixture.service.loadProgress()
+        #expect(
+            retained.areas.first(where: { $0.area == .neck })?.completedRoutineCount ==
+                ProductServiceFixture.singleCompletedRoutine
+        )
+        #expect(retained.areas.first(where: { $0.area == .neck })?.latestResponse == .better)
+    }
+
+    @Test("Area changes retain Attention, abandon incompatible drafts, and reject duplicate areas")
+    func areaPreferencesRespectSafetyAndDraftState() async throws {
+        let attentionFixture = try ProductServiceFixture()
+        defer { attentionFixture.removeFiles() }
+        try await attentionFixture.completeOnboarding(area: .neck)
+        let attentionDraft = try await attentionFixture.service.beginCheckIn()
+        _ = try await attentionFixture.service.submitPrimaryOnlyCheckIn(
+            attentionDraft,
+            change: .worse,
+            comfort: .limited,
+            safetyAnswer: .yes
+        )
+        #expect(try await attentionFixture.service.loadProgress().isEmpty == false)
+
+        let updated = try await attentionFixture.service.saveAreaPreferences(
+            primary: .upperMidBack,
+            secondary: .lowerBack
+        )
+        #expect(updated.primaryArea == .upperMidBack)
+        #expect(updated.secondaryArea == .lowerBack)
+        #expect(try await attentionFixture.snapshot().attentionStates.map(\.area) == [.neck])
+
+        let draftFixture = try ProductServiceFixture()
+        defer { draftFixture.removeFiles() }
+        try await draftFixture.completeOnboarding(area: .neck, secondaryArea: .lowerBack)
+        let incompatibleDraft = try await draftFixture.service.beginCheckIn()
+        _ = try await draftFixture.service.saveAreaPreferences(primary: .upperMidBack, secondary: nil)
+        #expect(
+            try await draftFixture.snapshot().checkIns.first(where: {
+                $0.id == incompatibleDraft.checkInID
+            })?.status == .abandoned
+        )
+        await #expect(throws: ProductFlowError.invalidState) {
+            _ = try await draftFixture.service.saveAreaPreferences(
+                primary: .upperMidBack,
+                secondary: .upperMidBack
+            )
+        }
+    }
+
+    @Test("Reminder denial and scheduling failure retain a disabled preference")
+    func reminderFailuresRemainOptional() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        try await fixture.completeOnboarding(area: .neck)
+        let window = try ProductServiceFixture.reminderWindow()
+        await fixture.reminderScheduler.setAuthorization(.denied)
+
+        let denied = try await fixture.service.enableReminder(window: window)
+        #expect(denied.reminderSettings?.enabled == false)
+        #expect(denied.reminderSettings?.window == window)
+        #expect(await fixture.reminderScheduler.snapshot().scheduledWindow == nil)
+
+        await fixture.reminderScheduler.setAuthorization(.authorized)
+        await fixture.reminderScheduler.setScheduleFailure(.schedulingFailed)
+        await #expect(throws: ProductFlowError.reminderUnavailable) {
+            _ = try await fixture.service.enableReminder(window: window)
+        }
+        #expect(try await fixture.service.loadProfile().reminderSettings?.enabled == false)
+    }
+
+    @Test("Reminder replacement, disable, Reset History, and Delete All preserve exact scope")
+    func profileDataControlsRespectScope() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        try await fixture.completeOnboarding(area: .upperMidBack)
+        #expect(
+            await fixture.reminderScheduler.snapshot().permissionRequestCount ==
+                ProductServiceFixture.noPermissionRequests
+        )
+        let window = try ProductServiceFixture.reminderWindow()
+        let enabled = try await fixture.service.enableReminder(window: window)
+        #expect(enabled.reminderSettings?.enabled == true)
+        let scheduled = await fixture.reminderScheduler.snapshot()
+        #expect(scheduled.scheduledWindow == window)
+        #expect(scheduled.permissionRequestCount == ProductServiceFixture.expectedPermissionRequestCount)
+
+        let draft = try await fixture.service.beginCheckIn()
+        _ = try await fixture.service.submitPrimaryOnlyCheckIn(
+            draft,
+            change: .worse,
+            comfort: .limited,
+            safetyAnswer: .yes
+        )
+        try await fixture.service.resetHistory()
+        #expect(try await fixture.service.loadProgress().isEmpty)
+        #expect(try await fixture.service.loadProfile().reminderSettings?.enabled == true)
+        let afterReset = try await fixture.snapshot()
+        #expect(afterReset.checkIns.isEmpty)
+        #expect(afterReset.attentionStates.map(\.area) == [.upperMidBack])
+
+        _ = try await fixture.service.disableReminder()
+        #expect(await fixture.reminderScheduler.snapshot().scheduledWindow == nil)
+        try await fixture.service.deleteAllData()
+        #expect(try await fixture.service.loadProductStartState() == .onboarding(.welcome))
+        #expect(
+            await fixture.reminderScheduler.snapshot().cancellationCount >=
+                ProductServiceFixture.expectedCancellationCount
+        )
+    }
+
     @Test("Relaunch resumes one same-day check-in without creating a duplicate draft")
     func relaunchResumesSameDayCheckIn() async throws {
         let fixture = try ProductServiceFixture()
@@ -820,14 +986,29 @@ private struct ProductServiceFixture {
     static let oneQualifyingOutcome = 1
     static let noQualifyingOutcomes = 0
     static let singleDecisionCount = 1
+    static let singleParticipationDay = 1
+    static let singleRecordedCheckIn = 1
+    static let singleCompletedRoutine = 1
+    static let expectedCancellationCount = 2
+    static let expectedPermissionRequestCount = 1
+    static let noPermissionRequests = 0
     static let orderedAreaPairs = BodyArea.allCases.flatMap { primary in
         BodyArea.allCases.filter { $0 != primary }.map { (primary, $0) }
     }
+
+    static func reminderWindow() throws -> ReminderWindow {
+        try ReminderWindow(startMinutes: morningStartMinutes, endMinutes: morningEndMinutes)
+    }
+
+    private static let morningStartMinutes = 8 * minutesPerHour
+    private static let morningEndMinutes = 9 * minutesPerHour
+    private static let minutesPerHour = 60
 
     let root: URL
     let location: KineoStoreLocation
     let monotonicClock: ManualRoutineMonotonicClock
     let catalogProvider: MutableInstalledCatalogProvider
+    let reminderScheduler: InMemoryReminderScheduler
     let service: PrototypeProductService
 
     init() throws {
@@ -838,13 +1019,15 @@ private struct ProductServiceFixture {
         location = KineoStoreLocation(applicationSupportURL: root)
         monotonicClock = ManualRoutineMonotonicClock()
         catalogProvider = MutableInstalledCatalogProvider()
+        reminderScheduler = InMemoryReminderScheduler()
         service = PrototypeProductService(
             location: location,
             protectedData: AlwaysAvailableProtectedData(),
             storageProtector: NoOpKineoStorageProtector(),
             clock: FixedProductClock(),
             monotonicClock: monotonicClock,
-            catalogProvider: catalogProvider
+            catalogProvider: catalogProvider,
+            reminderScheduler: reminderScheduler
         )
     }
 
@@ -887,7 +1070,8 @@ private struct ProductServiceFixture {
             storageProtector: NoOpKineoStorageProtector(),
             clock: clock,
             monotonicClock: monotonicClock,
-            catalogProvider: catalogProvider
+            catalogProvider: catalogProvider,
+            reminderScheduler: reminderScheduler
         )
     }
 
@@ -947,6 +1131,50 @@ private actor MutableInstalledCatalogProvider: InstalledPrototypeCatalogProvidin
     func setPairingsAvailable(_ available: Bool) {
         pairingsAvailable = available
     }
+}
+
+private actor InMemoryReminderScheduler: ReminderScheduling {
+    private var authorization: ReminderAuthorization = .notDetermined
+    private var scheduledWindow: ReminderWindow?
+    private var scheduleFailure: ReminderServiceError?
+    private var cancellationCount = 0
+    private var permissionRequestCount = 0
+
+    func authorizationStatus() async -> ReminderAuthorization { authorization }
+    func requestAuthorization() async throws(ReminderServiceError) -> ReminderAuthorization {
+        permissionRequestCount += 1
+        authorization = .authorized
+        return authorization
+    }
+    func replaceDailyReminder(
+        window: ReminderWindow,
+        timeZoneID: NonEmptyString
+    ) async throws(ReminderServiceError) {
+        if let scheduleFailure { throw scheduleFailure }
+        scheduledWindow = window
+    }
+    func cancelAll() async throws(ReminderServiceError) {
+        cancellationCount += 1
+        scheduledWindow = nil
+    }
+
+    func setAuthorization(_ value: ReminderAuthorization) { authorization = value }
+    func setScheduleFailure(_ value: ReminderServiceError?) { scheduleFailure = value }
+    func snapshot() -> ReminderSchedulerSnapshot {
+        ReminderSchedulerSnapshot(
+            authorization: authorization,
+            scheduledWindow: scheduledWindow,
+            cancellationCount: cancellationCount,
+            permissionRequestCount: permissionRequestCount
+        )
+    }
+}
+
+private struct ReminderSchedulerSnapshot: Sendable {
+    let authorization: ReminderAuthorization
+    let scheduledWindow: ReminderWindow?
+    let cancellationCount: Int
+    let permissionRequestCount: Int
 }
 
 private actor ManualRoutineMonotonicClock: RoutineMonotonicClock {
