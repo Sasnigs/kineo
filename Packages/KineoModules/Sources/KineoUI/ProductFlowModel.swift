@@ -7,12 +7,13 @@ enum ProductScreenState: Equatable {
     case ageConfirmation
     case ageUnavailable
     case primaryArea(BodyArea?)
+    case secondaryArea(primary: BodyArea, selected: BodyArea?)
     case safetyBoundary(BodyArea)
     case firstCheckIn(BodyArea)
     case today(BodyArea)
-    case checkInChange(SingleAreaCheckInDraft)
-    case checkInComfort(SingleAreaCheckInDraft, ChangeReport)
-    case conditionalSafety(SingleAreaCheckInDraft, ChangeReport, MovementComfort)
+    case checkInChange(CheckInDraft)
+    case checkInComfort(CheckInDraft, ChangeReport)
+    case conditionalSafety(CheckInDraft, ChangeReport, MovementComfort)
     case attentionGuidance(AttentionPrompt)
     case attentionReturn(AttentionPrompt)
     case attentionCorrectionChange(AttentionPrompt, AttentionCorrectionDraft)
@@ -41,12 +42,15 @@ enum ProductFlowAction: Equatable {
     case correctAge
     case selectPrimaryArea(BodyArea)
     case continuePrimaryArea
+    case selectSecondaryArea(BodyArea?)
+    case continueSecondaryArea
     case acknowledgeSafety
     case completeOnboarding
     case startCheckIn
     case selectChange(ChangeReport)
     case selectComfort(MovementComfort)
     case answerConditionalSafety(ConditionalSafetyAnswer)
+    case skipSecondaryArea
     case showAttentionReturn
     case answerAttentionReturn(ConditionalSafetyAnswer)
     case startAttentionCorrection
@@ -74,6 +78,9 @@ enum ProductFlowAction: Equatable {
     case backgroundRoutine
     case advanceRoutine
     case submitFeedback(AreaResponse?)
+    case selectFeedback(BodyArea, AreaResponse)
+    case submitAreaFeedback
+    case skipFeedback
     case finishCompletion
     case retry
 }
@@ -83,6 +90,10 @@ final class ProductFlowModel {
     private let service: any KineoProductServing
     private var pendingAction: ProductFlowAction?
     private var failedAction: ProductFlowAction?
+    private var pendingPrimaryAnswers: AreaCheckInAnswers?
+    private var pendingSecondaryAnswers: AreaCheckInAnswers?
+    private var safetyQuestionArea: BodyArea?
+    private var feedbackResponses = [BodyArea: AreaResponse]()
 
     private(set) var state: ProductScreenState = .launching(.preparingFoundation)
     private(set) var actionSequence = ProductFlowModelConstants.initialActionSequence
@@ -92,6 +103,33 @@ final class ProductFlowModel {
     var activeRoutineSessionID: RoutineSessionID? {
         guard case .routine(let routine) = state, routine.status == .inProgress else { return nil }
         return routine.sessionID
+    }
+
+    var currentCheckInArea: BodyArea? {
+        switch state {
+        case .checkInChange(let draft), .checkInComfort(let draft, _):
+            pendingPrimaryAnswers == nil ? draft.area : draft.secondaryArea
+        case .conditionalSafety:
+            safetyQuestionArea
+        default:
+            nil
+        }
+    }
+
+    var canSkipSecondaryArea: Bool {
+        guard pendingPrimaryAnswers != nil else { return false }
+        return switch state {
+        case .checkInChange:
+            true
+        case .checkInComfort(_, let change):
+            change != .worse
+        default:
+            false
+        }
+    }
+
+    func feedbackResponse(for area: BodyArea) -> AreaResponse? {
+        feedbackResponses[area]
     }
 
     init(service: any KineoProductServing) {
@@ -142,6 +180,10 @@ final class ProductFlowModel {
         case .selectPrimaryArea(let area):
             guard case .primaryArea = state else { return true }
             state = .primaryArea(area)
+        case .selectSecondaryArea(let area):
+            guard case .secondaryArea(let primary, _) = state,
+                  area != primary else { return true }
+            state = .secondaryArea(primary: primary, selected: area)
         case .selectChange(let change):
             guard case .checkInChange(let draft) = state else { return true }
             state = .checkInComfort(draft, change)
@@ -176,16 +218,21 @@ final class ProductFlowModel {
         case .finishCompletion:
             guard case .completion(let area) = state else { return true }
             state = .today(area)
-        case .load, .confirmAdult, .continuePrimaryArea, .acknowledgeSafety,
+        case .selectFeedback(let area, let response):
+            guard case .feedback(let routine) = state,
+                  routine.includedAreas.contains(area) else { return true }
+            feedbackResponses[area] = response
+        case .load, .confirmAdult, .continuePrimaryArea, .continueSecondaryArea, .acknowledgeSafety,
              .completeOnboarding, .startCheckIn, .selectComfort,
-             .answerConditionalSafety, .answerAttentionReturn, .startAttentionCorrection,
+             .answerConditionalSafety, .skipSecondaryArea,
+             .answerAttentionReturn, .startAttentionCorrection,
              .selectCorrectionComfort, .answerCorrectionSafety,
              .chooseDuration, .chooseGentlerLevel, .pauseToday,
              .startRoutine, .refreshRoutine, .pauseRoutine, .resumeRoutine,
              .skipRoutineStep, .requestAlternative, .chooseAlternative,
              .requestEndRoutine, .confirmEndRoutine, .somethingFeelsWrong,
              .confirmSafetyEnd, .backgroundRoutine,
-             .advanceRoutine, .submitFeedback, .retry:
+             .advanceRoutine, .submitFeedback, .submitAreaFeedback, .skipFeedback, .retry:
             return false
         default:
             return true
@@ -209,7 +256,13 @@ final class ProductFlowModel {
                 throw .invalidState
             }
             try await service.savePrimaryArea(selected)
-            state = .safetyBoundary(selected)
+            state = .secondaryArea(primary: selected, selected: nil)
+        case .continueSecondaryArea:
+            guard case .secondaryArea(let primary, let secondary) = state else {
+                throw .invalidState
+            }
+            try await service.saveSecondaryArea(secondary)
+            state = .safetyBoundary(primary)
         case .acknowledgeSafety:
             guard case .safetyBoundary(let area) = state else { throw .invalidState }
             try await service.acknowledgeSafetyBoundary()
@@ -219,21 +272,35 @@ final class ProductFlowModel {
             state = .today(try await service.completeOnboarding())
         case .startCheckIn:
             guard case .today = state else { throw .invalidState }
-            state = .checkInChange(try await service.beginSingleAreaCheckIn())
+            pendingPrimaryAnswers = nil
+            pendingSecondaryAnswers = nil
+            safetyQuestionArea = nil
+            state = .checkInChange(try await service.beginCheckIn())
         case .selectComfort(let comfort):
             guard case .checkInComfort(let draft, let change) = state else {
                 throw .invalidState
             }
-            if change == .worse || comfort == .limited {
-                state = .conditionalSafety(draft, change, comfort)
-            } else {
-                try await submit(draft: draft, change: change, comfort: comfort, answer: nil)
-            }
+            try await collectBasicAnswers(draft: draft, change: change, comfort: comfort)
         case .answerConditionalSafety(let answer):
             guard case .conditionalSafety(let draft, let change, let comfort) = state else {
                 throw .invalidState
             }
-            try await submit(draft: draft, change: change, comfort: comfort, answer: answer)
+            try await answerSafetyQuestion(
+                draft: draft,
+                change: change,
+                comfort: comfort,
+                answer: answer
+            )
+        case .skipSecondaryArea:
+            guard let primary = pendingPrimaryAnswers else { throw .invalidState }
+            switch state {
+            case .checkInChange(let draft):
+                try await omitSecondary(draft: draft, primary: primary)
+            case .checkInComfort(let draft, let change) where change != .worse:
+                try await omitSecondary(draft: draft, primary: primary)
+            default:
+                throw .invalidState
+            }
         case .answerAttentionReturn(let answer):
             guard case .attentionReturn(let prompt) = state else { throw .invalidState }
             route(try await service.respondToAttentionReturn(prompt, answer: answer))
@@ -326,6 +393,7 @@ final class ProductFlowModel {
                 expectedStepIndex: routine.currentStepIndex,
                 reason: reason
             )
+            if updated.status.isTerminal { feedbackResponses.removeAll() }
             state = updated.status.isTerminal ? .feedback(updated) : .routine(updated)
         case .requestAlternative:
             guard case .routine(let routine) = state,
@@ -349,6 +417,7 @@ final class ProductFlowModel {
             )
         case .confirmEndRoutine:
             guard case .endConfirmation(let routine) = state else { throw .invalidState }
+            feedbackResponses.removeAll()
             state = .feedback(try await service.endRoutine(
                 sessionID: routine.sessionID,
                 forSafety: false
@@ -360,6 +429,7 @@ final class ProductFlowModel {
             )
         case .confirmSafetyEnd:
             guard case .safetyGuidance(let routine) = state else { throw .invalidState }
+            feedbackResponses.removeAll()
             state = .feedback(try await service.endRoutine(
                 sessionID: routine.sessionID,
                 forSafety: true
@@ -370,34 +440,129 @@ final class ProductFlowModel {
                 sessionID: routine.sessionID,
                 expectedStepIndex: routine.currentStepIndex
             )
+            if updated.status.isTerminal { feedbackResponses.removeAll() }
             state = updated.status.isTerminal ? .feedback(updated) : .routine(updated)
         case .submitFeedback(let response):
             guard case .feedback(let routine) = state else { throw .invalidState }
             try await service.submitFeedback(sessionID: routine.sessionID, response: response)
             state = .completion(routine.area)
+        case .submitAreaFeedback:
+            guard case .feedback(let routine) = state else { throw .invalidState }
+            try await service.submitFeedback(
+                sessionID: routine.sessionID,
+                responses: feedbackResponses
+            )
+            state = .completion(routine.area)
+        case .skipFeedback:
+            guard case .feedback(let routine) = state else { throw .invalidState }
+            try await service.submitFeedback(sessionID: routine.sessionID, responses: [:])
+            state = .completion(routine.area)
         case .retry:
             guard let failedAction, failedAction != .retry else { throw .invalidState }
             try await perform(failedAction)
-        case .getStarted, .underAge, .correctAge, .selectPrimaryArea,
-             .selectChange, .showAttentionReturn, .selectCorrectionChange,
+        case .getStarted, .underAge, .correctAge, .selectPrimaryArea, .selectSecondaryArea,
+             .selectChange, .selectFeedback, .showAttentionReturn, .selectCorrectionChange,
              .cancelAttentionCorrection, .finishPauseToday, .cancelRoutineModal,
              .safetyTappedByMistake, .finishCompletion:
             throw .invalidState
         }
     }
 
-    private func submit(
-        draft: SingleAreaCheckInDraft,
+    private func collectBasicAnswers(
+        draft: CheckInDraft,
+        change: ChangeReport,
+        comfort: MovementComfort
+    ) async throws(ProductFlowError) {
+        guard let area = currentCheckInArea else { throw .invalidState }
+        let completed = AreaCheckInAnswers(
+            area: area,
+            change: change,
+            comfort: comfort,
+            safetyAnswer: nil
+        )
+        if pendingPrimaryAnswers == nil {
+            pendingPrimaryAnswers = completed
+            if draft.secondaryArea != nil {
+                state = .checkInChange(draft)
+                return
+            }
+        } else {
+            pendingSecondaryAnswers = completed
+        }
+        try await routeNextSafetyQuestionOrSubmit(draft: draft)
+    }
+
+    private func answerSafetyQuestion(
+        draft: CheckInDraft,
         change: ChangeReport,
         comfort: MovementComfort,
-        answer: ConditionalSafetyAnswer?
+        answer: ConditionalSafetyAnswer
     ) async throws(ProductFlowError) {
-        let result = try await service.submitSingleAreaCheckIn(
-            draft,
+        guard let area = safetyQuestionArea else { throw .invalidState }
+        let answered = AreaCheckInAnswers(
+            area: area,
             change: change,
             comfort: comfort,
             safetyAnswer: answer
         )
+        if area == draft.area {
+            pendingPrimaryAnswers = answered
+        } else if area == draft.secondaryArea {
+            pendingSecondaryAnswers = answered
+        } else {
+            throw .invalidState
+        }
+        safetyQuestionArea = nil
+        try await routeNextSafetyQuestionOrSubmit(draft: draft)
+    }
+
+    private func omitSecondary(
+        draft: CheckInDraft,
+        primary: AreaCheckInAnswers
+    ) async throws(ProductFlowError) {
+        pendingSecondaryAnswers = nil
+        if primary.requiresSafetyAnswer,
+           primary.safetyAnswer == nil {
+            safetyQuestionArea = primary.area
+            state = .conditionalSafety(draft, primary.change, primary.comfort)
+            return
+        }
+        try await submit(draft: draft, primary: primary, secondary: nil)
+    }
+
+    private func routeNextSafetyQuestionOrSubmit(
+        draft: CheckInDraft
+    ) async throws(ProductFlowError) {
+        guard let primary = pendingPrimaryAnswers else { throw .invalidState }
+        if primary.requiresSafetyAnswer,
+           primary.safetyAnswer == nil {
+            safetyQuestionArea = primary.area
+            state = .conditionalSafety(draft, primary.change, primary.comfort)
+            return
+        }
+        if let secondary = pendingSecondaryAnswers,
+           secondary.requiresSafetyAnswer,
+           secondary.safetyAnswer == nil {
+            safetyQuestionArea = secondary.area
+            state = .conditionalSafety(draft, secondary.change, secondary.comfort)
+            return
+        }
+        try await submit(draft: draft, primary: primary, secondary: pendingSecondaryAnswers)
+    }
+
+    private func submit(
+        draft: CheckInDraft,
+        primary: AreaCheckInAnswers,
+        secondary: AreaCheckInAnswers?
+    ) async throws(ProductFlowError) {
+        let result = try await service.submitCheckIn(
+            draft,
+            primary: primary,
+            secondary: secondary
+        )
+        pendingPrimaryAnswers = nil
+        pendingSecondaryAnswers = nil
+        safetyQuestionArea = nil
         switch result {
         case .attentionRequired(let prompt): state = .attentionGuidance(prompt)
         case .plan(let plan): state = .plan(plan)
@@ -432,6 +597,8 @@ final class ProductFlowModel {
         switch try await service.loadProductStartState() {
         case .onboarding(.welcome): state = .welcome
         case .onboarding(.primaryArea): state = .primaryArea(nil)
+        case .onboarding(.secondaryArea(let primary, let selected)):
+            state = .secondaryArea(primary: primary, selected: selected)
         case .onboarding(.safetyBoundary(let area)): state = .safetyBoundary(area)
         case .onboarding(.firstCheckIn(let area)): state = .firstCheckIn(area)
         case .attentionRequired(let prompt): state = .attentionReturn(prompt)

@@ -28,6 +28,7 @@ public enum ProductFlowError: Error, Equatable, Sendable {
 public enum OnboardingProgress: Equatable, Sendable {
     case welcome
     case primaryArea
+    case secondaryArea(primary: BodyArea, selected: BodyArea?)
     case safetyBoundary(BodyArea)
     case firstCheckIn(BodyArea)
 }
@@ -36,7 +37,7 @@ public enum OnboardingProgress: Equatable, Sendable {
 public enum ProductStartState: Equatable, Sendable {
     case onboarding(OnboardingProgress)
     case attentionRequired(AttentionPrompt)
-    case unfinishedCheckIn(SingleAreaCheckInDraft)
+    case unfinishedCheckIn(CheckInDraft)
     case unfinishedPlan(PlanPresentation)
     case unfinishedRoutine(RoutinePresentation)
     case today(BodyArea)
@@ -71,10 +72,12 @@ public enum AttentionResolution: Equatable, Sendable {
 }
 
 /// Stable identity and context for one in-progress single-area check-in.
-public struct SingleAreaCheckInDraft: Equatable, Sendable {
+public struct CheckInDraft: Equatable, Sendable {
     public let checkInID: CheckInID
     public let entryID: CheckInEntryID
     public let area: BodyArea
+    public let secondaryEntryID: CheckInEntryID?
+    public let secondaryArea: BodyArea?
     public let startedAt: TimestampMilliseconds
     public let dayContext: LocalDayContext
 
@@ -82,25 +85,53 @@ public struct SingleAreaCheckInDraft: Equatable, Sendable {
         checkInID: CheckInID,
         entryID: CheckInEntryID,
         area: BodyArea,
+        secondaryEntryID: CheckInEntryID? = nil,
+        secondaryArea: BodyArea? = nil,
         startedAt: TimestampMilliseconds,
         dayContext: LocalDayContext
     ) {
         self.checkInID = checkInID
         self.entryID = entryID
         self.area = area
+        self.secondaryEntryID = secondaryEntryID
+        self.secondaryArea = secondaryArea
         self.startedAt = startedAt
         self.dayContext = dayContext
     }
 }
 
+/// Complete answers for one included area in a check-in commit.
+public struct AreaCheckInAnswers: Equatable, Sendable {
+    public let area: BodyArea
+    public let change: ChangeReport
+    public let comfort: MovementComfort
+    public let safetyAnswer: ConditionalSafetyAnswer?
+
+    public init(
+        area: BodyArea,
+        change: ChangeReport,
+        comfort: MovementComfort,
+        safetyAnswer: ConditionalSafetyAnswer?
+    ) {
+        self.area = area
+        self.change = change
+        self.comfort = comfort
+        self.safetyAnswer = safetyAnswer
+    }
+
+    public var requiresSafetyAnswer: Bool {
+        change == .worse || comfort == .limited
+    }
+}
+
 /// Stable identities and safety version for one fresh Attention correction.
 public struct AttentionCorrectionDraft: Equatable, Sendable {
-    public let checkIn: SingleAreaCheckInDraft
+    public let checkIn: CheckInDraft
     public let safetyEventID: SafetyEventID
     public let expectedAttentionUpdatedAt: TimestampMilliseconds
 
     public init(
-        checkIn: SingleAreaCheckInDraft,
+        checkIn: CheckInDraft,
         safetyEventID: SafetyEventID,
         expectedAttentionUpdatedAt: TimestampMilliseconds
     ) {
@@ -115,6 +146,8 @@ public struct PlanPresentation: Equatable, Sendable {
     public let decisionID: SelectionDecisionID
     public let checkInID: CheckInID
     public let area: BodyArea
+    public let includedAreas: [BodyArea]
+    public let omittedSecondaryArea: BodyArea?
     public let recommendedLevel: RoutineLevel
     public let selectedLevel: RoutineLevel
     public let deliveredLevel: RoutineLevel
@@ -128,6 +161,8 @@ public struct PlanPresentation: Equatable, Sendable {
         decisionID: SelectionDecisionID,
         checkInID: CheckInID,
         area: BodyArea,
+        includedAreas: [BodyArea]? = nil,
+        omittedSecondaryArea: BodyArea? = nil,
         recommendedLevel: RoutineLevel,
         selectedLevel: RoutineLevel,
         deliveredLevel: RoutineLevel,
@@ -140,6 +175,8 @@ public struct PlanPresentation: Equatable, Sendable {
         self.decisionID = decisionID
         self.checkInID = checkInID
         self.area = area
+        self.includedAreas = includedAreas ?? [area]
+        self.omittedSecondaryArea = omittedSecondaryArea
         self.recommendedLevel = recommendedLevel
         self.selectedLevel = selectedLevel
         self.deliveredLevel = deliveredLevel
@@ -152,7 +189,7 @@ public struct PlanPresentation: Equatable, Sendable {
 }
 
 /// Result after a complete check-in commits.
-public enum SingleAreaCheckInResult: Equatable, Sendable {
+public enum CheckInResult: Equatable, Sendable {
     case attentionRequired(AttentionPrompt)
     case plan(PlanPresentation)
 }
@@ -161,6 +198,7 @@ public enum SingleAreaCheckInResult: Equatable, Sendable {
 public struct RoutinePresentation: Equatable, Sendable {
     public let sessionID: RoutineSessionID
     public let area: BodyArea
+    public let includedAreas: [BodyArea]
     public let selectedLevel: RoutineLevel
     public let deliveredLevel: RoutineLevel
     public let duration: DurationVariant
@@ -175,6 +213,7 @@ public struct RoutinePresentation: Equatable, Sendable {
     public init(
         sessionID: RoutineSessionID,
         area: BodyArea,
+        includedAreas: [BodyArea]? = nil,
         selectedLevel: RoutineLevel,
         deliveredLevel: RoutineLevel,
         duration: DurationVariant,
@@ -188,6 +227,7 @@ public struct RoutinePresentation: Equatable, Sendable {
     ) {
         self.sessionID = sessionID
         self.area = area
+        self.includedAreas = includedAreas ?? [area]
         self.selectedLevel = selectedLevel
         self.deliveredLevel = deliveredLevel
         self.duration = duration
@@ -206,6 +246,7 @@ public protocol KineoProductServing: AppBootstrapping {
     func loadProductStartState() async throws(ProductFlowError) -> ProductStartState
     func confirmAdultEligibility() async throws(ProductFlowError)
     func savePrimaryArea(_ area: BodyArea) async throws(ProductFlowError)
+    func saveSecondaryArea(_ area: BodyArea?) async throws(ProductFlowError)
     func acknowledgeSafetyBoundary() async throws(ProductFlowError)
     func completeOnboarding() async throws(ProductFlowError) -> BodyArea
     func respondToAttentionReturn(
@@ -221,13 +262,18 @@ public protocol KineoProductServing: AppBootstrapping {
         comfort: MovementComfort,
         safetyAnswer: ConditionalSafetyAnswer?
     ) async throws(ProductFlowError) -> AttentionResolution
-    func beginSingleAreaCheckIn() async throws(ProductFlowError) -> SingleAreaCheckInDraft
-    func submitSingleAreaCheckIn(
-        _ draft: SingleAreaCheckInDraft,
+    func beginCheckIn() async throws(ProductFlowError) -> CheckInDraft
+    func submitPrimaryOnlyCheckIn(
+        _ draft: CheckInDraft,
         change: ChangeReport,
         comfort: MovementComfort,
         safetyAnswer: ConditionalSafetyAnswer?
-    ) async throws(ProductFlowError) -> SingleAreaCheckInResult
+    ) async throws(ProductFlowError) -> CheckInResult
+    func submitCheckIn(
+        _ draft: CheckInDraft,
+        primary: AreaCheckInAnswers,
+        secondary: AreaCheckInAnswers?
+    ) async throws(ProductFlowError) -> CheckInResult
     func revisePlan(
         checkInID: CheckInID,
         duration: DurationVariant,
@@ -259,5 +305,9 @@ public protocol KineoProductServing: AppBootstrapping {
     func submitFeedback(
         sessionID: RoutineSessionID,
         response: AreaResponse?
+    ) async throws(ProductFlowError)
+    func submitFeedback(
+        sessionID: RoutineSessionID,
+        responses: [BodyArea: AreaResponse]
     ) async throws(ProductFlowError)
 }

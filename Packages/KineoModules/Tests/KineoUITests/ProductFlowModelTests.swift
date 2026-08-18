@@ -21,6 +21,9 @@ struct ProductFlowModelTests {
         model.send(.selectPrimaryArea(.neck))
         model.send(.continuePrimaryArea)
         await model.performPendingAction()
+        #expect(model.state == .secondaryArea(primary: .neck, selected: nil))
+        model.send(.continueSecondaryArea)
+        await model.performPendingAction()
         #expect(model.state == .safetyBoundary(.neck))
         model.send(.acknowledgeSafety)
         await model.performPendingAction()
@@ -70,6 +73,103 @@ struct ProductFlowModelTests {
         #expect(model.state == .completion(.neck))
         model.send(.finishCompletion)
         #expect(model.state == .today(.neck))
+    }
+
+    @Test("Two-area check-in orders safety and saves independent feedback")
+    func twoAreaScreenFlow() async throws {
+        let service = ProductFlowServiceStub(
+            productStartState: .today(.neck),
+            secondaryArea: .lowerBack
+        )
+        let model = ProductFlowModel(service: service)
+        await model.performPendingAction()
+        model.send(.startCheckIn)
+        await model.performPendingAction()
+
+        #expect(model.currentCheckInArea == .neck)
+        model.send(.selectChange(.similar))
+        model.send(.selectComfort(.okay))
+        await model.performPendingAction()
+        #expect(model.currentCheckInArea == .lowerBack)
+        #expect(model.canSkipSecondaryArea)
+        model.send(.selectChange(.worse))
+        #expect(!model.canSkipSecondaryArea)
+        model.send(.selectComfort(.okay))
+        await model.performPendingAction()
+        guard case .conditionalSafety = model.state else {
+            Issue.record("Expected the secondary safety question.")
+            return
+        }
+        model.send(.answerConditionalSafety(.no))
+        await model.performPendingAction()
+        guard case .plan(let plan) = model.state else {
+            Issue.record("Expected a two-area plan.")
+            return
+        }
+        #expect(plan.includedAreas == [.neck, .lowerBack])
+
+        model.send(.startRoutine)
+        await model.performPendingAction()
+        model.send(.advanceRoutine)
+        await model.performPendingAction()
+        model.send(.selectFeedback(.neck, .better))
+        model.send(.selectFeedback(.lowerBack, .same))
+        model.send(.submitAreaFeedback)
+        await model.performPendingAction()
+        #expect(await service.feedbackSnapshot() == [.neck: .better, .lowerBack: .same])
+    }
+
+    @Test("Two triggered areas ask safety in primary-then-secondary order")
+    func twoAreaSafetyOrder() async {
+        let service = ProductFlowServiceStub(
+            productStartState: .today(.neck),
+            secondaryArea: .lowerBack
+        )
+        let model = ProductFlowModel(service: service)
+        await model.performPendingAction()
+        model.send(.startCheckIn)
+        await model.performPendingAction()
+        model.send(.selectChange(.worse))
+        model.send(.selectComfort(.okay))
+        await model.performPendingAction()
+
+        #expect(model.currentCheckInArea == .lowerBack)
+        model.send(.selectChange(.worse))
+        model.send(.selectComfort(.limited))
+        await model.performPendingAction()
+        #expect(model.currentCheckInArea == .neck)
+        model.send(.answerConditionalSafety(.no))
+        await model.performPendingAction()
+        #expect(model.currentCheckInArea == .lowerBack)
+        model.send(.answerConditionalSafety(.no))
+        await model.performPendingAction()
+        guard case .plan = model.state else {
+            Issue.record("Expected a plan only after both ordered safety answers.")
+            return
+        }
+    }
+
+    @Test("Skipping a secondary cannot bypass a pending primary safety answer")
+    func secondarySkipCannotBypassSafety() async {
+        let service = ProductFlowServiceStub(
+            productStartState: .today(.neck),
+            secondaryArea: .upperMidBack
+        )
+        let model = ProductFlowModel(service: service)
+        await model.performPendingAction()
+        model.send(.startCheckIn)
+        await model.performPendingAction()
+        model.send(.selectChange(.worse))
+        model.send(.selectComfort(.okay))
+        await model.performPendingAction()
+        model.send(.skipSecondaryArea)
+        await model.performPendingAction()
+
+        guard case .conditionalSafety = model.state else {
+            Issue.record("Skipping secondary must retain the primary safety question.")
+            return
+        }
+        #expect(model.currentCheckInArea == .neck)
     }
 
     @Test("A recoverable write failure keeps the truthful screen and retries the same intent")
@@ -145,6 +245,8 @@ struct ProductFlowModelTests {
         model.send(.selectPrimaryArea(.neck))
         model.send(.continuePrimaryArea)
         await model.performPendingAction()
+        model.send(.continueSecondaryArea)
+        await model.performPendingAction()
         model.send(.acknowledgeSafety)
         await model.performPendingAction()
         model.send(.completeOnboarding)
@@ -193,6 +295,8 @@ struct ProductFlowModelTests {
         await model.performPendingAction()
         model.send(.selectPrimaryArea(.neck))
         model.send(.continuePrimaryArea)
+        await model.performPendingAction()
+        model.send(.continueSecondaryArea)
         await model.performPendingAction()
         model.send(.acknowledgeSafety)
         await model.performPendingAction()
@@ -264,6 +368,8 @@ private actor ProductFlowServiceStub: KineoProductServing {
     private var productStartStates: [ProductStartState]
     private let pauseTodayAvailable: Bool
     private let failBeginCheckInWithAttention: Bool
+    private let secondaryArea: BodyArea?
+    private var submittedFeedback = [BodyArea: AreaResponse]()
     private let checkInID = CheckInID(UUID())
     private let entryID = CheckInEntryID(UUID())
     private let decisionID = SelectionDecisionID(UUID())
@@ -275,13 +381,15 @@ private actor ProductFlowServiceStub: KineoProductServing {
         productStartState: ProductStartState = .onboarding(.welcome),
         productStartStates: [ProductStartState]? = nil,
         pauseTodayAvailable: Bool = false,
-        failBeginCheckInWithAttention: Bool = false
+        failBeginCheckInWithAttention: Bool = false,
+        secondaryArea: BodyArea? = nil
     ) {
         self.failAdultConfirmationOnce = failAdultConfirmationOnce
         self.launchStates = launchStates
         self.productStartStates = productStartStates ?? [productStartState]
         self.pauseTodayAvailable = pauseTodayAvailable
         self.failBeginCheckInWithAttention = failBeginCheckInWithAttention
+        self.secondaryArea = secondaryArea
     }
 
     func initialState() async -> AppLaunchState {
@@ -305,6 +413,7 @@ private actor ProductFlowServiceStub: KineoProductServing {
     }
 
     func savePrimaryArea(_ area: BodyArea) async throws(ProductFlowError) {}
+    func saveSecondaryArea(_ area: BodyArea?) async throws(ProductFlowError) {}
     func acknowledgeSafetyBoundary() async throws(ProductFlowError) {}
     func completeOnboarding() async throws(ProductFlowError) -> BodyArea { .neck }
 
@@ -319,7 +428,7 @@ private actor ProductFlowServiceStub: KineoProductServing {
         _ prompt: AttentionPrompt
     ) async throws(ProductFlowError) -> AttentionCorrectionDraft {
         AttentionCorrectionDraft(
-            checkIn: try await beginSingleAreaCheckIn(),
+            checkIn: try await beginCheckIn(),
             safetyEventID: SafetyEventID(UUID()),
             expectedAttentionUpdatedAt: prompt.expectedAttentionUpdatedAt
         )
@@ -334,7 +443,7 @@ private actor ProductFlowServiceStub: KineoProductServing {
         .ready(draft.checkIn.area)
     }
 
-    func beginSingleAreaCheckIn() async throws(ProductFlowError) -> SingleAreaCheckInDraft {
+    func beginCheckIn() async throws(ProductFlowError) -> CheckInDraft {
         if failBeginCheckInWithAttention {
             throw .attentionRequired([.lowerBack])
         }
@@ -343,21 +452,31 @@ private actor ProductFlowServiceStub: KineoProductServing {
               let calendar = NonEmptyString(rawValue: ProductFlowStubValues.calendar) else {
             throw .invalidData
         }
-        return SingleAreaCheckInDraft(
+        return CheckInDraft(
             checkInID: checkInID,
             entryID: entryID,
             area: .neck,
+            secondaryEntryID: secondaryArea.map { _ in CheckInEntryID(UUID()) },
+            secondaryArea: secondaryArea,
             startedAt: ProductFlowStubValues.timestamp,
             dayContext: LocalDayContext(localDay: day, timeZoneID: timeZone, calendarID: calendar)
         )
     }
 
-    func submitSingleAreaCheckIn(
-        _ draft: SingleAreaCheckInDraft,
+    func submitPrimaryOnlyCheckIn(
+        _ draft: CheckInDraft,
         change: ChangeReport,
         comfort: MovementComfort,
         safetyAnswer: ConditionalSafetyAnswer?
-    ) async throws(ProductFlowError) -> SingleAreaCheckInResult {
+    ) async throws(ProductFlowError) -> CheckInResult {
+        .plan(plan(checkInID: draft.checkInID, duration: .standard))
+    }
+
+    func submitCheckIn(
+        _ draft: CheckInDraft,
+        primary: AreaCheckInAnswers,
+        secondary: AreaCheckInAnswers?
+    ) async throws(ProductFlowError) -> CheckInResult {
         .plan(plan(checkInID: draft.checkInID, duration: .standard))
     }
 
@@ -379,6 +498,7 @@ private actor ProductFlowServiceStub: KineoProductServing {
         RoutinePresentation(
             sessionID: sessionID,
             area: .neck,
+            includedAreas: [.neck, secondaryArea].compactMap { $0 },
             selectedLevel: .balanced,
             deliveredLevel: .balanced,
             duration: .quick,
@@ -437,6 +557,7 @@ private actor ProductFlowServiceStub: KineoProductServing {
         RoutinePresentation(
             sessionID: sessionID,
             area: .neck,
+            includedAreas: [.neck, secondaryArea].compactMap { $0 },
             selectedLevel: .balanced,
             deliveredLevel: .balanced,
             duration: .quick,
@@ -452,10 +573,20 @@ private actor ProductFlowServiceStub: KineoProductServing {
         response: AreaResponse?
     ) async throws(ProductFlowError) {}
 
+    func submitFeedback(
+        sessionID: RoutineSessionID,
+        responses: [BodyArea: AreaResponse]
+    ) async throws(ProductFlowError) {
+        submittedFeedback = responses
+    }
+
+    func feedbackSnapshot() -> [BodyArea: AreaResponse] { submittedFeedback }
+
     private func routine(status: RoutineStatus) throws(ProductFlowError) -> RoutinePresentation {
         RoutinePresentation(
             sessionID: sessionID,
             area: .neck,
+            includedAreas: [.neck, secondaryArea].compactMap { $0 },
             selectedLevel: .balanced,
             deliveredLevel: .balanced,
             duration: .quick,
@@ -471,6 +602,7 @@ private actor ProductFlowServiceStub: KineoProductServing {
             decisionID: decisionID,
             checkInID: checkInID,
             area: .neck,
+            includedAreas: [.neck, secondaryArea].compactMap { $0 },
             recommendedLevel: .balanced,
             selectedLevel: .balanced,
             deliveredLevel: .balanced,
