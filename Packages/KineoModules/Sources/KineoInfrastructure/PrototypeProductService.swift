@@ -57,6 +57,7 @@ public actor PrototypeProductService: KineoProductServing {
     private let clock: any ProductClock
     private let monotonicClock: any RoutineMonotonicClock
     private let catalogProvider: any InstalledPrototypeCatalogProviding
+    private let reminderScheduler: any ReminderScheduling
     private var store: KineoGRDBStore?
     private var activeStepStartedAt = [RoutineSessionID: Int64]()
 
@@ -66,7 +67,8 @@ public actor PrototypeProductService: KineoProductServing {
         storageProtector: any KineoStorageProtecting = FoundationKineoStorageProtector(),
         clock: any ProductClock = SystemProductClock(),
         monotonicClock: any RoutineMonotonicClock = SystemRoutineMonotonicClock(),
-        catalogProvider: any InstalledPrototypeCatalogProviding = BundledInstalledPrototypeCatalogProvider()
+        catalogProvider: any InstalledPrototypeCatalogProviding = BundledInstalledPrototypeCatalogProvider(),
+        reminderScheduler: any ReminderScheduling = SystemReminderScheduler()
     ) {
         self.location = location
         #if canImport(UIKit)
@@ -78,6 +80,7 @@ public actor PrototypeProductService: KineoProductServing {
         self.clock = clock
         self.monotonicClock = monotonicClock
         self.catalogProvider = catalogProvider
+        self.reminderScheduler = reminderScheduler
     }
 
     public func initialState() async -> AppLaunchState {
@@ -1096,6 +1099,178 @@ public actor PrototypeProductService: KineoProductServing {
             throw map(error)
         }
     }
+
+    public func loadProgress() async throws(ProductFlowError) -> ProgressPresentation {
+        do {
+            let snapshot = try await requiredStore().loadSnapshot()
+            let participatingStatuses: Set<RoutineStatus> = [.completed, .stopped]
+            var participationDays = Set<LocalDay>()
+            let areas = try PrototypeSelectionRules.supportedAreas.map { area in
+                let recordedCheckIns = snapshot.checkIns.filter {
+                    $0.kind == .normal && $0.status == .completed &&
+                        $0.entries.contains(where: { $0.area == area })
+                }
+                let areaSessions = snapshot.routineSessions.filter {
+                    $0.snapshot.includedAreas.contains(area)
+                }
+                let participating = areaSessions.filter { participatingStatuses.contains($0.status) }
+                participationDays.formUnion(participating.map { $0.dayContext.localDay })
+                let pausedCheckIns = snapshot.pauseTodayEvents.compactMap { event in
+                    snapshot.checkIns.first(where: { $0.id == event.checkInID })
+                }.filter { checkIn in
+                    checkIn.primaryArea == area || checkIn.secondaryArea == area
+                }
+                participationDays.formUnion(pausedCheckIns.map { $0.dayContext.localDay })
+                let history = try historyState(for: area, snapshot: snapshot)
+                return AreaProgressPresentation(
+                    area: area,
+                    recordedCheckInCount: recordedCheckIns.count,
+                    completedRoutineCount: areaSessions.count(where: { $0.status == .completed }),
+                    participationCount: participating.count + pausedCheckIns.count,
+                    qualifyingActiveCount: history.qualifyingOutcomeCount,
+                    latestResponse: history.mostRecentRecordedResponse
+                )
+            }
+            return ProgressPresentation(
+                areas: areas,
+                participationDayCount: participationDays.count
+            )
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func loadProfile() async throws(ProductFlowError) -> ProfilePresentation {
+        do {
+            let snapshot = try await requiredStore().loadSnapshot()
+            guard let state = snapshot.profileState,
+                  let primaryArea = state.profile.primaryArea else {
+                throw ProductFlowError.invalidState
+            }
+            return ProfilePresentation(
+                primaryArea: primaryArea,
+                secondaryArea: state.profile.secondaryArea,
+                reminderSettings: state.reminderSettings,
+                reminderAuthorization: await reminderScheduler.authorizationStatus(),
+                healthContextEnabled: false,
+                telemetryEnabled: false
+            )
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func saveAreaPreferences(
+        primary: BodyArea,
+        secondary: BodyArea?
+    ) async throws(ProductFlowError) -> ProfilePresentation {
+        do {
+            guard primary != secondary else { throw ProductFlowError.invalidState }
+            let store = try requiredStore()
+            let snapshot = try await store.loadSnapshot()
+            for draft in snapshot.checkIns where draft.status == .draft && draft.kind == .normal {
+                if draft.primaryArea != primary || draft.secondaryArea != secondary {
+                    // Abandon first so a later profile-write failure cannot leave an
+                    // incompatible draft attached to newly selected areas.
+                    try await abandon(draft, store: store)
+                }
+            }
+            try await updateProfile { existing, moment in
+                try UserProfile(
+                    onboardingCompletedAt: existing.onboardingCompletedAt,
+                    adultAcknowledged: existing.adultAcknowledged,
+                    safetyBoundaryVersion: existing.safetyBoundaryVersion,
+                    safetyAcknowledgedAt: existing.safetyAcknowledgedAt,
+                    primaryArea: primary,
+                    secondaryArea: secondary,
+                    routinePreference: existing.routinePreference,
+                    weeklyGoalDays: existing.weeklyGoalDays,
+                    telemetryChoice: existing.telemetryChoice,
+                    createdAt: existing.createdAt,
+                    updatedAt: moment.timestamp
+                )
+            }
+            return try await loadProfile()
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func enableReminder(
+        window: ReminderWindow
+    ) async throws(ProductFlowError) -> ProfilePresentation {
+        do {
+            let currentMoment = try moment()
+            let timeZoneID = currentMoment.dayContext.timeZoneID
+            try await saveReminderSettings(ReminderSettings(
+                enabled: false,
+                window: window,
+                timeZoneID: timeZoneID,
+                updatedAt: currentMoment.timestamp
+            ))
+            var authorization = await reminderScheduler.authorizationStatus()
+            if authorization == .notDetermined {
+                authorization = try await reminderScheduler.requestAuthorization()
+            }
+            guard authorization == .authorized || authorization == .provisional else {
+                return try await loadProfile()
+            }
+            try await reminderScheduler.replaceDailyReminder(
+                window: window,
+                timeZoneID: timeZoneID
+            )
+            try await saveReminderSettings(ReminderSettings(
+                enabled: true,
+                window: window,
+                timeZoneID: timeZoneID,
+                updatedAt: try timestamp(after: currentMoment.timestamp)
+            ))
+            return try await loadProfile()
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func disableReminder() async throws(ProductFlowError) -> ProfilePresentation {
+        do {
+            try await reminderScheduler.cancelAll()
+            let snapshot = try await requiredStore().loadSnapshot()
+            if let existing = snapshot.profileState?.reminderSettings {
+                try await saveReminderSettings(ReminderSettings(
+                    enabled: false,
+                    window: nil,
+                    timeZoneID: nil,
+                    updatedAt: try timestamp(after: existing.updatedAt)
+                ))
+            }
+            return try await loadProfile()
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func resetHistory() async throws(ProductFlowError) {
+        do {
+            try await requiredStore().resetHistory()
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func deleteAllData() async throws(ProductFlowError) {
+        do {
+            try await reminderScheduler.cancelAll()
+            let currentStore = try requiredStore()
+            try await currentStore.deleteAllData()
+            store = nil
+            guard await initialState() == .foundationReady,
+                  try await loadProductStartState() == .onboarding(.welcome) else {
+                throw ProductFlowError.persistence(.deletionFailed)
+            }
+        } catch {
+            throw map(error)
+        }
+    }
 }
 
 private extension PrototypeProductService {
@@ -1590,6 +1765,15 @@ private extension PrototypeProductService {
         ))
     }
 
+    func saveReminderSettings(_ settings: ReminderSettings) async throws {
+        let store = try requiredStore()
+        let snapshot = try await store.loadSnapshot()
+        guard let state = snapshot.profileState else { throw ProductFlowError.invalidState }
+        try await store.saveProfile(SaveProfileCommand(
+            state: ProfileState(profile: state.profile, reminderSettings: settings)
+        ))
+    }
+
     func historyState(
         for area: BodyArea,
         snapshot: KineoDataSnapshot
@@ -1791,6 +1975,7 @@ private extension PrototypeProductService {
         if let error = error as? PersistenceError { return .persistence(error) }
         if error is InstalledPrototypeCatalogError { return .contentUnavailable }
         if error is RoutineAlternativeSelectionError { return .invalidState }
+        if error is ReminderServiceError { return .reminderUnavailable }
         return .invalidData
     }
 
