@@ -7,6 +7,8 @@ M9 software work is complete. Physical-device common-task evidence is still requ
 ## Delivered
 
 - Adaptive scroll layouts, scalable action labels, semantic headings, selected states, focus restoration, and accessible timer values.
+- A cohesive warm/eucalyptus visual system with clear action hierarchy across onboarding, Today, plan, routine, and progress.
+- Collapsible Profile sections that keep infrequent settings out of the primary flow.
 - Contrast-aware and non-color safety presentation, dark-mode support, and Reduce Motion handling.
 - Localizable component text plus automated double-length pseudo-localization coverage.
 - Isolated end-to-end UI tests for maximum text, safety withholding, two-area routine interruption, dark mode, Reduce Motion, Profile, and deletion scope.
