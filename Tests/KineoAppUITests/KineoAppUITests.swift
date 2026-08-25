@@ -11,7 +11,6 @@ final class KineoAppUITests: XCTestCase {
     private static let reduceMotionArgument = "-UIAccessibilityReduceMotionEnabled"
     private static let enabledArgumentValue = "YES"
     private static let doubleLocalizedStringsArgument = "-NSDoubleLocalizedStrings"
-    private static let normalizedCenterOffset = CGVector(dx: 0.5, dy: 0.5)
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -33,7 +32,9 @@ final class KineoAppUITests: XCTestCase {
 
         tap(app.tabBars.buttons["Profile"], in: app)
         XCTAssertTrue(app.staticTexts["Areas"].waitForExistence(timeout: Self.elementTimeout))
-        tapVisibleCoordinate(app.buttons["Delete all Kineo data"], in: app)
+        tap(element(in: app.buttons, containing: "Areas"), in: app)
+        tap(element(in: app.buttons, containing: "Privacy and data"), in: app)
+        tap(app.buttons["Delete all Kineo data"], in: app)
         XCTAssertTrue(app.staticTexts["Delete all Kineo data?"].waitForExistence(
             timeout: Self.elementTimeout
         ))
@@ -155,18 +156,6 @@ final class KineoAppUITests: XCTestCase {
         }
         XCTAssertTrue(element.isHittable)
         element.tap()
-    }
-
-    @MainActor
-    private func tapVisibleCoordinate(_ element: XCUIElement, in app: XCUIApplication) {
-        XCTAssertTrue(element.waitForExistence(timeout: Self.elementTimeout))
-        var attempts = 0
-        while !element.isHittable && attempts < Self.maximumScrollAttempts {
-            app.swipeUp()
-            attempts += 1
-        }
-        XCTAssertTrue(element.isHittable)
-        element.coordinate(withNormalizedOffset: Self.normalizedCenterOffset).tap()
     }
 
     @MainActor
