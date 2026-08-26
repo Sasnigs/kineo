@@ -102,6 +102,9 @@ final class KineoAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Your plan"].waitForExistence(timeout: Self.elementTimeout))
         tap(app.buttons["Start routine"], in: app)
         XCTAssertTrue(app.staticTexts["Guided routine"].waitForExistence(timeout: Self.elementTimeout))
+        XCTAssertTrue(app.otherElements["Prototype movement preview"].waitForExistence(
+            timeout: Self.elementTimeout
+        ))
         try app.performAccessibilityAudit(for: Self.commonAuditTypes)
 
         tap(app.buttons["Something feels wrong"], in: app)

@@ -65,6 +65,8 @@ enum KineoLayout {
     static let choiceSymbolSize: CGFloat = 38
     static let heroSymbolPointSize: CGFloat = 42
     static let heroMarkSize: CGFloat = 112
+    static let prototypeMediaMinimumHeight: CGFloat = 156
+    static let prototypeMediaSymbolPointSize: CGFloat = 52
     static let decorativePathWidth: CGFloat = 180
     static let decorativePathHeight: CGFloat = 150
     static let controlRadius: CGFloat = 16

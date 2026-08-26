@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -30,6 +31,46 @@ jobs:
       - name: Test modules
         run: swift test --package-path Packages/KineoModules
 
+      - name: Verify project boundaries
+        run: Scripts/verify-project-boundaries.sh
+
+      - name: Analyze internal app
+        run: |
+          xcodebuild \
+            -project Kineo.xcodeproj \
+            -scheme Kineo \
+            -configuration InternalPrototype \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/kineo-analyze-derived-data" \
+            CODE_SIGNING_ALLOWED=NO \
+            analyze
+
+      - name: Verify release content gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          gate_log="$RUNNER_TEMP/kineo-release-content-gate.log"
+          set +e
+          xcodebuild \
+            -project Kineo.xcodeproj \
+            -scheme Kineo \
+            -configuration ReleaseCandidate \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build > "$gate_log" 2>&1
+          gate_status=$?
+          set -e
+          if [[ "$gate_status" -eq 0 ]]; then
+            echo "ReleaseCandidate unexpectedly accepted prototype content."
+            exit 1
+          fi
+          if ! grep -Fq 'KINEO-PRODUCTION-CONTENT-REQUIRED' "$gate_log"; then
+            cat "$gate_log"
+            echo "ReleaseCandidate failed without the required content-gate marker."
+            exit 1
+          fi
+          echo "ReleaseCandidate correctly rejected prototype content."
+
       - name: Select iPhone simulator
         shell: bash
         run: |
@@ -48,7 +89,24 @@ jobs:
           xcodebuild \
             -project Kineo.xcodeproj \
             -scheme Kineo \
-            -configuration DebugPrototype \
+            -configuration InternalPrototype \
             -destination "id=$KINEO_SIMULATOR_ID" \
             CODE_SIGNING_ALLOWED=NO \
             test
+
+      - name: Build clean internal app
+        run: |
+          xcodebuild \
+            -project Kineo.xcodeproj \
+            -scheme Kineo \
+            -configuration InternalPrototype \
+            -destination "id=$KINEO_SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/kineo-launch-derived-data" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Verify clean app launch
+        run: |
+          Scripts/verify-simulator-launch.sh \
+            "$KINEO_SIMULATOR_ID" \
+            "$RUNNER_TEMP/kineo-launch-derived-data/Build/Products/InternalPrototype-iphonesimulator/Kineo.app"

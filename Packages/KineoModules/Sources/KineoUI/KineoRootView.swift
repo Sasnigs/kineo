@@ -816,6 +816,7 @@ private struct RoutineView: View {
                         .tint(KineoColor.accent)
                         .accessibilityHidden(true)
                         Text(routine.presentedTitle).font(.title.weight(.bold))
+                        PrototypeMovementPreview()
                         if let instruction = routine.presentedInstruction {
                             Text(instruction)
                                 .font(.title3)
@@ -843,7 +844,6 @@ private struct RoutineView: View {
                     }
                     .cardStyle()
                 }
-                NoticeCard(title: "Prototype content", message: "Use only as an internal functional demonstration. Production movement guidance still requires professional review.")
                 if routine.status == .paused {
                     PrimaryButton("Resume", symbol: "play.fill") { model.send(.resumeRoutine) }
                 } else {
@@ -884,6 +884,44 @@ private struct RoutineView: View {
         .task(id: routine.status) {
             if routine.status == .paused { pausedFocused = true }
         }
+    }
+}
+
+private struct PrototypeMovementPreview: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: KineoLayout.smallSpacing) {
+            ZStack {
+                RoundedRectangle(cornerRadius: KineoLayout.controlRadius, style: .continuous)
+                    .fill(KineoColor.accentSurface)
+                KineoMovementPath()
+                    .stroke(
+                        KineoColor.accent.opacity(KineoLayout.decorativeOpacity),
+                        lineWidth: KineoLayout.selectedBorderWidth
+                    )
+                    .padding(KineoLayout.sectionSpacing)
+                Image(systemName: "figure.flexibility")
+                    .font(.system(
+                        size: KineoLayout.prototypeMediaSymbolPointSize,
+                        weight: .medium
+                    ))
+                    .foregroundStyle(KineoColor.accent)
+            }
+            .frame(maxWidth: .infinity, minHeight: KineoLayout.prototypeMediaMinimumHeight)
+
+            Label("Internal mock", systemImage: "hammer.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(KineoColor.accent)
+                .textCase(.uppercase)
+            Text("Licensed, professionally reviewed media will replace this placeholder.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Prototype movement preview")
+        .accessibilityValue(
+            "Internal mock. No production movement demonstration is available."
+        )
     }
 }
 
