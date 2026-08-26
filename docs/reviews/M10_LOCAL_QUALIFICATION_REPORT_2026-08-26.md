@@ -8,7 +8,7 @@
 
 ## Verified
 
-- `swift test --package-path Packages/KineoModules` passed all discovered tests; Swift Testing reported 120 passing cases.
+- `swift test --package-path Packages/KineoModules` passed all discovered tests; Swift Testing reported 121 passing cases.
 - App-host tests passed: 3 executed, 1 expected physical-device protection test skipped.
 - All 4 `InternalPrototype` UI flows passed, including accessibility audits and the internal mock-media disclosure.
 - Xcode static analysis passed with Swift 6 strict concurrency and warnings-as-errors.
@@ -41,7 +41,7 @@
 | 17 | Pass | Skipped-feedback history and persistence tests |
 | 18 | Pass | Terminal-history matrix and safety-stopped service tests |
 | 19 | Pass | Per-area history isolation and progress tests |
-| 20 | Partial | Same-day draft recovery is tested; explicit repeat-after-completion journey remains |
+| 20 | Pass | Same-day repeat returns to check-in and creates fresh check-in and decision identities |
 | 21 | Pass | Exhaustive pairing, timing, budget, and deterministic composition tests |
 | 22 | Pass | Denied/incompatible pairing primary-only tests |
 | 23 | Partial | Static network/API and secret scan passes; runtime network/log observation remains |
@@ -62,7 +62,6 @@ The Release compile error is a temporary M10 safeguard. M11 must replace the pro
 ## Remaining gates
 
 - Physical-iPhone common-task accessibility, file-protection, lock/unlock recovery, and backup evidence.
-- Explicit repeat-after-completion journey evidence.
 - Real-device airplane-mode and network-zero/log capture.
 - Exact-archive evidence and internal distribution packaging.
 - Professional review of interim safety wording before any tester outside the product team.
