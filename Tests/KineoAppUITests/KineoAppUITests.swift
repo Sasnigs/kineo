@@ -27,11 +27,13 @@ final class KineoAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Movement for how today feels"].waitForExistence(
             timeout: Self.elementTimeout
         ))
+        attachScreenshot(named: "Welcome — maximum text", from: app)
         try app.performAccessibilityAudit(for: Self.commonAuditTypes)
         completeOnboarding(in: app, secondaryArea: nil)
 
         tap(app.tabBars.buttons["Profile"], in: app)
         XCTAssertTrue(app.staticTexts["Areas"].waitForExistence(timeout: Self.elementTimeout))
+        attachScreenshot(named: "Profile — maximum text", from: app)
         tap(element(in: app.buttons, containing: "Areas"), in: app)
         tap(element(in: app.buttons, containing: "Privacy and data"), in: app)
         tap(app.buttons["Delete all Kineo data"], in: app)
@@ -62,6 +64,32 @@ final class KineoAppUITests: XCTestCase {
             .waitForExistence(timeout: Self.elementTimeout))
         XCTAssertTrue(element(in: app.buttons, containing: "Upper or mid-back").isHittable)
         try app.performAccessibilityAudit(for: Self.commonAuditTypes)
+    }
+
+    @MainActor
+    func testWelcomeAndCheckInExposeClearProgress() {
+        let app = makeApplication()
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Kineo"].waitForExistence(
+            timeout: Self.elementTimeout
+        ))
+        attachScreenshot(named: "Welcome", from: app)
+        completeOnboarding(in: app, secondaryArea: nil)
+        attachScreenshot(named: "Today", from: app)
+        tap(app.tabBars.buttons["Progress"], in: app)
+        attachScreenshot(named: "Progress", from: app)
+        tap(app.tabBars.buttons["Profile"], in: app)
+        attachScreenshot(named: "Profile", from: app)
+        tap(app.tabBars.buttons["Today"], in: app)
+        tap(app.buttons["Start today's check-in"], in: app)
+
+        let progress = app.progressIndicators["Check-in progress"]
+        XCTAssertTrue(progress.waitForExistence(timeout: Self.elementTimeout))
+        XCTAssertEqual(progress.value as? String, "Question 1 of 2")
+
+        tap(app.buttons["Similar"], in: app)
+        XCTAssertEqual(progress.value as? String, "Question 2 of 2")
     }
 
     @MainActor
@@ -123,11 +151,13 @@ final class KineoAppUITests: XCTestCase {
         answerSimilarAndOkay(in: app)
         answerSimilarAndOkay(in: app)
         XCTAssertTrue(app.staticTexts["Your plan"].waitForExistence(timeout: Self.elementTimeout))
+        attachScreenshot(named: "Plan", from: app)
         tap(app.buttons["Start routine"], in: app)
         XCTAssertTrue(app.staticTexts["Guided routine"].waitForExistence(timeout: Self.elementTimeout))
         XCTAssertTrue(app.otherElements["Prototype movement preview"].waitForExistence(
             timeout: Self.elementTimeout
         ))
+        attachScreenshot(named: "Routine", from: app)
         try app.performAccessibilityAudit(for: Self.commonAuditTypes)
 
         tap(app.buttons["Something feels wrong"], in: app)
@@ -190,6 +220,14 @@ final class KineoAppUITests: XCTestCase {
         containing visibleText: String
     ) -> XCUIElement {
         query.matching(NSPredicate(format: "label CONTAINS %@", visibleText)).firstMatch
+    }
+
+    @MainActor
+    private func attachScreenshot(named name: String, from app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private static let commonAuditTypes: XCUIAccessibilityAuditType = [
