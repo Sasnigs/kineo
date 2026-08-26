@@ -91,6 +91,11 @@ final class KineoAppUITests: XCTestCase {
         app.launch()
         completeOnboarding(in: app, secondaryArea: nil)
 
+        let uiEvidence = XCTAttachment(screenshot: app.screenshot())
+        uiEvidence.name = "Prototype start-over control"
+        uiEvidence.lifetime = .keepAlways
+        add(uiEvidence)
+
         tap(app.buttons["Start over for testing"], in: app)
         XCTAssertTrue(app.staticTexts["Delete all Kineo data?"].waitForExistence(
             timeout: Self.elementTimeout
