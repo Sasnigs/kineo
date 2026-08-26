@@ -109,8 +109,6 @@ enum KineoLayout {
     static let countdownRoundingOffset = millisecondsPerSecond - 1
     static let noElapsedMilliseconds: Int64 = 0
     static let humanIndexOffset = 1
-    static let onboardingStepCount = 4
-    static let checkInQuestionCount = 2
 }
 
 enum KineoProductCopy {
@@ -306,7 +304,7 @@ struct KineoHeroArtwork: View {
                 .foregroundStyle(Color.white)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityHidden(true)
-            Label("One clear plan for today", systemImage: "sparkles")
+            Label("Built around how today feels", systemImage: "sparkles")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.white)
                 .padding(.horizontal, KineoLayout.standardSpacing)
@@ -319,21 +317,41 @@ struct KineoHeroArtwork: View {
     }
 }
 
+enum KineoOnboardingStage: CaseIterable {
+    case eligibility
+    case primaryArea
+    case secondaryArea
+    case safety
+
+    var position: Int {
+        Self.allCases.prefix { $0 != self }.count + KineoLayout.humanIndexOffset
+    }
+}
+
+enum KineoCheckInQuestion: CaseIterable {
+    case change
+    case movementComfort
+
+    var position: Int {
+        Self.allCases.prefix { $0 != self }.count + KineoLayout.humanIndexOffset
+    }
+}
+
 enum KineoFlowProgress: Equatable {
-    case onboarding(step: Int)
-    case checkIn(question: Int)
+    case onboarding(stage: KineoOnboardingStage)
+    case checkIn(question: KineoCheckInQuestion)
 
     var current: Int {
         switch self {
-        case .onboarding(let step): step
-        case .checkIn(let question): question
+        case .onboarding(let stage): stage.position
+        case .checkIn(let question): question.position
         }
     }
 
     var total: Int {
         switch self {
-        case .onboarding: KineoLayout.onboardingStepCount
-        case .checkIn: KineoLayout.checkInQuestionCount
+        case .onboarding: KineoOnboardingStage.allCases.count
+        case .checkIn: KineoCheckInQuestion.allCases.count
         }
     }
 
@@ -353,8 +371,8 @@ enum KineoFlowProgress: Equatable {
 
     var valueText: String {
         switch self {
-        case .onboarding(let step): "Step \(step) of \(total)"
-        case .checkIn(let question): "Question \(question) of \(total)"
+        case .onboarding(let stage): "Step \(stage.position) of \(total)"
+        case .checkIn(let question): "Question \(question.position) of \(total)"
         }
     }
 }
@@ -496,7 +514,7 @@ struct ChoiceCard: View {
             }
         }
         .buttonStyle(KineoChoiceButtonStyle())
-        .accessibilityLabel(Text(title))
+        .accessibilityLabel(accessibilityTitle)
         .accessibilityValue(Text(selected ? "Selected" : "Not selected"))
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityHint(
@@ -508,6 +526,13 @@ struct ChoiceCard: View {
     private var borderWidth: CGFloat {
         if selected || contrast == .increased { return KineoLayout.selectedBorderWidth }
         return KineoLayout.standardBorderWidth
+    }
+
+    private var accessibilityTitle: Text {
+        if let subtitle {
+            return Text(title) + Text(", ") + Text(subtitle)
+        }
+        return Text(title)
     }
 }
 
@@ -616,7 +641,7 @@ struct SecondaryButton: View {
     }
 }
 
-struct LightButton: View {
+struct OnAccentButton: View {
     let title: LocalizedStringKey
     let symbol: String?
     let action: () -> Void
@@ -638,7 +663,7 @@ struct LightButton: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(KineoLightButtonStyle())
+        .buttonStyle(KineoOnAccentButtonStyle())
     }
 }
 
@@ -705,7 +730,7 @@ private struct KineoSecondaryButtonStyle: ButtonStyle {
     }
 }
 
-private struct KineoLightButtonStyle: ButtonStyle {
+private struct KineoOnAccentButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 

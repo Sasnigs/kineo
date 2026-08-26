@@ -9,6 +9,8 @@ final class KineoAppUITests: XCTestCase {
     private static let interfaceStyleArgument = "-AppleInterfaceStyle"
     private static let darkInterfaceStyle = "Dark"
     private static let reduceMotionArgument = "-UIAccessibilityReduceMotionEnabled"
+    private static let increaseContrastArgument = "-UIAccessibilityDarkerSystemColorsEnabled"
+    private static let differentiateWithoutColorArgument = "-UIAccessibilityDifferentiateWithoutColor"
     private static let enabledArgumentValue = "YES"
     private static let doubleLocalizedStringsArgument = "-NSDoubleLocalizedStrings"
 
@@ -31,6 +33,12 @@ final class KineoAppUITests: XCTestCase {
         try app.performAccessibilityAudit(for: Self.commonAuditTypes)
         completeOnboarding(in: app, secondaryArea: nil)
 
+        tap(app.tabBars.buttons["Progress"], in: app)
+        XCTAssertTrue(app.staticTexts["No history yet"].waitForExistence(
+            timeout: Self.elementTimeout
+        ))
+        try app.performAccessibilityAudit(for: Self.commonAuditTypes)
+
         tap(app.tabBars.buttons["Profile"], in: app)
         XCTAssertTrue(app.staticTexts["Areas"].waitForExistence(timeout: Self.elementTimeout))
         attachScreenshot(named: "Profile — maximum text", from: app)
@@ -41,6 +49,40 @@ final class KineoAppUITests: XCTestCase {
             timeout: Self.elementTimeout
         ))
         XCTAssertTrue(app.staticTexts["You will return to onboarding."].exists)
+        try app.performAccessibilityAudit(for: Self.commonAuditTypes)
+    }
+
+    @MainActor
+    func testAdaptiveSettingsSupportPlanAndRoutine() throws {
+        let app = makeApplication(additionalArguments: [
+            Self.preferredContentSizeArgument,
+            Self.maximumContentSizeCategory,
+            Self.increaseContrastArgument,
+            Self.enabledArgumentValue,
+            Self.differentiateWithoutColorArgument,
+            Self.enabledArgumentValue,
+            Self.reduceMotionArgument,
+            Self.enabledArgumentValue
+        ])
+        app.launch()
+        completeOnboarding(in: app, secondaryArea: "Lower back")
+
+        tap(app.buttons["Start today's check-in"], in: app)
+        answerSimilarAndOkay(in: app)
+        answerSimilarAndOkay(in: app)
+        XCTAssertTrue(app.staticTexts["Your plan"].waitForExistence(timeout: Self.elementTimeout))
+        try app.performAccessibilityAudit(for: Self.commonAuditTypes)
+
+        tap(app.buttons["Start routine"], in: app)
+        XCTAssertTrue(app.staticTexts["Guided routine"].waitForExistence(
+            timeout: Self.elementTimeout
+        ))
+        let routineDose = app.descendants(matching: .any)["Routine dose"]
+        XCTAssertTrue(routineDose.waitForExistence(
+            timeout: Self.elementTimeout
+        ))
+        let doseAnnouncement = try XCTUnwrap(routineDose.value as? String)
+        XCTAssertTrue(doseAnnouncement.contains(". "))
         try app.performAccessibilityAudit(for: Self.commonAuditTypes)
     }
 
@@ -84,11 +126,11 @@ final class KineoAppUITests: XCTestCase {
         tap(app.tabBars.buttons["Today"], in: app)
         tap(app.buttons["Start today's check-in"], in: app)
 
-        let progress = app.progressIndicators["Check-in progress"]
+        let progress = app.descendants(matching: .any)["Check-in progress"]
         XCTAssertTrue(progress.waitForExistence(timeout: Self.elementTimeout))
         XCTAssertEqual(progress.value as? String, "Question 1 of 2")
 
-        tap(app.buttons["Similar"], in: app)
+        tap(choiceButton(named: "Similar", in: app), in: app)
         XCTAssertEqual(progress.value as? String, "Question 2 of 2")
     }
 
@@ -99,8 +141,8 @@ final class KineoAppUITests: XCTestCase {
         completeOnboarding(in: app, secondaryArea: nil)
 
         tap(app.buttons["Start today's check-in"], in: app)
-        tap(app.buttons["Worse"], in: app)
-        tap(app.buttons["Okay"], in: app)
+        tap(choiceButton(named: "Worse", in: app), in: app)
+        tap(choiceButton(named: "Okay", in: app), in: app)
         XCTAssertTrue(app.staticTexts["One follow-up for neck"].waitForExistence(
             timeout: Self.elementTimeout
         ))
@@ -183,12 +225,12 @@ final class KineoAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Get started"].waitForExistence(timeout: Self.elementTimeout))
         tap(app.buttons["Get started"], in: app)
         tap(app.buttons["Yes, I am 18 or older"], in: app)
-        tap(app.buttons["Neck"], in: app)
+        tap(choiceButton(named: "Neck", in: app), in: app)
         tap(app.buttons["Continue"], in: app)
         if let secondaryArea {
-            tap(app.buttons[secondaryArea], in: app)
+            tap(choiceButton(named: secondaryArea, in: app), in: app)
         } else {
-            tap(app.buttons["No secondary area"], in: app)
+            tap(choiceButton(named: "No secondary area", in: app), in: app)
         }
         tap(app.buttons["Continue"], in: app)
         tap(app.buttons["I understand"], in: app)
@@ -198,8 +240,8 @@ final class KineoAppUITests: XCTestCase {
 
     @MainActor
     private func answerSimilarAndOkay(in app: XCUIApplication) {
-        tap(app.buttons["Similar"], in: app)
-        tap(app.buttons["Okay"], in: app)
+        tap(choiceButton(named: "Similar", in: app), in: app)
+        tap(choiceButton(named: "Okay", in: app), in: app)
     }
 
     @MainActor
@@ -220,6 +262,11 @@ final class KineoAppUITests: XCTestCase {
         containing visibleText: String
     ) -> XCUIElement {
         query.matching(NSPredicate(format: "label CONTAINS %@", visibleText)).firstMatch
+    }
+
+    @MainActor
+    private func choiceButton(named visibleTitle: String, in app: XCUIApplication) -> XCUIElement {
+        element(in: app.buttons, containing: visibleTitle)
     }
 
     @MainActor

@@ -176,7 +176,7 @@ private struct WelcomeView: View {
                             .accessibilityHeading(.h1)
                             .accessibilityFocused($titleFocused)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Check in. Get one clear plan. Move at your pace.")
+                        Text("Check in. See what fits today. Move at your pace.")
                             .font(.title3.weight(.medium))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -205,7 +205,7 @@ private struct AgeConfirmationView: View {
     let model: ProductFlowModel
     var body: some View {
         FlowPage(title: "Are you \(KineoProductCopy.minimumSupportedAge) or older?", symbol: "person.crop.circle.badge.checkmark") {
-            KineoFlowProgressView(progress: .onboarding(step: 1))
+            KineoFlowProgressView(progress: .onboarding(stage: .eligibility))
             Text("Kineo is currently designed for adults. We do not ask for your birth date.")
                 .foregroundStyle(.secondary)
             PrimaryButton("Yes, I am \(KineoProductCopy.minimumSupportedAge) or older", symbol: "checkmark") {
@@ -231,7 +231,7 @@ private struct PrimaryAreaView: View {
     let selected: BodyArea?
     var body: some View {
         FlowPage(title: "Choose your main area", symbol: "scope") {
-            KineoFlowProgressView(progress: .onboarding(step: 2))
+            KineoFlowProgressView(progress: .onboarding(stage: .primaryArea))
             Text("Start with the area you most want help planning movement for.")
                 .foregroundStyle(.secondary)
             ForEach(BodyArea.allCases, id: \.self) { area in
@@ -258,7 +258,7 @@ private struct SecondaryAreaView: View {
 
     var body: some View {
         FlowPage(title: "Add another area?", symbol: "plus.circle") {
-            KineoFlowProgressView(progress: .onboarding(step: 3))
+            KineoFlowProgressView(progress: .onboarding(stage: .secondaryArea))
             Text("Optional. Your \(primary.title.lowercased()) stays the main focus.")
                 .foregroundStyle(.secondary)
             ChoiceCard(title: "No secondary area", subtitle: "Keep today's routine focused", symbol: "minus", selected: selected == nil) {
@@ -279,7 +279,7 @@ private struct SafetyBoundaryView: View {
     let area: BodyArea
     var body: some View {
         FlowPage(title: "Before your first check-in", symbol: "shield.lefthalf.filled") {
-            KineoFlowProgressView(progress: .onboarding(step: 4))
+            KineoFlowProgressView(progress: .onboarding(stage: .safety))
             Text("Kineo supports self-directed movement planning for your usual recurring \(area.title.lowercased()) discomfort.")
             NoticeCard(
                 title: "Pay attention to changes",
@@ -375,11 +375,11 @@ private struct TodayFocusCard: View {
                     .font(.title.bold())
                     .foregroundStyle(Color.white)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Two quick prompts shape one clear routine. Time changes length, never the selected level.")
+                Text("Two quick prompts guide what Kineo can offer today. Time changes length, never the selected level.")
                     .font(.body)
                     .foregroundStyle(Color.white)
                     .fixedSize(horizontal: false, vertical: true)
-                LightButton("Start today's check-in", symbol: "arrow.right", action: startCheckIn)
+                OnAccentButton("Start today's check-in", symbol: "arrow.right", action: startCheckIn)
             }
             .padding(KineoLayout.heroCardPadding)
         }
@@ -438,10 +438,7 @@ private struct ProgressTabView: View {
         FlowPage(title: "Progress", eyebrow: "Your local history", symbol: "chart.line.uptrend.xyaxis") {
             if let progress {
                 if progress.isEmpty {
-                    NoticeCard(
-                        title: "No history yet",
-                        message: "Completed routines, intentional stops, and Pause Today participation appear here."
-                    )
+                    ProgressEmptyState()
                 } else {
                     ProgressHeroCard(participationDayCount: progress.participationDayCount)
                     SectionHeader(
@@ -484,6 +481,38 @@ private struct ProgressTabView: View {
         let count = dynamicTypeSize.isAccessibilitySize ?
             KineoLayout.accessibilityMetricColumnCount : KineoLayout.regularProgressStatColumnCount
         return Array(repeating: GridItem(.flexible(), spacing: KineoLayout.smallSpacing), count: count)
+    }
+}
+
+private struct ProgressEmptyState: View {
+    var body: some View {
+        VStack(spacing: KineoLayout.standardSpacing) {
+            ZStack {
+                Circle()
+                    .fill(KineoColor.accentSurface)
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: KineoLayout.heroSymbolPointSize, weight: .semibold))
+                    .foregroundStyle(KineoColor.accent)
+                    .accessibilityHidden(true)
+            }
+            .frame(width: KineoLayout.heroMarkSize, height: KineoLayout.heroMarkSize)
+            Text("No history yet")
+                .font(.title2.weight(.bold))
+                .foregroundStyle(KineoColor.brandInk)
+            Text("Completed routines, intentional stops, and Pause Today participation will appear here.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(KineoLayout.heroCardPadding)
+        .frame(maxWidth: .infinity)
+        .background(KineoColor.elevatedSurface)
+        .clipShape(RoundedRectangle(
+            cornerRadius: KineoLayout.heroRadius,
+            style: .continuous
+        ))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -777,7 +806,7 @@ private struct ChangeCheckInView: View {
     var body: some View {
         let area = model.currentCheckInArea ?? draft.area
         FlowPage(title: "How does \(area.title.lowercased()) feel today?", symbol: area.symbol) {
-            KineoFlowProgressView(progress: .checkIn(question: 1))
+            KineoFlowProgressView(progress: .checkIn(question: .change))
             KineoContextPill(
                 title: area == draft.area ? "Primary · \(area.title)" : "Secondary · \(area.title)",
                 symbol: area.symbol
@@ -799,7 +828,7 @@ private struct ComfortCheckInView: View {
     var body: some View {
         let area = model.currentCheckInArea ?? draft.area
         FlowPage(title: "How comfortable does movement feel?", symbol: "figure.walk.motion") {
-            KineoFlowProgressView(progress: .checkIn(question: 2))
+            KineoFlowProgressView(progress: .checkIn(question: .movementComfort))
             KineoContextPill(title: area.title, symbol: area.symbol)
             ChoiceCard(title: "Limited") { model.send(.selectComfort(.limited)) }
             ChoiceCard(title: "Okay") { model.send(.selectComfort(.okay)) }
@@ -1078,6 +1107,7 @@ private struct RoutineView: View {
                     }
                     if let dose = routine.presentedDose {
                         RoutineDoseCard(
+                            kind: dose.kind,
                             timerText: routine.timerText(for: dose),
                             doseText: dose.presentationText
                         )
@@ -1186,12 +1216,13 @@ private struct RoutineProgressHeader: View {
 }
 
 private struct RoutineDoseCard: View {
+    let kind: DoseKind
     let timerText: String
     let doseText: String
 
     var body: some View {
         HStack(spacing: KineoLayout.standardSpacing) {
-            KineoIconBadge(symbol: "timer")
+            KineoIconBadge(symbol: kind == .timed ? "timer" : "repeat")
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: KineoLayout.hairlineSpacing) {
                 Text(timerText)
@@ -1211,8 +1242,9 @@ private struct RoutineDoseCard: View {
             style: .continuous
         ))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Routine timer")
-        .accessibilityValue(timerText)
+        .accessibilityIdentifier("Routine dose")
+        .accessibilityLabel(kind == .timed ? "Routine timer" : "Routine repetitions")
+        .accessibilityValue("\(doseText). \(timerText).")
     }
 }
 
