@@ -77,6 +77,7 @@ final class KineoAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Guided routine"].waitForExistence(
             timeout: Self.elementTimeout
         ))
+        XCTAssertTrue(app.buttons["Something feels wrong"].isHittable)
         let routineDose = app.descendants(matching: .any)["Routine dose"]
         XCTAssertTrue(routineDose.waitForExistence(
             timeout: Self.elementTimeout

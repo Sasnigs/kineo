@@ -1137,7 +1137,6 @@ private struct RoutineView: View {
                         model.send(.requestEndRoutine)
                     }
                 }
-                SafetyButton(title: "Something feels wrong") { model.send(.somethingFeelsWrong) }
             } else {
                 NoticeCard(
                     title: "Content unavailable",
@@ -1150,7 +1149,12 @@ private struct RoutineView: View {
             if routine.contentAvailable {
                 VStack(spacing: .zero) {
                     Divider()
-                    routinePrimaryAction
+                    VStack(spacing: KineoLayout.smallSpacing) {
+                        SafetyButton(title: "Something feels wrong") {
+                            model.send(.somethingFeelsWrong)
+                        }
+                        routinePrimaryAction
+                    }
                         .padding(.horizontal, KineoLayout.screenMargin)
                         .padding(.vertical, KineoLayout.smallSpacing)
                 }
@@ -1215,10 +1219,49 @@ private struct RoutineProgressHeader: View {
     }
 }
 
+enum RoutineDoseAccessibilityKind: Equatable {
+    case timer
+    case repetitions
+
+    var label: LocalizedStringKey {
+        switch self {
+        case .timer: "Routine timer"
+        case .repetitions: "Routine repetitions"
+        }
+    }
+}
+
+struct RoutineDoseAccessibilityContent: Equatable {
+    let kind: RoutineDoseAccessibilityKind
+    let doseText: String
+    let timerText: String
+
+    var value: String {
+        String(localized: "\(doseText). \(timerText).")
+    }
+
+    init(kind: DoseKind, timerText: String, doseText: String) {
+        self.kind = switch kind {
+        case .timed: .timer
+        case .repetitions: .repetitions
+        }
+        self.doseText = doseText
+        self.timerText = timerText
+    }
+}
+
 private struct RoutineDoseCard: View {
     let kind: DoseKind
     let timerText: String
     let doseText: String
+
+    private var accessibilityContent: RoutineDoseAccessibilityContent {
+        RoutineDoseAccessibilityContent(
+            kind: kind,
+            timerText: timerText,
+            doseText: doseText
+        )
+    }
 
     var body: some View {
         HStack(spacing: KineoLayout.standardSpacing) {
@@ -1243,8 +1286,8 @@ private struct RoutineDoseCard: View {
         ))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("Routine dose")
-        .accessibilityLabel(kind == .timed ? "Routine timer" : "Routine repetitions")
-        .accessibilityValue("\(doseText). \(timerText).")
+        .accessibilityLabel(accessibilityContent.kind.label)
+        .accessibilityValue(accessibilityContent.value)
     }
 }
 

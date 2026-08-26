@@ -514,7 +514,7 @@ struct ChoiceCard: View {
             }
         }
         .buttonStyle(KineoChoiceButtonStyle())
-        .accessibilityLabel(accessibilityTitle)
+        .accessibilityElement(children: .combine)
         .accessibilityValue(Text(selected ? "Selected" : "Not selected"))
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityHint(
@@ -528,12 +528,6 @@ struct ChoiceCard: View {
         return KineoLayout.standardBorderWidth
     }
 
-    private var accessibilityTitle: Text {
-        if let subtitle {
-            return Text(title) + Text(", ") + Text(subtitle)
-        }
-        return Text(title)
-    }
 }
 
 private struct KineoChoiceButtonStyle: ButtonStyle {

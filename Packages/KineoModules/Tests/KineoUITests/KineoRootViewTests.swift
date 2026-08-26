@@ -40,4 +40,26 @@ final class KineoRootViewTests: XCTestCase {
             XCTAssertEqual(progress.valueText, expectedValue)
         }
     }
+
+    func testTimedDoseAccessibilityIncludesDoseAndCountdown() {
+        let content = RoutineDoseAccessibilityContent(
+            kind: .timed,
+            timerText: "21 seconds remaining",
+            doseText: "About 30 seconds"
+        )
+
+        XCTAssertEqual(content.kind, .timer)
+        XCTAssertEqual(content.value, "About 30 seconds. 21 seconds remaining.")
+    }
+
+    func testRepetitionDoseAccessibilityIncludesCountAndElapsedTime() {
+        let content = RoutineDoseAccessibilityContent(
+            kind: .repetitions,
+            timerText: "12 seconds elapsed",
+            doseText: "8 repetitions"
+        )
+
+        XCTAssertEqual(content.kind, .repetitions)
+        XCTAssertEqual(content.value, "8 repetitions. 12 seconds elapsed.")
+    }
 }
