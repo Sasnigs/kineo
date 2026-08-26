@@ -43,7 +43,7 @@ verify_resolved_pin() {
 cd "$REPOSITORY_ROOT"
 
 require_text "Packages/KineoModules/Package.swift" "exact: \"$EXPECTED_GRDB_VERSION\""
-package_declaration_count="$(grep -c '\.package(' Packages/KineoModules/Package.swift)"
+package_declaration_count="$(grep -c '\.package(' Packages/KineoModules/Package.swift || true)"
 [[ "$package_declaration_count" == "$EXPECTED_PACKAGE_DECLARATION_COUNT" ]] || \
     fail "Package.swift must declare only the approved GRDB dependency"
 verify_resolved_pin "Packages/KineoModules/Package.resolved"

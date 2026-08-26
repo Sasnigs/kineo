@@ -4,6 +4,8 @@ import KineoUI
 import SwiftUI
 
 #if KINEO_RELEASE_CANDIDATE || KINEO_RELEASE
+// Temporary until M11 supplies a production catalog composition root. Per-record
+// eligibility remains enforced by CatalogValidator; this prevents accidental packaging.
 #error("KINEO-PRODUCTION-CONTENT-REQUIRED: release builds cannot include the internal prototype catalog.")
 #endif
 

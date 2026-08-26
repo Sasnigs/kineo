@@ -5,7 +5,7 @@
 | Status | Approved build plan — M1–M8 complete; M9 software complete; M9 physical-device gate and M10 qualification pending |
 | Platform | Native iPhone, SwiftUI, iOS 17 minimum |
 | Sources | Product design, UX specification, and TD-00 through TD-08 |
-| Last updated | August 17, 2026 |
+| Last updated | August 26, 2026 |
 
 ## 1. Development approach
 
@@ -194,7 +194,7 @@ flowchart LR
 
 **Build outcome:** a controlled internal build that passes TD-08 Gate P1.
 
-**Status:** Device-independent checks passed August 26, 2026; physical-device, exact-archive, and external-review gates remain open. See the [local qualification report](reviews/M10_LOCAL_QUALIFICATION_REPORT_2026-08-26.md).
+**Status:** Implemented local checks passed August 26, 2026; scenario, physical-device, exact-archive, and external-review gates remain open. See the [local qualification report](reviews/M10_LOCAL_QUALIFICATION_REPORT_2026-08-26.md).
 
 - Run the complete automated suite and physical-device checks.
 - Verify airplane mode, migrations, lifecycle recovery, protected storage, deletion, logs, entitlements, and zero Kineo network traffic.
