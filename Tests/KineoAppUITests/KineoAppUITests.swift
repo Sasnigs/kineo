@@ -86,6 +86,24 @@ final class KineoAppUITests: XCTestCase {
     }
 
     @MainActor
+    func testPrototypeStartOverReturnsToWelcome() throws {
+        let app = makeApplication()
+        app.launch()
+        completeOnboarding(in: app, secondaryArea: nil)
+
+        tap(app.buttons["Start over for testing"], in: app)
+        XCTAssertTrue(app.staticTexts["Delete all Kineo data?"].waitForExistence(
+            timeout: Self.elementTimeout
+        ))
+        try app.performAccessibilityAudit(for: Self.commonAuditTypes)
+
+        tap(app.buttons["Delete all data"], in: app)
+        XCTAssertTrue(app.staticTexts["Movement for how today feels"].waitForExistence(
+            timeout: Self.elementTimeout
+        ))
+    }
+
+    @MainActor
     func testTwoAreaRoutineInterruptionReturnsPausedWithoutAutoResume() throws {
         let app = makeApplication(additionalArguments: [
             Self.interfaceStyleArgument,
