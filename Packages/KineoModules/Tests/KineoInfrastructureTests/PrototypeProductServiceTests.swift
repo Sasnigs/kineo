@@ -87,6 +87,49 @@ struct PrototypeProductServiceTests {
         #expect(persisted.feedbackSubmissions.first?.responses.first?.response == .same)
     }
 
+    @Test("A same-day repeat creates a fresh check-in and selection decision")
+    func sameDayRepeatRequiresFreshCheckInAndDecision() async throws {
+        let fixture = try ProductServiceFixture()
+        defer { fixture.removeFiles() }
+        try await fixture.completeOnboarding(area: .neck)
+
+        let firstDraft = try await fixture.service.beginCheckIn()
+        guard case .plan(let firstPlan) = try await fixture.service.submitPrimaryOnlyCheckIn(
+            firstDraft,
+            change: .similar,
+            comfort: .okay,
+            safetyAnswer: nil
+        ) else {
+            Issue.record("Expected the first check-in to produce a plan.")
+            return
+        }
+
+        var routine = try await fixture.service.startRoutine(decisionID: firstPlan.decisionID)
+        while !routine.status.isTerminal {
+            routine = try await fixture.service.advanceRoutine(
+                sessionID: routine.sessionID,
+                expectedStepIndex: routine.currentStepIndex
+            )
+        }
+        try await fixture.service.submitFeedback(sessionID: routine.sessionID, response: .same)
+
+        let repeatDraft = try await fixture.service.beginCheckIn()
+        #expect(repeatDraft.checkInID != firstDraft.checkInID)
+        #expect(repeatDraft.dayContext == firstDraft.dayContext)
+
+        guard case .plan(let repeatPlan) = try await fixture.service.submitPrimaryOnlyCheckIn(
+            repeatDraft,
+            change: .similar,
+            comfort: .okay,
+            safetyAnswer: nil
+        ) else {
+            Issue.record("Expected the repeat check-in to produce a new plan.")
+            return
+        }
+        #expect(repeatPlan.checkInID == repeatDraft.checkInID)
+        #expect(repeatPlan.decisionID != firstPlan.decisionID)
+    }
+
     @Test("Every ordered area pair composes conservatively and keeps feedback history isolated")
     func orderedAreaPairsRemainConservativeAndIsolated() async throws {
         for (primaryArea, secondaryArea) in ProductServiceFixture.orderedAreaPairs {

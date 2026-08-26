@@ -73,6 +73,13 @@ struct ProductFlowModelTests {
         #expect(model.state == .completion(.neck))
         model.send(.finishCompletion)
         #expect(model.state == .today(.neck))
+
+        model.send(.startCheckIn)
+        await model.performPendingAction()
+        guard case .checkInChange = model.state else {
+            Issue.record("A same-day repeat must begin with a fresh check-in.")
+            return
+        }
     }
 
     @Test("Two-area check-in orders safety and saves independent feedback")
