@@ -7,20 +7,29 @@ import UIKit
 public struct KineoRootView: View {
     @State private var model: ProductFlowModel?
     private let fixedLaunchState: AppLaunchState?
+    private let showsPrototypeResetControl: Bool
 
     public init(launchState: AppLaunchState) {
         fixedLaunchState = launchState
+        showsPrototypeResetControl = false
         _model = State(initialValue: nil)
     }
 
-    public init(productService: any KineoProductServing) {
+    public init(
+        productService: any KineoProductServing,
+        showsPrototypeResetControl: Bool = false
+    ) {
         fixedLaunchState = nil
+        self.showsPrototypeResetControl = showsPrototypeResetControl
         _model = State(initialValue: ProductFlowModel(service: productService))
     }
 
     public var body: some View {
         if let model {
-            ProductFlowContainer(model: model)
+            ProductFlowContainer(
+                model: model,
+                showsPrototypeResetControl: showsPrototypeResetControl
+            )
         } else {
             LaunchStateView(state: fixedLaunchState ?? .preparingFoundation)
         }
@@ -31,6 +40,7 @@ private struct ProductFlowContainer: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State var model: ProductFlowModel
+    let showsPrototypeResetControl: Bool
 
     var body: some View {
         NavigationStack {
@@ -45,7 +55,12 @@ private struct ProductFlowContainer: View {
                     SecondaryAreaView(model: model, primary: primary, selected: selected)
                 case .safetyBoundary(let area): SafetyBoundaryView(model: model, area: area)
                 case .firstCheckIn(let area): FirstCheckInView(model: model, area: area)
-                case .today(let area): TodayTabsView(model: model, area: area)
+                case .today(let area):
+                    TodayTabsView(
+                        model: model,
+                        area: area,
+                        showsPrototypeResetControl: showsPrototypeResetControl
+                    )
                 case .checkInChange(let draft): ChangeCheckInView(model: model, draft: draft)
                 case .checkInComfort(let draft, let change):
                     ComfortCheckInView(model: model, draft: draft, change: change)
@@ -276,6 +291,8 @@ private struct FirstCheckInView: View {
 private struct TodayTabsView: View {
     let model: ProductFlowModel
     let area: BodyArea
+    let showsPrototypeResetControl: Bool
+
     var body: some View {
         TabView {
             FlowPage(title: "Today", eyebrow: "Your daily plan", symbol: "sun.max.fill") {
@@ -312,6 +329,19 @@ private struct TodayTabsView: View {
                         label: "participation days",
                         symbol: "calendar.badge.checkmark"
                     )
+                }
+
+                if showsPrototypeResetControl {
+                    SectionHeader(
+                        title: "Prototype tools",
+                        detail: "Clear local test data and replay onboarding"
+                    )
+                    SecondaryButton(
+                        "Start over for testing",
+                        symbol: "arrow.counterclockwise"
+                    ) {
+                        model.send(.requestDeleteAll)
+                    }
                 }
             }
             .tabItem { Label("Today", systemImage: "sun.max") }

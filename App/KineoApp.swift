@@ -25,9 +25,20 @@ struct KineoApp: App {
 
     var body: some Scene {
         WindowGroup {
-            KineoRootView(productService: productService)
+            KineoRootView(
+                productService: productService,
+                showsPrototypeResetControl: KineoBuildFeatures.showsPrototypeResetControl
+            )
         }
     }
+}
+
+private enum KineoBuildFeatures {
+    #if KINEO_PROTOTYPE
+    static let showsPrototypeResetControl = true
+    #else
+    static let showsPrototypeResetControl = false
+    #endif
 }
 
 #if KINEO_PROTOTYPE
