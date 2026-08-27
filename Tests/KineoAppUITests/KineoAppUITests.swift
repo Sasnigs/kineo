@@ -200,6 +200,9 @@ final class KineoAppUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["Prototype movement preview"].waitForExistence(
             timeout: Self.elementTimeout
         ))
+        XCTAssertTrue(prototypeVideoPlaybackButton(in: app).waitForExistence(
+            timeout: Self.elementTimeout
+        ))
         attachScreenshot(named: "Routine", from: app)
         try app.performAccessibilityAudit(for: Self.commonAuditTypes)
 
@@ -210,6 +213,7 @@ final class KineoAppUITests: XCTestCase {
         tap(app.buttons["I tapped this by mistake"], in: app)
         XCTAssertTrue(app.staticTexts["Paused"].waitForExistence(timeout: Self.elementTimeout))
         XCTAssertTrue(app.buttons["Resume"].isHittable)
+        XCTAssertTrue(app.buttons["Video paused with routine"].exists)
         XCTAssertFalse(app.buttons["Complete step"].exists)
     }
 
@@ -243,6 +247,12 @@ final class KineoAppUITests: XCTestCase {
     private func answerSimilarAndOkay(in app: XCUIApplication) {
         tap(choiceButton(named: "Similar", in: app), in: app)
         tap(choiceButton(named: "Okay", in: app), in: app)
+    }
+
+    @MainActor
+    private func prototypeVideoPlaybackButton(in app: XCUIApplication) -> XCUIElement {
+        let pauseButton = app.buttons["Pause prototype video"]
+        return pauseButton.exists ? pauseButton : app.buttons["Play prototype video"]
     }
 
     @MainActor
