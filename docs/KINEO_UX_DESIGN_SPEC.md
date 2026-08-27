@@ -2,7 +2,7 @@
 
 Status: approved UX contract for prototype implementation
 
-Platform: native iPhone app
+Platform: Expo/React Native iPhone app with native iOS interaction semantics
 
 Reference viewport: iPhone 16 Pro, 402 × 874 pt
 

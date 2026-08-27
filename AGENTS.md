@@ -7,3 +7,5 @@ These rules apply to the entire repository.
 - Map infrastructure failures to domain errors once, show users safe recovery states, and never replace a failed persistent store with an empty one.
 - Test failure, rollback, retry, corruption, and protected-data paths when changing persistence or lifecycle code.
 - After Swift coding, review the change with the installed `swift-language`, `swift-api-design-guidelines`, `swift-concurrency`, and `swift-testing` skills as applicable, then run focused tests and the full relevant suite before declaring completion.
+- Expo code uses strict TypeScript. Keep domain modules free of React, Expo, persistence, and platform imports; represent expected module failures with discriminated typed results or typed errors.
+- During migration, do not remove or weaken the Swift reference implementation until the corresponding Expo slice passes documented parity gates.

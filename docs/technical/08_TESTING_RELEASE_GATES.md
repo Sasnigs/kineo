@@ -326,6 +326,7 @@ Rerun D0 whenever any source or TD changes. Passing D0 does not authorize coding
 
 ### Gate P0 — code/build hygiene (every change, once coding is authorized)
 
+- During Expo migration, strict TypeScript checking, linting, Jest tests, Expo dependency validation, and the migrated-slice parity suite pass without weakening the Swift reference gates.
 - Clean build with Swift 6.1+ in Swift 6 language mode and strict concurrency under Xcode 16.3+; warnings treated according to the approved zero-warning policy.
 - All Core, data, catalog, feature-model, and required UI tests pass.
 - GRDB resolves exactly to 7.10.0 and its recorded revision; no unapproved dependency, entitlement, capability, endpoint, placeholder change, or privacy-manifest drift.

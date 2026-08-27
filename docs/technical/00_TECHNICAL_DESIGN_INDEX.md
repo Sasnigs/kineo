@@ -3,8 +3,8 @@
 | Field | Value |
 | --- | --- |
 | Technical-design version | 0.1 |
-| Status | Approved prototype contract — M1–M8 complete; M9 software complete with physical-device gate pending; M10–M12 authorized subject to documented gates |
-| Platform | Native iPhone app |
+| Status | Approved prototype contract; Expo parity migration E0 authorized and in progress |
+| Platform | Expo/React Native iPhone app; verified Swift reference retained during migration |
 | Minimum deployment target | iOS 17.0 |
 | Product source | `../KINEO_PRODUCT_DESIGN.md` |
 | UX source | `../KINEO_UX_DESIGN_SPEC.md` |
@@ -39,7 +39,8 @@ flowchart LR
     catalog --> flows
     flows --> ui[TD-06 UI and accessibility]
     platform --> ui
-    architecture --> tests[TD-08 Tests and gates]
+    architecture --> migration[TD-09 Expo migration]
+    migration --> tests[TD-08 Tests and gates]
     data --> tests
     engine --> tests
     catalog --> tests
@@ -59,9 +60,10 @@ Arrows show decision dependency, not runtime calls.
 | `03_SELECTION_SAFETY_ENGINE.md` | Check-in validation, Attention Required, level selection, Active eligibility, overrides, explanations | Movement authoring |
 | `04_ROUTINE_CATALOG_COMPOSITION.md` | Catalog schema, validation, composition, duration bounds, alternatives, installed assets | User-state persistence |
 | `05_APP_FLOW_STATE_MACHINES.md` | Onboarding, check-in, plan, guided session, feedback, and destructive-flow states | Visual styling |
-| `06_UI_ARCHITECTURE_ACCESSIBILITY.md` | SwiftUI presentation boundaries, navigation, components, accessibility behavior | Domain decisions |
+| `06_UI_ARCHITECTURE_ACCESSIBILITY.md` | Verified SwiftUI reference presentation and accessibility behavior | Domain decisions |
 | `07_PLATFORM_SERVICES.md` | Notifications, HealthKit boundary, media, app lifecycle, logging, feature flags | Selection or content policy |
 | `08_TESTING_RELEASE_GATES.md` | Test layers, traceability, fixtures, privacy checks, prototype and release gates | Production content approval itself |
+| `09_EXPO_MIGRATION.md` | Platform migration order, parity seams, cutover conditions | Product behavior or release approval |
 
 ## 3. Non-negotiable system invariants
 
@@ -98,6 +100,7 @@ These decisions remove implementation ambiguity while preserving explicit public
 | TD-013 | Time and calendar | Inject a clock and calendar into domain services; never use wall-clock globals in rules or tests | Makes daily boundaries, timer restoration, time zones, and DST deterministic |
 | TD-014 | Version capture | Every decision and session captures rules, catalog, and content versions at creation | Preserves auditability after app or catalog updates |
 | TD-015 | Remote configuration | None in version one; flags are local build configuration plus persisted rollout state only where specified | Core behavior must be stable offline and not change invisibly |
+| TD-016 | Implementation platform | Migrate to Expo SDK 57 through tested vertical slices; keep the Swift app as the runnable reference until parity cutover | Preserves verified behavior while enabling a cross-platform implementation without a dual-runtime production app |
 
 ## 5. Remaining gates, not implementation ambiguities
 

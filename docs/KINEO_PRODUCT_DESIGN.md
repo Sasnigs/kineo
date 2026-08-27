@@ -6,7 +6,7 @@
 | Status | **Approved for Prototype Implementation** |
 | Product | Kineo |
 | Working line | **Daily movement that adapts to how you feel.** |
-| Initial platform | Native iPhone app |
+| Initial platform | iPhone app implemented with Expo/React Native |
 | Initial market | United States |
 | Last updated | August 7, 2026 |
 
@@ -709,7 +709,7 @@ These decisions may remain open during internal prototyping but must be resolved
 
 | Decision | Status | Rationale |
 | --- | --- | --- |
-| Native iPhone app | Accepted | Best initial platform fit; does not require exclusive use of Apple technologies |
+| Expo/React Native iPhone app | Accepted | Retains iPhone-first scope while enabling a later shared Android/web implementation; platform migration cannot change product behavior |
 | Consumer movement positioning | Accepted | Preserves adaptive movement without claiming that regulatory classification is already settled |
 | Regulatory classification | Unresolved release gate | Requires review of the implemented behavior, content, intended use, and claims before public distribution |
 | Adults 18+, U.S. first | Accepted | Limits initial consent, localization, and market complexity |
@@ -755,6 +755,7 @@ These sources inform the product boundaries; they do not constitute legal advice
 
 | Version | Date | Status | Summary |
 | --- | --- | --- | --- |
+| 0.5.1 | August 27, 2026 | Approved implementation amendment | Changed the implementation platform to Expo/React Native while preserving iPhone-first scope and every product and release boundary |
 | 0.5 | August 7, 2026 | Approved for Prototype Implementation | Recorded product-owner approval after Gate D0 passed; authorized M1 while preserving later milestone and release gates |
 | 0.1.7 | August 6, 2026 | Draft | Clarified prototype onboarding, external-participant safety-copy gating, future HealthKit placement, and technical-document identifiers after independent review |
 | 0.1.6 | August 6, 2026 | Draft | Added the implementation-ready TD resolutions while preserving explicit coding approval; aligned prototype durations, persistence, HealthKit/telemetry state, deferred features, and implementable backup wording |
