@@ -1,5 +1,6 @@
 import KineoCore
 @testable import KineoUI
+import AVFoundation
 import XCTest
 
 final class KineoRootViewTests: XCTestCase {
@@ -61,5 +62,48 @@ final class KineoRootViewTests: XCTestCase {
 
         XCTAssertEqual(content.kind, .repetitions)
         XCTAssertEqual(content.value, "8 repetitions. 12 seconds elapsed.")
+    }
+
+    func testPrototypeExerciseVideoIsBundledAndPlayable() async throws {
+        let url = try PrototypeExerciseVideoAsset.url()
+        let asset = AVURLAsset(url: url)
+        let duration = try await asset.load(.duration)
+        let isPlayable = try await asset.load(.isPlayable)
+
+        XCTAssertGreaterThan(CMTimeGetSeconds(duration), .zero)
+        XCTAssertTrue(isPlayable)
+    }
+
+    func testPrototypeExerciseVideoAutoplaysByDefault() {
+        XCTAssertTrue(PrototypeExerciseVideoPlaybackPolicy.shouldPlay(
+            isRoutinePaused: false,
+            isPreviewPaused: false,
+            reduceMotion: false,
+            didRequestReducedMotionPlayback: false
+        ))
+    }
+
+    func testPrototypeExerciseVideoRequiresConsentWithReduceMotion() {
+        XCTAssertFalse(PrototypeExerciseVideoPlaybackPolicy.shouldPlay(
+            isRoutinePaused: false,
+            isPreviewPaused: false,
+            reduceMotion: true,
+            didRequestReducedMotionPlayback: false
+        ))
+        XCTAssertTrue(PrototypeExerciseVideoPlaybackPolicy.shouldPlay(
+            isRoutinePaused: false,
+            isPreviewPaused: false,
+            reduceMotion: true,
+            didRequestReducedMotionPlayback: true
+        ))
+    }
+
+    func testRoutinePauseOverridesPrototypeExerciseVideoPlayback() {
+        XCTAssertFalse(PrototypeExerciseVideoPlaybackPolicy.shouldPlay(
+            isRoutinePaused: true,
+            isPreviewPaused: false,
+            reduceMotion: false,
+            didRequestReducedMotionPlayback: true
+        ))
     }
 }
