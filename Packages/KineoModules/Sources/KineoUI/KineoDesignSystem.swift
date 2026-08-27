@@ -4,22 +4,38 @@ import UIKit
 #endif
 
 enum KineoColor {
-    static let accent = Color(red: 0.17, green: 0.40, blue: 0.36)
-    static let pressedAccent = Color(red: 0.12, green: 0.31, blue: 0.28)
+    static let accent = Color(red: 0.08, green: 0.29, blue: 0.25)
+    static let pressedAccent = Color(red: 0.05, green: 0.22, blue: 0.19)
+    static let highlight = adaptiveColor(
+        light: (0.84, 0.94, 0.38),
+        dark: (0.70, 0.82, 0.30)
+    )
+    static let coral = adaptiveColor(
+        light: (0.97, 0.48, 0.37),
+        dark: (1.00, 0.60, 0.50)
+    )
     static let brandInk = adaptiveColor(
         light: (0.08, 0.13, 0.12),
         dark: (0.94, 0.96, 0.94)
     )
     static let accentSurface = adaptiveColor(
-        light: (0.89, 0.95, 0.92),
+        light: (0.88, 0.95, 0.91),
         dark: (0.10, 0.21, 0.18)
     )
+    static let highlightSurface = adaptiveColor(
+        light: (0.93, 0.97, 0.72),
+        dark: (0.20, 0.25, 0.10)
+    )
+    static let coralSurface = adaptiveColor(
+        light: (1.00, 0.89, 0.85),
+        dark: (0.27, 0.13, 0.10)
+    )
     static let canvas = adaptiveColor(
-        light: (0.97, 0.96, 0.93),
+        light: (0.96, 0.95, 0.91),
         dark: (0.05, 0.06, 0.06)
     )
     static let elevatedSurface = adaptiveColor(
-        light: (1.00, 0.99, 0.97),
+        light: (1.00, 0.99, 0.95),
         dark: (0.10, 0.12, 0.11)
     )
     static let subduedSurface = adaptiveColor(
@@ -38,6 +54,12 @@ enum KineoColor {
 
     static let brandGradient = LinearGradient(
         colors: [pressedAccent, accent],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
+    static let spotlightGradient = LinearGradient(
+        colors: [highlightSurface, accentSurface],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
@@ -77,6 +99,12 @@ enum KineoLayout {
     static let brandMarkSize: CGFloat = 36
     static let heroMarkSize: CGFloat = 96
     static let heroArtworkHeight: CGFloat = 236
+    static let editorialArtworkHeight: CGFloat = 310
+    static let editorialFigureWidth: CGFloat = 220
+    static let compactEditorialFigureWidth: CGFloat = 132
+    static let artworkOverflowOffset: CGFloat = 18
+    static let decorativeOrbSize: CGFloat = 150
+    static let compactDecorativeOrbSize: CGFloat = 88
     static let heroArtworkSymbolSize: CGFloat = 76
     static let heroCardPadding: CGFloat = 24
     static let iconBadgeSize: CGFloat = 40
@@ -86,16 +114,16 @@ enum KineoLayout {
     static let decorativePathHeight: CGFloat = 150
     static let controlRadius: CGFloat = 16
     static let cardRadius: CGFloat = 24
-    static let heroRadius: CGFloat = 30
+    static let heroRadius: CGFloat = 28
     static let standardBorderWidth: CGFloat = 1
     static let selectedBorderWidth: CGFloat = 2
     static let buttonPressedScale = 0.98
     static let disabledOpacity = 0.45
     static let unselectedOpacity = 0.72
     static let separatorOpacity = 0.12
-    static let shadowOpacity = 0.07
-    static let shadowRadius: CGFloat = 18
-    static let shadowVerticalOffset: CGFloat = 8
+    static let shadowOpacity = 0.09
+    static let shadowRadius: CGFloat = 22
+    static let shadowVerticalOffset: CGFloat = 10
     static let decorativeOpacity = 0.14
     static let backgroundGlowOpacity = 0.42
     static let mutedBackgroundGlowOpacity = 0.22
@@ -166,7 +194,7 @@ struct FlowPage<Content: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(title)
-                    .font(.largeTitle.bold())
+                    .font(.title.bold())
                     .foregroundStyle(KineoColor.brandInk)
                     .accessibilityHeading(.h1)
                     .accessibilityFocused($titleFocused)
@@ -184,29 +212,21 @@ struct FlowPage<Content: View>: View {
 struct KineoBackdrop: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            KineoColor.canvas
-            RadialGradient(
-                colors: [
-                    KineoColor.accentSurface.opacity(KineoLayout.backgroundGlowOpacity),
-                    KineoColor.canvas.opacity(KineoLayout.mutedBackgroundGlowOpacity)
-                ],
-                center: .topTrailing,
-                startRadius: .zero,
-                endRadius: KineoLayout.decorativePathWidth
+            LinearGradient(
+                colors: [KineoColor.elevatedSurface, KineoColor.canvas],
+                startPoint: .top,
+                endPoint: .bottom
             )
-            KineoMovementPath()
-                .stroke(
-                    KineoColor.accent.opacity(KineoLayout.decorativeOpacity),
-                    style: StrokeStyle(
-                        lineWidth: KineoLayout.selectedBorderWidth,
-                        lineCap: .round
-                    )
-                )
+            Circle()
+                .fill(KineoColor.highlightSurface.opacity(KineoLayout.backgroundGlowOpacity))
                 .frame(
-                    width: KineoLayout.decorativePathWidth,
-                    height: KineoLayout.decorativePathHeight
+                    width: KineoLayout.decorativeOrbSize,
+                    height: KineoLayout.decorativeOrbSize
                 )
-                .offset(x: KineoLayout.sectionSpacing, y: -KineoLayout.sectionSpacing)
+                .offset(
+                    x: KineoLayout.sectionSpacing,
+                    y: -KineoLayout.spaciousSectionSpacing
+                )
         }
         .ignoresSafeArea()
         .accessibilityHidden(true)
@@ -217,10 +237,14 @@ struct KineoWordmark: View {
     var body: some View {
         HStack(spacing: KineoLayout.compactSpacing) {
             ZStack {
-                Circle().fill(KineoColor.brandGradient)
+                RoundedRectangle(
+                    cornerRadius: KineoLayout.smallSpacing,
+                    style: .continuous
+                )
+                .fill(KineoColor.highlight)
                 KineoMovementPath()
                     .stroke(
-                        Color.white,
+                        KineoColor.accent,
                         style: StrokeStyle(
                             lineWidth: KineoLayout.selectedBorderWidth,
                             lineCap: .round
@@ -231,7 +255,7 @@ struct KineoWordmark: View {
             .frame(width: KineoLayout.brandMarkSize, height: KineoLayout.brandMarkSize)
             .accessibilityHidden(true)
             Text("Kineo")
-                .font(.title2.weight(.bold))
+                .font(.title3.weight(.bold))
                 .foregroundStyle(KineoColor.brandInk)
         }
     }
@@ -282,37 +306,34 @@ struct KineoHeroArtwork: View {
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             RoundedRectangle(cornerRadius: KineoLayout.heroRadius, style: .continuous)
-                .fill(KineoColor.brandGradient)
+                .fill(KineoColor.spotlightGradient)
             Circle()
-                .fill(Color.white.opacity(KineoLayout.decorativeOpacity))
-                .frame(width: KineoLayout.heroMarkSize, height: KineoLayout.heroMarkSize)
-                .offset(x: KineoLayout.decorativePathWidth, y: -KineoLayout.heroMarkSize)
-            KineoMovementPath()
-                .stroke(
-                    Color.white.opacity(KineoLayout.backgroundGlowOpacity),
-                    style: StrokeStyle(
-                        lineWidth: KineoLayout.selectedBorderWidth,
-                        lineCap: .round
-                    )
+                .fill(KineoColor.coralSurface)
+                .frame(
+                    width: KineoLayout.decorativeOrbSize,
+                    height: KineoLayout.decorativeOrbSize
                 )
-                .padding(KineoLayout.heroCardPadding)
-            Image(systemName: "figure.flexibility")
-                .font(.system(
-                    size: KineoLayout.heroArtworkSymbolSize,
-                    weight: .light
-                ))
-                .foregroundStyle(Color.white)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .offset(
+                    x: KineoLayout.decorativePathWidth,
+                    y: -KineoLayout.heroMarkSize
+                )
+            Image("KineoHeroFigure", bundle: .module)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: KineoLayout.editorialFigureWidth)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .offset(x: KineoLayout.artworkOverflowOffset)
                 .accessibilityHidden(true)
             Label("Built around how today feels", systemImage: "sparkles")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.white)
+                .foregroundStyle(KineoColor.brandInk)
                 .padding(.horizontal, KineoLayout.standardSpacing)
                 .padding(.vertical, KineoLayout.smallSpacing)
-                .background(Color.black.opacity(KineoLayout.shadowOpacity), in: Capsule())
+                .background(.regularMaterial, in: Capsule())
                 .padding(KineoLayout.standardSpacing)
         }
-        .frame(maxWidth: .infinity, minHeight: KineoLayout.heroArtworkHeight)
+        .frame(maxWidth: .infinity, minHeight: KineoLayout.editorialArtworkHeight)
+        .clipped()
         .accessibilityElement(children: .combine)
     }
 }
@@ -444,7 +465,7 @@ struct SectionHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: KineoLayout.hairlineSpacing) {
             Text(title)
-                .font(.title3.weight(.semibold))
+                .font(.headline)
                 .accessibilityHeading(.h2)
             if let detail {
                 Text(detail)
@@ -471,10 +492,10 @@ struct ChoiceCard: View {
                 if let symbol {
                     Image(systemName: symbol)
                         .font(.headline)
-                        .foregroundStyle(selected ? Color.white : KineoColor.accent)
+                        .foregroundStyle(KineoColor.accent)
                         .frame(width: KineoLayout.choiceSymbolSize, height: KineoLayout.choiceSymbolSize)
                         .background(
-                            selected ? KineoColor.accent : KineoColor.accentSurface,
+                            selected ? KineoColor.highlight : KineoColor.accentSurface,
                             in: RoundedRectangle(
                                 cornerRadius: KineoLayout.smallSpacing,
                                 style: .continuous
@@ -503,7 +524,7 @@ struct ChoiceCard: View {
             }
             .padding(KineoLayout.standardSpacing)
             .frame(maxWidth: .infinity, minHeight: KineoLayout.minimumPrimaryControlHeight, alignment: .leading)
-            .background(selected ? KineoColor.accentSurface : KineoColor.elevatedSurface)
+            .background(selected ? KineoColor.highlightSurface : KineoColor.elevatedSurface)
             .clipShape(RoundedRectangle(cornerRadius: KineoLayout.controlRadius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: KineoLayout.controlRadius, style: .continuous)
@@ -512,6 +533,11 @@ struct ChoiceCard: View {
                         lineWidth: borderWidth
                     )
             }
+            .shadow(
+                color: KineoColor.brandInk.opacity(selected ? KineoLayout.shadowOpacity : .zero),
+                radius: KineoLayout.smallSpacing,
+                y: KineoLayout.hairlineSpacing
+            )
         }
         .buttonStyle(KineoChoiceButtonStyle())
         .accessibilityElement(children: .combine)
@@ -839,20 +865,27 @@ struct SafetyButton: View {
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: "exclamationmark.triangle.fill")
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(KineoColor.attentionText)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, KineoLayout.standardSpacing)
                 .frame(maxWidth: .infinity)
+                .frame(minHeight: KineoLayout.minimumPrimaryControlHeight)
+                .background(KineoColor.attentionSurface)
+                .clipShape(RoundedRectangle(
+                    cornerRadius: KineoLayout.controlRadius,
+                    style: .continuous
+                ))
+                .overlay {
+                    RoundedRectangle(
+                        cornerRadius: KineoLayout.controlRadius,
+                        style: .continuous
+                    )
+                    .stroke(KineoColor.attentionText.opacity(KineoLayout.progressTrackOpacity))
+                }
         }
-        .foregroundStyle(KineoColor.attentionText)
-        .padding(.horizontal, KineoLayout.standardSpacing)
-        .frame(maxWidth: .infinity, minHeight: KineoLayout.minimumPrimaryControlHeight)
-        .background(KineoColor.attentionSurface)
-        .clipShape(RoundedRectangle(cornerRadius: KineoLayout.controlRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: KineoLayout.controlRadius, style: .continuous)
-                .stroke(KineoColor.attentionText.opacity(KineoLayout.progressTrackOpacity))
-        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -902,5 +935,20 @@ extension View {
                 RoundedRectangle(cornerRadius: KineoLayout.cardRadius, style: .continuous)
                     .stroke(KineoColor.separator, lineWidth: KineoLayout.standardBorderWidth)
             }
+            .shadow(
+                color: KineoColor.brandInk.opacity(KineoLayout.shadowOpacity),
+                radius: KineoLayout.smallSpacing,
+                y: KineoLayout.hairlineSpacing
+            )
+    }
+
+    @ViewBuilder
+    func kineoTabChrome() -> some View {
+        #if os(iOS)
+        toolbarBackground(.visible, for: .tabBar)
+            .toolbarBackground(KineoColor.elevatedSurface, for: .tabBar)
+        #else
+        self
+        #endif
     }
 }
