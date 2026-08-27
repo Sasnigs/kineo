@@ -36,7 +36,10 @@ let package = Package(
         ),
         .target(
             name: "KineoUI",
-            dependencies: ["KineoCore"]
+            dependencies: ["KineoCore"],
+            resources: [
+                .process("Resources")
+            ]
         ),
         .testTarget(
             name: "KineoCoreTests",

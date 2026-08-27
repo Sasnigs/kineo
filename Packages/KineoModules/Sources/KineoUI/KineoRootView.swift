@@ -176,7 +176,7 @@ private struct WelcomeView: View {
                             .accessibilityHeading(.h1)
                             .accessibilityFocused($titleFocused)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Check in. See what fits today. Move at your pace.")
+                        Text("Two quick answers. One clear next step.")
                             .font(.title3.weight(.medium))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -336,53 +336,64 @@ private struct TodayTabsView: View {
             ProfileTabView(model: model)
                 .tabItem { Label("Profile", systemImage: "person.crop.circle") }
         }
+        .kineoTabChrome()
         .task { model.send(.loadDashboard) }
     }
 }
 
 private struct TodayFocusCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let area: BodyArea
     let startCheckIn: () -> Void
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             RoundedRectangle(cornerRadius: KineoLayout.heroRadius, style: .continuous)
-                .fill(KineoColor.brandGradient)
-            KineoMovementPath()
-                .stroke(
-                    Color.white.opacity(KineoLayout.decorativeOpacity),
-                    style: StrokeStyle(
-                        lineWidth: KineoLayout.selectedBorderWidth,
-                        lineCap: .round
-                    )
-                )
+                .fill(KineoColor.spotlightGradient)
+            Circle()
+                .fill(KineoColor.coralSurface)
                 .frame(
-                    width: KineoLayout.decorativePathWidth,
-                    height: KineoLayout.decorativePathHeight
+                    width: KineoLayout.compactDecorativeOrbSize,
+                    height: KineoLayout.compactDecorativeOrbSize
                 )
+                .padding(KineoLayout.standardSpacing)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: KineoLayout.standardSpacing) {
-                Label(area.title, systemImage: area.symbol)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, KineoLayout.smallSpacing)
-                    .frame(minHeight: KineoLayout.minimumTouchTarget)
-                    .background(
-                        Color.white.opacity(KineoLayout.decorativeOpacity),
-                        in: Capsule()
-                    )
-                Text("How does movement feel today?")
-                    .font(.title.bold())
-                    .foregroundStyle(Color.white)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("Two quick prompts guide what Kineo can offer today. Time changes length, never the selected level.")
+                HStack(alignment: .bottom, spacing: KineoLayout.smallSpacing) {
+                    VStack(alignment: .leading, spacing: KineoLayout.smallSpacing) {
+                        Label(area.title, systemImage: area.symbol)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(KineoColor.accent)
+                            .padding(.horizontal, KineoLayout.smallSpacing)
+                            .frame(minHeight: KineoLayout.minimumTouchTarget)
+                            .background(.regularMaterial, in: Capsule())
+                        Text("Your move for today starts here.")
+                            .font(.title.bold())
+                            .foregroundStyle(KineoColor.brandInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        Image("KineoHeroFigure", bundle: .module)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: KineoLayout.compactEditorialFigureWidth)
+                            .accessibilityHidden(true)
+                    }
+                }
+                Text("Tell Kineo how movement feels, then see the plan that matches your answers.")
                     .font(.body)
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                OnAccentButton("Start today's check-in", symbol: "arrow.right", action: startCheckIn)
+                PrimaryButton("Start today's check-in", symbol: "arrow.right", action: startCheckIn)
             }
             .padding(KineoLayout.heroCardPadding)
         }
+        .shadow(
+            color: KineoColor.accent.opacity(KineoLayout.shadowOpacity),
+            radius: KineoLayout.shadowRadius,
+            y: KineoLayout.shadowVerticalOffset
+        )
     }
 }
 
@@ -524,15 +535,15 @@ private struct ProgressHeroCard: View {
             VStack(alignment: .leading, spacing: KineoLayout.compactSpacing) {
                 Text("Your rhythm")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(KineoColor.accent)
                     .textCase(.uppercase)
                 Text("Keep showing up in a way that fits your day.")
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(KineoColor.brandInk)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("No streaks or recovery scores")
                     .font(.footnote)
-                    .foregroundStyle(Color.white.opacity(KineoLayout.unselectedOpacity))
+                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: KineoLayout.compactSpacing)
             VStack(spacing: KineoLayout.hairlineSpacing) {
@@ -541,18 +552,18 @@ private struct ProgressHeroCard: View {
                 Text("days")
                     .font(.caption.weight(.semibold))
             }
-            .foregroundStyle(Color.white)
+            .foregroundStyle(KineoColor.accent)
             .frame(
                 width: KineoLayout.progressRingSize,
                 height: KineoLayout.progressRingSize
             )
             .background(
-                Color.white.opacity(KineoLayout.decorativeOpacity),
+                KineoColor.highlight,
                 in: Circle()
             )
         }
         .padding(KineoLayout.heroCardPadding)
-        .background(KineoColor.brandGradient)
+        .background(KineoColor.spotlightGradient)
         .clipShape(RoundedRectangle(
             cornerRadius: KineoLayout.heroRadius,
             style: .continuous
@@ -996,15 +1007,24 @@ private struct PlanSummaryHero: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: KineoLayout.standardSpacing) {
-            Label("Today's movement level", systemImage: plan.deliveredLevel.symbol)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.white)
+            HStack {
+                Label("Today's movement level", systemImage: plan.deliveredLevel.symbol)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(KineoColor.accent)
+                Spacer()
+                KineoIconBadge(
+                    symbol: "sparkles",
+                    foregroundStyle: KineoColor.coral,
+                    backgroundStyle: KineoColor.coralSurface
+                )
+                .accessibilityHidden(true)
+            }
             Text(plan.deliveredLevel.title)
                 .font(.largeTitle.bold())
-                .foregroundStyle(Color.white)
+                .foregroundStyle(KineoColor.brandInk)
             Text(plan.explanationText)
                 .font(.title3.weight(.medium))
-                .foregroundStyle(Color.white)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: KineoLayout.compactSpacing) {
@@ -1017,11 +1037,22 @@ private struct PlanSummaryHero: View {
         }
         .padding(KineoLayout.heroCardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KineoColor.brandGradient)
+        .background(KineoColor.elevatedSurface)
         .clipShape(RoundedRectangle(
             cornerRadius: KineoLayout.heroRadius,
             style: .continuous
         ))
+        .overlay(alignment: .top) {
+            Capsule()
+                .fill(KineoColor.highlight)
+                .frame(height: KineoLayout.hairlineSpacing)
+                .padding(.horizontal, KineoLayout.heroCardPadding)
+        }
+        .shadow(
+            color: KineoColor.accent.opacity(KineoLayout.shadowOpacity),
+            radius: KineoLayout.shadowRadius,
+            y: KineoLayout.shadowVerticalOffset
+        )
     }
 
     @ViewBuilder
@@ -1044,11 +1075,11 @@ private struct PlanMetadataPill: View {
     var body: some View {
         Label(title, systemImage: symbol)
             .font(.caption.weight(.semibold))
-            .foregroundStyle(Color.white)
+            .foregroundStyle(KineoColor.brandInk)
             .padding(.horizontal, KineoLayout.smallSpacing)
             .padding(.vertical, KineoLayout.compactSpacing)
             .background(
-                Color.white.opacity(KineoLayout.decorativeOpacity),
+                KineoColor.subduedSurface,
                 in: Capsule()
             )
     }
@@ -1296,27 +1327,30 @@ private struct PrototypeMovementPreview: View {
         VStack(alignment: .leading, spacing: KineoLayout.smallSpacing) {
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: KineoLayout.controlRadius, style: .continuous)
-                    .fill(KineoColor.brandGradient)
-                KineoMovementPath()
-                    .stroke(
-                        Color.white.opacity(KineoLayout.backgroundGlowOpacity),
-                        lineWidth: KineoLayout.selectedBorderWidth
+                    .fill(KineoColor.spotlightGradient)
+                Circle()
+                    .fill(KineoColor.coralSurface)
+                    .frame(
+                        width: KineoLayout.decorativeOrbSize,
+                        height: KineoLayout.decorativeOrbSize
                     )
-                    .padding(KineoLayout.heroCardPadding)
-                Image(systemName: "figure.flexibility")
-                    .font(.system(
-                        size: KineoLayout.heroArtworkSymbolSize,
-                        weight: .light
-                    ))
-                    .foregroundStyle(Color.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .offset(
+                        x: -KineoLayout.sectionSpacing,
+                        y: KineoLayout.sectionSpacing
+                    )
+                Image("KineoHeroFigure", bundle: .module)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(.top, KineoLayout.smallSpacing)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Label("Prototype preview", systemImage: "hammer.fill")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(KineoColor.brandInk)
                     .padding(.horizontal, KineoLayout.smallSpacing)
                     .frame(minHeight: KineoLayout.minimumTouchTarget)
                     .background(
-                        Color.black.opacity(KineoLayout.decorativeOpacity),
+                        .regularMaterial,
                         in: Capsule()
                     )
                     .padding(KineoLayout.standardSpacing)
