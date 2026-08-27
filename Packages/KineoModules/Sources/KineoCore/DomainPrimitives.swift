@@ -261,13 +261,13 @@ public enum AreaRole: String, Codable, Sendable {
     case secondary
 }
 
-public enum ChangeReport: String, Codable, Sendable {
+public enum ChangeReport: String, CaseIterable, Codable, Sendable {
     case better
     case similar
     case worse
 }
 
-public enum MovementComfort: String, Codable, Sendable {
+public enum MovementComfort: String, CaseIterable, Codable, Sendable {
     case limited
     case okay
     case good

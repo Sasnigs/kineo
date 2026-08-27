@@ -1,43 +1,70 @@
+import Foundation
 import KineoCore
 import Testing
 
 @Suite("Selection rules")
 struct SelectionRulesTests {
-    private struct LevelCase: Sendable {
-        let change: ChangeReport
-        let comfort: MovementComfort
-        let locked: RoutineLevel
-        let unlocked: RoutineLevel
+    private struct LevelCase: Decodable, Sendable {
+        let changeReport: ChangeReport
+        let movementComfort: MovementComfort
+        let lockedLevel: RoutineLevel
+        let unlockedLevel: RoutineLevel
     }
 
-    private static let levelCases = [
-        LevelCase(change: .better, comfort: .limited, locked: .gentle, unlocked: .gentle),
-        LevelCase(change: .better, comfort: .okay, locked: .balanced, unlocked: .balanced),
-        LevelCase(change: .better, comfort: .good, locked: .balanced, unlocked: .active),
-        LevelCase(change: .similar, comfort: .limited, locked: .gentle, unlocked: .gentle),
-        LevelCase(change: .similar, comfort: .okay, locked: .balanced, unlocked: .balanced),
-        LevelCase(change: .similar, comfort: .good, locked: .balanced, unlocked: .balanced),
-        LevelCase(change: .worse, comfort: .limited, locked: .gentle, unlocked: .gentle),
-        LevelCase(change: .worse, comfort: .okay, locked: .gentle, unlocked: .gentle),
-        LevelCase(change: .worse, comfort: .good, locked: .gentle, unlocked: .gentle)
-    ]
+    private struct LevelInput: Hashable {
+        let changeReport: ChangeReport
+        let movementComfort: MovementComfort
+    }
 
-    @Test("Base mapping is exhaustive", arguments: levelCases)
-    private func baseMapping(testCase: LevelCase) {
-        #expect(
-            AreaLevelRule.level(
-                changeReport: testCase.change,
-                movementComfort: testCase.comfort,
-                activeUnlocked: false
-            ) == testCase.locked
+    @Test("Base mapping matches the shared parity fixture")
+    private func baseMapping() throws {
+        let fixtureURL = try #require(
+            Bundle.module.url(
+                forResource: "area-level-selection-v1",
+                withExtension: "json"
+            )
         )
-        #expect(
-            AreaLevelRule.level(
-                changeReport: testCase.change,
-                movementComfort: testCase.comfort,
-                activeUnlocked: true
-            ) == testCase.unlocked
+        let fixtureData = try Data(contentsOf: fixtureURL)
+        let levelCases = try JSONDecoder().decode([LevelCase].self, from: fixtureData)
+        let expectedInputs = Set(
+            ChangeReport.allCases.flatMap { changeReport in
+                MovementComfort.allCases.map { movementComfort in
+                    LevelInput(
+                        changeReport: changeReport,
+                        movementComfort: movementComfort
+                    )
+                }
+            }
         )
+
+        #expect(levelCases.count == expectedInputs.count)
+        #expect(
+            Set(
+                levelCases.map {
+                    LevelInput(
+                        changeReport: $0.changeReport,
+                        movementComfort: $0.movementComfort
+                    )
+                }
+            ) == expectedInputs
+        )
+
+        for testCase in levelCases {
+            #expect(
+                AreaLevelRule.level(
+                    changeReport: testCase.changeReport,
+                    movementComfort: testCase.movementComfort,
+                    activeUnlocked: false
+                ) == testCase.lockedLevel
+            )
+            #expect(
+                AreaLevelRule.level(
+                    changeReport: testCase.changeReport,
+                    movementComfort: testCase.movementComfort,
+                    activeUnlocked: true
+                ) == testCase.unlockedLevel
+            )
+        }
     }
 
     @Test("Routine levels use stable explicit ranks")

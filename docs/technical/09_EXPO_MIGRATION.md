@@ -16,6 +16,7 @@ This document overrides SwiftUI-, Swift-, Xcode-module-, and GRDB-specific imple
 - Treat the existing deterministic Swift behavior and product matrices as reference evidence, not code to call at runtime.
 - Do not share production state between the Swift and Expo apps during migration.
 - Do not add networking, telemetry, accounts, remote configuration, HealthKit, or new product scope.
+- The `kineo` URL scheme exists only so Expo can launch development builds and the simulator. It does not authorize product deep links, inbound navigation, or authentication callbacks.
 - Do not claim migration completion while any required parity or device gate remains open.
 
 ## 2. Target architecture

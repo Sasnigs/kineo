@@ -7,12 +7,13 @@ Status: locally verified; CI pending.
 - Expo SDK 57, React Native 0.86, React 19.2, and Node 24.20 are pinned.
 - Swift remains the runnable reference until each product slice reaches parity.
 - Expo Core cannot import React, React Native, Expo, or native infrastructure.
+- The `kineo` URL scheme is limited to Expo development-build launching; product deep links remain out of scope.
 
 ## Verification
 
 - TypeScript strict check: pass.
 - ESLint and Core dependency boundary: pass.
-- Frozen area-level decision matrix: 9/9 pass.
+- Shared Swift/Expo area-level decision matrix: pass.
 - Expo dependency compatibility: pass.
 - iOS bundle export: pass.
 - Xcode Release simulator build and launch: pass on iPhone 17 Pro.
