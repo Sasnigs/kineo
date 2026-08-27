@@ -57,6 +57,8 @@ Parity expectations come from product decision tables, stable shared fixtures, a
 | E5 Platform and UI | Media, reminders, lifecycle, adaptive UI, and accessibility | Automated UI and platform gates pass |
 | E6 Cutover | Exact Expo archive qualification and removal plan for Swift | Full P0/P1 parity evidence passes; owner-visible cutover recorded |
 
+E1 is delivered in three reviewable slices: domain and Attention safety, Active history eligibility, then the complete plan selector. Each slice must keep Swift and Expo green before the next begins.
+
 ## 5. E0 acceptance
 
 - `apps/mobile` launches from the Expo toolchain without changing the Swift app.

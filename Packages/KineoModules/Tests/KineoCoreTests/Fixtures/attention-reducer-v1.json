@@ -1,0 +1,162 @@
+{
+  "returnCases": [
+    {
+      "name": "returned to usual clears only the named area",
+      "area": "neck",
+      "currentStatus": "attentionRequired",
+      "answer": "returnedToUsual",
+      "expectedDirective": "clearAndRequireFreshCheckIn"
+    },
+    {
+      "name": "not returned keeps attention",
+      "area": "upperMidBack",
+      "currentStatus": "attentionRequired",
+      "answer": "notReturned",
+      "expectedDirective": "keepAndShowGuidance"
+    },
+    {
+      "name": "uncertainty keeps attention",
+      "area": "lowerBack",
+      "currentStatus": "attentionRequired",
+      "answer": "notSure",
+      "expectedDirective": "keepAndShowGuidance"
+    },
+    {
+      "name": "mistake starts correction without clearing",
+      "area": "neck",
+      "currentStatus": "attentionRequired",
+      "answer": "selectedByMistake",
+      "expectedDirective": "keepAndStartFreshCorrection"
+    },
+    {
+      "name": "normal status rejects an attention return",
+      "area": "neck",
+      "currentStatus": "normal",
+      "answer": "returnedToUsual",
+      "expectedError": "attentionNotRequired"
+    }
+  ],
+  "correctionCases": [
+    {
+      "name": "ordinary correction clears attention",
+      "area": "neck",
+      "currentStatus": "attentionRequired",
+      "entry": {
+        "checkInEntryID": "00000000-0000-0000-0000-000000000005",
+        "entryRevision": 1,
+        "area": "neck",
+        "changeReport": "similar",
+        "movementComfort": "good"
+      },
+      "expectedDirective": "clearAttention"
+    },
+    {
+      "name": "resolved trigger clears attention",
+      "area": "neck",
+      "currentStatus": "attentionRequired",
+      "entry": {
+        "checkInEntryID": "00000000-0000-0000-0000-000000000006",
+        "entryRevision": 1,
+        "area": "neck",
+        "changeReport": "worse",
+        "movementComfort": "good",
+        "conditionalSafetyAnswer": "no"
+      },
+      "expectedDirective": "clearAttention"
+    },
+    {
+      "name": "yes reaffirms attention",
+      "area": "upperMidBack",
+      "currentStatus": "attentionRequired",
+      "entry": {
+        "checkInEntryID": "00000000-0000-0000-0000-000000000007",
+        "entryRevision": 1,
+        "area": "upperMidBack",
+        "changeReport": "similar",
+        "movementComfort": "limited",
+        "conditionalSafetyAnswer": "yes"
+      },
+      "expectedDirective": "reaffirmAttention"
+    },
+    {
+      "name": "not sure reaffirms attention",
+      "area": "lowerBack",
+      "currentStatus": "attentionRequired",
+      "entry": {
+        "checkInEntryID": "00000000-0000-0000-0000-000000000008",
+        "entryRevision": 1,
+        "area": "lowerBack",
+        "changeReport": "worse",
+        "movementComfort": "okay",
+        "conditionalSafetyAnswer": "notSure"
+      },
+      "expectedDirective": "reaffirmAttention"
+    },
+    {
+      "name": "normal status rejects correction",
+      "area": "neck",
+      "currentStatus": "normal",
+      "entry": {
+        "checkInEntryID": "00000000-0000-0000-0000-000000000009",
+        "entryRevision": 1,
+        "area": "neck",
+        "changeReport": "similar",
+        "movementComfort": "good"
+      },
+      "expectedError": "attentionNotRequired"
+    },
+    {
+      "name": "mismatched area rejects correction",
+      "area": "lowerBack",
+      "currentStatus": "attentionRequired",
+      "entry": {
+        "checkInEntryID": "00000000-0000-0000-0000-000000000010",
+        "entryRevision": 1,
+        "area": "neck",
+        "changeReport": "similar",
+        "movementComfort": "good"
+      },
+      "expectedError": "areaMismatch"
+    },
+    {
+      "name": "nonpositive revision rejects correction",
+      "area": "neck",
+      "currentStatus": "attentionRequired",
+      "entry": {
+        "checkInEntryID": "00000000-0000-0000-0000-000000000011",
+        "entryRevision": 0,
+        "area": "neck",
+        "changeReport": "similar",
+        "movementComfort": "good"
+      },
+      "expectedError": "invalidEntryRevision"
+    },
+    {
+      "name": "missing trigger answer rejects correction",
+      "area": "neck",
+      "currentStatus": "attentionRequired",
+      "entry": {
+        "checkInEntryID": "00000000-0000-0000-0000-000000000012",
+        "entryRevision": 1,
+        "area": "neck",
+        "changeReport": "worse",
+        "movementComfort": "good"
+      },
+      "expectedError": "missingConditionalAnswer"
+    },
+    {
+      "name": "stray trigger answer rejects correction",
+      "area": "neck",
+      "currentStatus": "attentionRequired",
+      "entry": {
+        "checkInEntryID": "00000000-0000-0000-0000-000000000013",
+        "entryRevision": 1,
+        "area": "neck",
+        "changeReport": "similar",
+        "movementComfort": "good",
+        "conditionalSafetyAnswer": "yes"
+      },
+      "expectedError": "unexpectedConditionalAnswer"
+    }
+  ]
+}

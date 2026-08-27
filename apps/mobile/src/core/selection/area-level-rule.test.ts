@@ -6,11 +6,11 @@ import {
   changeReports,
   movementComforts,
   routineLevels,
-  selectAreaLevel,
   type ChangeReport,
   type MovementComfort,
   type RoutineLevel,
-} from './area-level-rule';
+} from '../domain/selection-domain';
+import { selectAreaLevel } from './area-level-rule';
 
 type LevelCase = Readonly<{
   changeReport: ChangeReport;

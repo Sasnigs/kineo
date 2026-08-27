@@ -1,11 +1,8 @@
-export const changeReports = ['better', 'similar', 'worse'] as const;
-export type ChangeReport = (typeof changeReports)[number];
-
-export const movementComforts = ['limited', 'okay', 'good'] as const;
-export type MovementComfort = (typeof movementComforts)[number];
-
-export const routineLevels = ['gentle', 'balanced', 'active'] as const;
-export type RoutineLevel = (typeof routineLevels)[number];
+import type {
+  ChangeReport,
+  MovementComfort,
+  RoutineLevel,
+} from '../domain/selection-domain';
 
 export type AreaLevelInput = Readonly<{
   changeReport: ChangeReport;

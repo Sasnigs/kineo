@@ -1,5 +1,5 @@
 /// A response from the persistent Attention return flow.
-public enum AttentionReturnAnswer: String, Codable, Sendable {
+public enum AttentionReturnAnswer: String, CaseIterable, Codable, Sendable {
     case returnedToUsual
     case notReturned
     case notSure
