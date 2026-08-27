@@ -27,6 +27,21 @@ xcodebuild -project Kineo.xcodeproj \
   build
 ```
 
+For Expo migration changes:
+
+```sh
+cd apps/mobile
+nvm use
+npm ci
+npm run typecheck
+npm run lint
+npm run test:ci
+npm run dependencies:check
+npm run audit
+```
+
+Run the Expo app with `npm run ios`.
+
 - Add unit tests for new behavior.
 - Add a regression test for every bug fix when practical.
 - Run the app or relevant flow in an iPhone simulator for UI changes.
