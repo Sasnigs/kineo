@@ -2,12 +2,12 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — M1–M3 complete; M4–M12 sequentially authorized subject to documented gates |
-| Scope | Native iPhone application architecture |
+| Status | Verified Swift reference architecture; Expo target architecture is owned by TD-09 |
+| Scope | Swift reference implementation during Expo migration |
 | Sources | `../KINEO_PRODUCT_DESIGN.md`, `../KINEO_UX_DESIGN_SPEC.md` |
 | Last reviewed | August 9, 2026 |
 
-This document defines the prototype architecture. Product behavior remains governed by the source documents and TD-00.
+This document defines the verified Swift reference architecture. TD-09 overrides its platform-specific choices for migrated slices; product behavior remains governed by the source documents and TD-00.
 
 ## 1. Goals and constraints
 

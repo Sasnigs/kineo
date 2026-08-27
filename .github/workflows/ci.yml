@@ -110,3 +110,40 @@ jobs:
           Scripts/verify-simulator-launch.sh \
             "$KINEO_SIMULATOR_ID" \
             "$RUNNER_TEMP/kineo-launch-derived-data/Build/Products/InternalPrototype-iphonesimulator/Kineo.app"
+
+  expo:
+    name: Expo foundation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: apps/mobile
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: apps/mobile/.nvmrc
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify source
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test:ci
+
+      - name: Verify Expo dependencies
+        run: |
+          npm run dependencies:check
+          npm run audit
+
+      - name: Bundle iOS app
+        run: npx expo export --platform ios --output-dir "$RUNNER_TEMP/kineo-expo-export"

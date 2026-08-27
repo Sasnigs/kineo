@@ -43,7 +43,10 @@ let package = Package(
         ),
         .testTarget(
             name: "KineoCoreTests",
-            dependencies: ["KineoCore"]
+            dependencies: ["KineoCore"],
+            resources: [
+                .process("Fixtures")
+            ]
         ),
         .testTarget(
             name: "KineoInfrastructureTests",
