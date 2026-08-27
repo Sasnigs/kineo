@@ -1118,7 +1118,9 @@ private struct RoutineView: View {
                         .font(.title.bold())
                         .foregroundStyle(KineoColor.brandInk)
                         .fixedSize(horizontal: false, vertical: true)
-                    PrototypeMovementPreview()
+                    PrototypeExerciseVideoPreview(
+                        isRoutinePaused: routine.status == .paused
+                    )
                     if let instruction = routine.presentedInstruction {
                         VStack(alignment: .leading, spacing: KineoLayout.compactSpacing) {
                             Text("How to move")
@@ -1319,54 +1321,6 @@ private struct RoutineDoseCard: View {
         .accessibilityIdentifier("Routine dose")
         .accessibilityLabel(accessibilityContent.kind.label)
         .accessibilityValue(accessibilityContent.value)
-    }
-}
-
-private struct PrototypeMovementPreview: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: KineoLayout.smallSpacing) {
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: KineoLayout.controlRadius, style: .continuous)
-                    .fill(KineoColor.spotlightGradient)
-                Circle()
-                    .fill(KineoColor.coralSurface)
-                    .frame(
-                        width: KineoLayout.decorativeOrbSize,
-                        height: KineoLayout.decorativeOrbSize
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .offset(
-                        x: -KineoLayout.sectionSpacing,
-                        y: KineoLayout.sectionSpacing
-                    )
-                Image("KineoHeroFigure", bundle: .module)
-                    .resizable()
-                    .scaledToFit()
-                    .padding(.top, KineoLayout.smallSpacing)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                Label("Prototype preview", systemImage: "hammer.fill")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(KineoColor.brandInk)
-                    .padding(.horizontal, KineoLayout.smallSpacing)
-                    .frame(minHeight: KineoLayout.minimumTouchTarget)
-                    .background(
-                        .regularMaterial,
-                        in: Capsule()
-                    )
-                    .padding(KineoLayout.standardSpacing)
-            }
-            .frame(maxWidth: .infinity, minHeight: KineoLayout.routineMediaHeight)
-
-            Text("Licensed, reviewed movement media will replace this mock before release.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Prototype movement preview")
-        .accessibilityValue(
-            "Internal mock. No production movement demonstration is available."
-        )
     }
 }
 
