@@ -12,7 +12,6 @@ export const spacing = {
   screenVertical: 20,
   compact: 8,
   standard: 16,
-  section: 32,
 } as const;
 
 export const radius = {
@@ -29,4 +28,6 @@ export const typography = {
   bodyLineHeight: 25,
   detailSize: 15,
   detailLineHeight: 21,
+  strongWeight: '700',
+  displayWeight: '800',
 } as const;

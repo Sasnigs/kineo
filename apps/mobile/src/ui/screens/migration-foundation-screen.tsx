@@ -50,13 +50,13 @@ const styles = StyleSheet.create({
   eyebrow: {
     color: colors.secondaryInk,
     fontSize: typography.eyebrowSize,
-    fontWeight: '700',
+    fontWeight: typography.strongWeight,
     letterSpacing: typography.eyebrowTracking,
   },
   title: {
     color: colors.ink,
     fontSize: typography.titleSize,
-    fontWeight: '800',
+    fontWeight: typography.displayWeight,
     lineHeight: typography.titleLineHeight,
   },
   body: {
@@ -87,13 +87,13 @@ const styles = StyleSheet.create({
   status: {
     color: colors.ink,
     fontSize: typography.eyebrowSize,
-    fontWeight: '700',
+    fontWeight: typography.strongWeight,
     letterSpacing: typography.eyebrowTracking,
   },
   cardTitle: {
     color: colors.ink,
     fontSize: typography.bodySize,
-    fontWeight: '700',
+    fontWeight: typography.strongWeight,
   },
   cardBody: {
     color: colors.secondaryInk,
