@@ -1,9 +1,120 @@
+import Foundation
 import KineoCore
 import Testing
 
 @Suite("Attention rules")
 struct AttentionRulesTests {
     private static let validRevision = 1
+
+    private struct ParityFixture: Decodable {
+        let returnCases: [ReturnCase]
+        let correctionCases: [CorrectionCase]
+    }
+
+    private struct ReturnCase: Decodable {
+        let area: BodyArea
+        let currentStatus: SafetyStatus
+        let answer: AttentionReturnAnswer
+        let expectedDirective: ReturnDirectiveKind?
+        let expectedError: FixtureError?
+    }
+
+    private struct CorrectionCase: Decodable {
+        let area: BodyArea
+        let currentStatus: SafetyStatus
+        let entry: CorrectionEntry
+        let expectedDirective: CorrectionDirectiveKind?
+        let expectedError: FixtureError?
+    }
+
+    private struct CorrectionEntry: Decodable {
+        let checkInEntryID: String
+        let entryRevision: Int
+        let area: BodyArea
+        let changeReport: ChangeReport
+        let movementComfort: MovementComfort
+        let conditionalSafetyAnswer: ConditionalSafetyAnswer?
+    }
+
+    private enum ReturnDirectiveKind: String, Decodable {
+        case clearAndRequireFreshCheckIn
+        case keepAndShowGuidance
+        case keepAndStartFreshCorrection
+    }
+
+    private enum CorrectionDirectiveKind: String, Decodable {
+        case clearAttention
+        case reaffirmAttention
+    }
+
+    private enum FixtureError: String, Decodable {
+        case attentionNotRequired
+        case areaMismatch
+        case invalidEntryRevision
+        case missingConditionalAnswer
+        case unexpectedConditionalAnswer
+    }
+
+    @Test("Swift matches the shared Attention parity fixture")
+    private func sharedParityFixture() throws {
+        let fixtureURL = try #require(
+            Bundle.module.url(
+                forResource: "attention-reducer-v1",
+                withExtension: "json"
+            )
+        )
+        let fixtureData = try Data(contentsOf: fixtureURL)
+        let fixture = try JSONDecoder().decode(ParityFixture.self, from: fixtureData)
+
+        #expect(Set(fixture.returnCases.map(\.answer)) == Set(AttentionReturnAnswer.allCases))
+
+        for testCase in fixture.returnCases {
+            do {
+                let directive = try AttentionReducer.reduceReturn(
+                    for: testCase.area,
+                    currentStatus: testCase.currentStatus,
+                    answer: testCase.answer
+                )
+                #expect(testCase.expectedError == nil)
+                #expect(returnKind(of: directive) == testCase.expectedDirective)
+            } catch {
+                #expect(testCase.expectedDirective == nil)
+                #expect(fixtureError(from: error) == testCase.expectedError)
+            }
+        }
+
+        for testCase in fixture.correctionCases {
+            let entry = SelectionAreaCheckIn(
+                checkInEntryID: try CheckInEntryID(validating: testCase.entry.checkInEntryID),
+                entryRevision: testCase.entry.entryRevision,
+                area: testCase.entry.area,
+                changeReport: testCase.entry.changeReport,
+                movementComfort: testCase.entry.movementComfort,
+                conditionalSafetyAnswer: testCase.entry.conditionalSafetyAnswer
+            )
+            do {
+                let directive = try AttentionReducer.reduceCorrection(
+                    for: testCase.area,
+                    currentStatus: testCase.currentStatus,
+                    correctedEntry: entry
+                )
+                #expect(testCase.expectedError == nil)
+                #expect(correctionKind(of: directive) == testCase.expectedDirective)
+                switch directive {
+                case let .clearAttention(area, sourceEntryID):
+                    #expect(area == testCase.area)
+                    #expect(sourceEntryID == entry.checkInEntryID)
+                case let .reaffirmAttention(area, sourceEntryID, answer):
+                    #expect(area == testCase.area)
+                    #expect(sourceEntryID == entry.checkInEntryID)
+                    #expect(answer == entry.conditionalSafetyAnswer)
+                }
+            } catch {
+                #expect(testCase.expectedDirective == nil)
+                #expect(fixtureError(from: error) == testCase.expectedError)
+            }
+        }
+    }
 
     @Test("Return answers preserve or clear only the named area")
     private func returnAnswers() throws {
@@ -156,5 +267,42 @@ struct AttentionRulesTests {
             movementComfort: comfort,
             conditionalSafetyAnswer: answer
         )
+    }
+
+    private func returnKind(of directive: AttentionReturnDirective) -> ReturnDirectiveKind {
+        switch directive {
+        case .clearAndRequireFreshCheckIn:
+            .clearAndRequireFreshCheckIn
+        case .keepAndShowGuidance:
+            .keepAndShowGuidance
+        case .keepAndStartFreshCorrection:
+            .keepAndStartFreshCorrection
+        }
+    }
+
+    private func correctionKind(
+        of directive: AttentionCorrectionDirective
+    ) -> CorrectionDirectiveKind {
+        switch directive {
+        case .clearAttention:
+            .clearAttention
+        case .reaffirmAttention:
+            .reaffirmAttention
+        }
+    }
+
+    private func fixtureError(from error: AttentionReductionError) -> FixtureError {
+        switch error {
+        case .attentionNotRequired:
+            .attentionNotRequired
+        case .areaMismatch:
+            .areaMismatch
+        case .invalidEntryRevision:
+            .invalidEntryRevision
+        case .missingConditionalAnswer:
+            .missingConditionalAnswer
+        case .unexpectedConditionalAnswer:
+            .unexpectedConditionalAnswer
+        }
     }
 }
