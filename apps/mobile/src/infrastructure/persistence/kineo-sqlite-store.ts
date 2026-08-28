@@ -53,10 +53,20 @@ import {
   type CheckInEntry,
   type CheckInKind,
   type CheckInStatus,
+  type LocalDay,
   type ProfileState,
   type SafetyMutation,
   type TelemetryChoice,
 } from '../../core/persistence/persistence-domain';
+import type {
+  FeedbackSubmission,
+  PauseTodayEvent,
+  RoutineCheckpoint,
+  RoutineEvent,
+  RoutineSession,
+} from '../../core/persistence/routine-persistence-domain';
+import type { RoutineSessionId } from '../../core/content/routine-session-snapshot';
+import { KineoSqliteRoutineRepository } from './kineo-sqlite-routine-repository';
 
 const singletonProfileId = 1;
 const falseInteger = 0;
@@ -264,7 +274,43 @@ function parametersOrAbort(value: string): Readonly<Record<string, string>> {
 }
 
 export class KineoSqliteStore implements KineoStore {
-  constructor(private readonly database: SqliteDatabase) {}
+  private readonly routineRepository: KineoSqliteRoutineRepository;
+
+  constructor(private readonly database: SqliteDatabase) {
+    this.routineRepository = new KineoSqliteRoutineRepository(database);
+  }
+
+  recordPauseToday(event: PauseTodayEvent): Promise<PersistenceResult<void>> {
+    return this.routineRepository.recordPauseToday(event);
+  }
+
+  loadPauseToday(localDay: LocalDay): Promise<PersistenceResult<PauseTodayEvent | undefined>> {
+    return this.routineRepository.loadPauseToday(localDay);
+  }
+
+  createRoutine(session: RoutineSession): Promise<PersistenceResult<void>> {
+    return this.routineRepository.createRoutine(session);
+  }
+
+  loadRoutineSession(id: RoutineSessionId): Promise<PersistenceResult<RoutineSession | undefined>> {
+    return this.routineRepository.loadRoutineSession(id);
+  }
+
+  loadNonterminalRoutine(): Promise<PersistenceResult<RoutineSession | undefined>> {
+    return this.routineRepository.loadNonterminalRoutine();
+  }
+
+  recordRoutineEvent(event: RoutineEvent, checkpoint: RoutineCheckpoint): Promise<PersistenceResult<void>> {
+    return this.routineRepository.recordRoutineEvent(event, checkpoint);
+  }
+
+  loadRoutineEvents(id: RoutineSessionId): Promise<PersistenceResult<readonly RoutineEvent[]>> {
+    return this.routineRepository.loadRoutineEvents(id);
+  }
+
+  submitFeedback(submission: FeedbackSubmission): Promise<PersistenceResult<void>> {
+    return this.routineRepository.submitFeedback(submission);
+  }
 
   async loadProfileState(): Promise<
     PersistenceResult<ProfileState | undefined>

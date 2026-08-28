@@ -7,7 +7,17 @@ import {
   parseCheckInId,
   parseSelectionDecisionId,
 } from '../../core/domain/selection-domain';
-import { parseCatalogVersion } from '../../core/content/catalog-primitives';
+import {
+  parseCatalogId,
+  parseCatalogVersion,
+  parseContentRevision,
+  parseSha256Digest,
+} from '../../core/content/catalog-primitives';
+import { parseCompositionId } from '../../core/content/routine-composer';
+import {
+  parseRoutineSessionId,
+  type RoutineSessionSnapshot,
+} from '../../core/content/routine-session-snapshot';
 import {
   createSelectionDecision,
   type SelectionDecision,
@@ -26,6 +36,18 @@ import {
   type ProfileState,
   type SafetyMutation,
 } from '../../core/persistence/persistence-domain';
+import {
+  createFeedbackSubmission,
+  createPauseTodayEvent,
+  createRoutineEvent,
+  createRoutineSession,
+  encodeRoutineSnapshot,
+  parseAreaFeedbackId,
+  parseFeedbackSubmissionId,
+  parsePauseTodayEventId,
+  parseRoutineEventId,
+  type RoutineSession,
+} from '../../core/persistence/routine-persistence-domain';
 import { KineoSqliteStore } from './kineo-sqlite-store';
 import { migrateKineoDatabase } from './kineo-schema';
 import { NodeSqliteTestDatabase } from './testing/node-sqlite-test-database';
@@ -40,6 +62,13 @@ const secondCheckInIdValue = '00000000-0000-0000-0000-000000000004';
 const secondEntryIdValue = '00000000-0000-0000-0000-000000000005';
 const secondSafetyEventIdValue = '00000000-0000-0000-0000-000000000006';
 const decisionIdValue = '00000000-0000-0000-0000-000000000007';
+const routineSessionIdValue = '00000000-0000-0000-0000-000000000008';
+const startedEventIdValue = '00000000-0000-0000-0000-000000000009';
+const completedEventIdValue = '00000000-0000-0000-0000-000000000010';
+const feedbackIdValue = '00000000-0000-0000-0000-000000000011';
+const areaFeedbackIdValue = '00000000-0000-0000-0000-000000000012';
+const compositionIdValue = '00000000-0000-0000-0000-000000000013';
+const pauseEventIdValue = '00000000-0000-0000-0000-000000000014';
 const safetyBoundaryVersion = 'prototype-safety-v1';
 const timeZoneId = 'America/Chicago';
 const calendarId = 'gregorian';
@@ -114,6 +143,32 @@ function checkIn(
   );
 }
 
+function pauseEligibleCheckIn(status: 'draft' | 'completed'): CheckIn {
+  const entry = required(createCheckInEntry({
+    id: required(parseCheckInEntryId(entryIdValue)),
+    area: 'neck',
+    role: 'primary',
+    changeReport: 'worse',
+    movementComfort: 'good',
+    conditionalSafetyAnswer: 'no',
+    submittedAtMilliseconds: completedAtMilliseconds,
+  }));
+  return required(createCheckIn({
+    id: required(parseCheckInId(checkInIdValue)),
+    status,
+    kind: 'normal',
+    primaryArea: 'neck',
+    startedAtMilliseconds,
+    completedAtMilliseconds: status === 'completed' ? completedAtMilliseconds : undefined,
+    dayContext: required(createLocalDayContext({
+      localDay: required(parseLocalDay('2026-08-27')),
+      timeZoneId,
+      calendarId,
+    })),
+    entries: [entry],
+  }));
+}
+
 function attentionMutation(
   completedCheckIn: CheckIn,
   safetyIdentifier = safetyEventIdValue,
@@ -174,6 +229,75 @@ function unavailableDecision(completedCheckIn: CheckIn): SelectionDecision {
       notices: [],
     }),
   );
+}
+
+function selectedDecision(completedCheckIn: CheckIn): SelectionDecision {
+  const sourceEntry = completedCheckIn.entries[0];
+  if (sourceEntry === undefined) throw new Error('A decision requires an entry.');
+  return required(createSelectionDecision({
+    id: required(parseSelectionDecisionId(decisionIdValue)),
+    checkInId: completedCheckIn.id,
+    revision: 1,
+    rulesVersion: 'selection-v1.0.0-prototype',
+    catalogVersionRequested: required(parseCatalogVersion('0.1.0')),
+    catalogVersionDelivered: required(parseCatalogVersion('0.1.0')),
+    outcome: 'selected',
+    recommendedLevel: 'gentle',
+    overrideDisposition: 'none',
+    selectedLevel: 'gentle',
+    deliveredLevel: 'gentle',
+    duration: 'quick',
+    validationResult: 'exact',
+    primaryTemplateId: required(parseCatalogId('routine.neck.gentle')),
+    primaryTemplateRevision: required(parseContentRevision(1)),
+    compositionFingerprint: required(parseSha256Digest('a'.repeat(64))),
+    createdAtMilliseconds: safetyAtMilliseconds,
+    areaInputs: [{
+      area: sourceEntry.area,
+      role: sourceEntry.role,
+      checkInEntryId: sourceEntry.id,
+      baseLevel: 'gentle',
+      activeUnlocked: false,
+      qualifyingCount: 0,
+      included: true,
+    }],
+    reasons: [],
+    notices: [],
+  }));
+}
+
+function routineSnapshot(decision: SelectionDecision): RoutineSessionSnapshot {
+  return {
+    sessionId: required(parseRoutineSessionId(routineSessionIdValue)),
+    decisionId: decision.id,
+    compositionId: required(parseCompositionId(compositionIdValue)),
+    catalogVersion: required(parseCatalogVersion('0.1.0')),
+    rulesVersion: decision.rulesVersion,
+    fingerprint: required(parseSha256Digest('a'.repeat(64))),
+    selectedLevel: 'gentle',
+    deliveredLevel: 'gentle',
+    duration: 'quick',
+    includedAreas: ['neck'],
+    notices: [],
+    presentedExplanationKeys: [],
+    presentedExplanationParameters: [],
+    items: [{} as RoutineSessionSnapshot['items'][number]],
+    createdAtMilliseconds: safetyAtMilliseconds,
+  };
+}
+
+function preparedRoutine(completedCheckIn: CheckIn, decision: SelectionDecision): RoutineSession {
+  return required(createRoutineSession({
+    id: required(parseRoutineSessionId(routineSessionIdValue)),
+    decisionId: decision.id,
+    checkInId: completedCheckIn.id,
+    status: 'prepared',
+    snapshot: encodeRoutineSnapshot(routineSnapshot(decision)),
+    currentStepIndex: 0,
+    stepElapsedMilliseconds: 0,
+    updatedAtMilliseconds: safetyAtMilliseconds,
+    dayContext: completedCheckIn.dayContext,
+  }));
 }
 
 async function makeStore() {
@@ -325,6 +449,126 @@ describe('Kineo SQLite store', () => {
     ).resolves.toEqual({
       ok: true,
       value: decision,
+    });
+    await database.closeAsync();
+  });
+
+  it('restores a routine checkpoint and accepts exact event retries', async () => {
+    const { database, store } = await makeStore();
+    const draft = checkIn('draft');
+    const completed = checkIn('completed');
+    const decision = selectedDecision(completed);
+    const session = preparedRoutine(completed, decision);
+    await store.saveCheckInDraft(draft);
+    await store.completeCheckIn(completed, []);
+    await store.appendSelectionDecision(decision);
+    await expect(store.createRoutine(session)).resolves.toEqual({ ok: true, value: undefined });
+
+    const started = required(createRoutineEvent({
+      id: required(parseRoutineEventId(startedEventIdValue)),
+      routineSessionId: session.id,
+      sequenceNumber: 1,
+      kind: 'started',
+      occurredAtMilliseconds: safetyAtMilliseconds + 1,
+    }));
+    const checkpoint = {
+      status: 'inProgress' as const,
+      currentStepIndex: 0,
+      stepElapsedMilliseconds: 0,
+      updatedAtMilliseconds: safetyAtMilliseconds + 1,
+    };
+    await expect(store.recordRoutineEvent(started, checkpoint)).resolves.toEqual({ ok: true, value: undefined });
+    await expect(store.recordRoutineEvent(started, checkpoint)).resolves.toEqual({ ok: true, value: undefined });
+    const restored = await store.loadNonterminalRoutine();
+    expect(restored.ok && restored.value?.status).toBe('inProgress');
+    await expect(store.loadRoutineEvents(session.id)).resolves.toEqual({ ok: true, value: [started] });
+    await database.closeAsync();
+  });
+
+  it('records Pause Today only for the eligible completed selection', async () => {
+    const { database, store } = await makeStore();
+    const draft = pauseEligibleCheckIn('draft');
+    const completed = pauseEligibleCheckIn('completed');
+    const decision = selectedDecision(completed);
+    const event = required(createPauseTodayEvent({
+      id: required(parsePauseTodayEventId(pauseEventIdValue)),
+      checkInId: completed.id,
+      chosenAtMilliseconds: safetyAtMilliseconds + 1,
+      dayContext: completed.dayContext,
+    }));
+    await store.saveCheckInDraft(draft);
+    await store.completeCheckIn(completed, []);
+    await store.appendSelectionDecision(decision);
+    await expect(store.recordPauseToday(event)).resolves.toEqual({ ok: true, value: undefined });
+    await expect(store.recordPauseToday(event)).resolves.toEqual({ ok: true, value: undefined });
+    await expect(store.loadPauseToday(completed.dayContext.localDay)).resolves.toEqual({
+      ok: true,
+      value: event,
+    });
+    await expect(store.createRoutine(preparedRoutine(completed, decision))).resolves.toEqual({
+      ok: false,
+      error: { code: 'conflictingWrite' },
+    });
+    await database.closeAsync();
+  });
+
+  it('persists terminal feedback once and detects snapshot corruption', async () => {
+    const { database, store } = await makeStore();
+    const completed = checkIn('completed');
+    const decision = selectedDecision(completed);
+    const session = preparedRoutine(completed, decision);
+    await store.saveCheckInDraft(checkIn('draft'));
+    await store.completeCheckIn(completed, []);
+    await store.appendSelectionDecision(decision);
+    await store.createRoutine(session);
+    const started = required(createRoutineEvent({
+      id: required(parseRoutineEventId(startedEventIdValue)),
+      routineSessionId: session.id,
+      sequenceNumber: 1,
+      kind: 'started',
+      occurredAtMilliseconds: safetyAtMilliseconds + 1,
+    }));
+    await store.recordRoutineEvent(started, {
+      status: 'inProgress', currentStepIndex: 0, stepElapsedMilliseconds: 0,
+      updatedAtMilliseconds: safetyAtMilliseconds + 1,
+    });
+    const completedEvent = required(createRoutineEvent({
+      id: required(parseRoutineEventId(completedEventIdValue)),
+      routineSessionId: session.id,
+      sequenceNumber: 2,
+      kind: 'completed',
+      occurredAtMilliseconds: safetyAtMilliseconds + 2,
+    }));
+    await store.recordRoutineEvent(completedEvent, {
+      status: 'completed', currentStepIndex: 1, stepElapsedMilliseconds: 0,
+      updatedAtMilliseconds: safetyAtMilliseconds + 2,
+      endedAtMilliseconds: safetyAtMilliseconds + 2,
+    });
+    const feedback = required(createFeedbackSubmission({
+      id: required(parseFeedbackSubmissionId(feedbackIdValue)),
+      routineSessionId: session.id,
+      responses: [{
+        id: required(parseAreaFeedbackId(areaFeedbackIdValue)),
+        area: 'neck',
+        response: 'better',
+      }],
+      submittedAtMilliseconds: safetyAtMilliseconds + 3,
+      dayContext: completed.dayContext,
+    }));
+    await expect(store.submitFeedback(feedback)).resolves.toEqual({ ok: true, value: undefined });
+    await expect(store.submitFeedback(feedback)).resolves.toEqual({ ok: true, value: undefined });
+    const feedbackCount = await database.getFirstAsync<{ count: number }>(
+      'SELECT count(*) AS count FROM feedback_submissions',
+    );
+    expect(feedbackCount?.count).toBe(1);
+
+    await database.runAsync(
+      'UPDATE routine_sessions SET routine_snapshot_json = ? WHERE id = ?',
+      ['{}', session.id],
+    );
+    await expect(store.loadRoutineSession(session.id)).resolves.toEqual({
+      ok: false,
+      error: { code: 'corruptedStore' },
     });
     await database.closeAsync();
   });
