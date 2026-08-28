@@ -30,6 +30,9 @@ const localDay = '2025-06-15';
 const followingLocalDay = '2025-06-16';
 const firstElapsedIncrementMilliseconds = 1_500;
 const pausedClockIncrementMilliseconds = 8_000;
+const completedPrototypeStepElapsedMilliseconds = 300_000;
+const failedRoutineEventInsertFragment = 'INSERT INTO routine_events';
+const failedReminderWriteFragment = 'INSERT INTO reminder_settings';
 const morningReminderWindow = Object.freeze({
   startMinutes: 8 * 60,
   endMinutes: 9 * 60,
@@ -37,6 +40,7 @@ const morningReminderWindow = Object.freeze({
 
 class FakeReminderScheduler implements ReminderScheduling {
   authorization: ReminderAuthorization = 'notDetermined';
+  authorizationResult?: ReminderResult<ReminderAuthorization>;
   requestResult: ReminderResult<ReminderAuthorization> = {
     ok: true,
     value: 'authorized',
@@ -46,9 +50,11 @@ class FakeReminderScheduler implements ReminderScheduling {
   scheduledWindow?: ReminderWindow;
   scheduledTimeZoneId?: string;
   cancelCount = 0;
+  afterSchedule?: () => void;
+  afterCancel?: () => void;
 
-  async authorizationStatus(): Promise<ReminderAuthorization> {
-    return this.authorization;
+  async authorizationStatus(): Promise<ReminderResult<ReminderAuthorization>> {
+    return this.authorizationResult ?? { ok: true, value: this.authorization };
   }
 
   async requestAuthorization(): Promise<ReminderResult<ReminderAuthorization>> {
@@ -62,11 +68,13 @@ class FakeReminderScheduler implements ReminderScheduling {
   ): Promise<ReminderResult<void>> {
     this.scheduledWindow = window;
     this.scheduledTimeZoneId = timeZoneId;
+    this.afterSchedule?.();
     return this.scheduleResult;
   }
 
   async cancelAll(): Promise<ReminderResult<void>> {
     this.cancelCount += 1;
+    this.afterCancel?.();
     return this.cancelResult;
   }
 }
@@ -276,6 +284,78 @@ describe('Kineo product service reminders', () => {
       value: { reminderSettings: { enabled: false } },
     });
     expect(reminderScheduler.cancelCount).toBe(1);
+    await database.closeAsync();
+  });
+
+  it('cancels a scheduled reminder when enabling persistence fails', async () => {
+    const { database, service, reminderScheduler } = await makeService();
+    reminderScheduler.authorization = 'authorized';
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    reminderScheduler.afterSchedule = () => {
+      database.failNextStatementContaining(failedReminderWriteFragment);
+    };
+
+    await expect(service.enableReminder(morningReminderWindow)).resolves.toEqual({
+      ok: false,
+      error: { code: 'persistence', cause: { code: 'writeFailed' } },
+    });
+    expect(reminderScheduler.cancelCount).toBe(1);
+    await expect(service.loadProfile()).resolves.toMatchObject({
+      ok: true,
+      value: { reminderSettings: { enabled: false } },
+    });
+    await database.closeAsync();
+  });
+
+  it('restores a scheduled reminder when disabling persistence fails', async () => {
+    const { database, service, reminderScheduler } = await makeService();
+    reminderScheduler.authorization = 'authorized';
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    await service.enableReminder(morningReminderWindow);
+    reminderScheduler.afterCancel = () => {
+      database.failNextStatementContaining(failedReminderWriteFragment);
+    };
+
+    await expect(service.disableReminder()).resolves.toEqual({
+      ok: false,
+      error: { code: 'persistence', cause: { code: 'writeFailed' } },
+    });
+    expect(reminderScheduler.scheduledWindow).toEqual(morningReminderWindow);
+    await expect(service.loadProfile()).resolves.toMatchObject({
+      ok: true,
+      value: { reminderSettings: { enabled: true } },
+    });
+    await database.closeAsync();
+  });
+
+  it('distinguishes reminder subsystem failure from permission denial', async () => {
+    const { database, service, reminderScheduler } = await makeService();
+    reminderScheduler.authorizationResult = {
+      ok: false,
+      error: { code: 'unavailable' },
+    };
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+
+    await expect(service.loadProfile()).resolves.toMatchObject({
+      ok: true,
+      value: { reminderAuthorization: 'unavailable' },
+    });
+    await expect(service.enableReminder(morningReminderWindow)).resolves.toEqual({
+      ok: false,
+      error: { code: 'reminderUnavailable' },
+    });
     await database.closeAsync();
   });
 });
@@ -515,7 +595,7 @@ describe('Kineo product service check-in', () => {
   });
 
   it('starts, restores, and completes the persisted routine', async () => {
-    const { database, service } = await makeService();
+    const { database, service, advanceMonotonicClock } = await makeService();
     await service.confirmAdultEligibility();
     await service.savePrimaryArea('neck');
     await service.saveSecondaryArea();
@@ -558,6 +638,10 @@ describe('Kineo product service check-in', () => {
       throw new Error('Routine fixture did not resume.');
     }
     const staleStepIndex = routine.value.currentStepIndex;
+    await expect(
+      service.advanceRoutine(routine.value.sessionId, staleStepIndex),
+    ).resolves.toEqual({ ok: false, error: { code: 'invalidState' } });
+    advanceMonotonicClock(completedPrototypeStepElapsedMilliseconds);
     routine = await service.advanceRoutine(routine.value.sessionId, staleStepIndex);
     if (!routine.ok) throw new Error('Routine fixture did not advance.');
     await expect(
@@ -566,6 +650,7 @@ describe('Kineo product service check-in', () => {
     const maximumExpectedStepCount = 20;
     let advances = 0;
     while (routine.ok && routine.value.status === 'inProgress') {
+      advanceMonotonicClock(completedPrototypeStepElapsedMilliseconds);
       routine = await service.advanceRoutine(
         routine.value.sessionId,
         routine.value.currentStepIndex,
@@ -620,6 +705,44 @@ describe('Kineo product service check-in', () => {
     await expect(service.refreshRoutine(started.value.sessionId)).resolves.toMatchObject({
       ok: true,
       value: { stepElapsedMilliseconds: firstElapsedIncrementMilliseconds },
+    });
+    await database.closeAsync();
+  });
+
+  it('restores a prepared routine without starting playback', async () => {
+    const { database, service } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const draft = await service.beginCheckIn();
+    if (!draft.ok) throw new Error('Prepared routine check-in did not start.');
+    const checkedIn = await service.submitCheckIn(draft.value, {
+      area: 'neck',
+      changeReport: 'similar',
+      movementComfort: 'okay',
+    });
+    if (!checkedIn.ok || checkedIn.value.kind !== 'plan') {
+      throw new Error('Prepared routine plan was not created.');
+    }
+    database.failNextStatementContaining(failedRoutineEventInsertFragment);
+    await expect(service.startRoutine(checkedIn.value.plan.decisionId)).resolves.toEqual({
+      ok: false,
+      error: { code: 'persistence', cause: { code: 'writeFailed' } },
+    });
+
+    const restored = await service.loadStartState();
+    expect(restored).toMatchObject({
+      ok: true,
+      value: { kind: 'unfinishedRoutine', routine: { status: 'prepared' } },
+    });
+    if (!restored.ok || restored.value.kind !== 'unfinishedRoutine') {
+      throw new Error('Prepared routine was not restored.');
+    }
+    await expect(service.startRoutine(restored.value.routine.decisionId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'inProgress' },
     });
     await database.closeAsync();
   });
@@ -695,7 +818,7 @@ describe('Kineo product service check-in', () => {
   });
 
   it('derives Progress and Active eligibility from persisted area outcomes', async () => {
-    const { database, service } = await makeService();
+    const { database, service, advanceMonotonicClock } = await makeService();
     await service.confirmAdultEligibility();
     await service.savePrimaryArea('neck');
     await service.saveSecondaryArea();
@@ -718,6 +841,7 @@ describe('Kineo product service check-in', () => {
       const maximumExpectedStepCount = 20;
       let advances = 0;
       while (routine.ok && routine.value.status === 'inProgress') {
+        advanceMonotonicClock(completedPrototypeStepElapsedMilliseconds);
         routine = await service.advanceRoutine(
           routine.value.sessionId,
           routine.value.currentStepIndex,

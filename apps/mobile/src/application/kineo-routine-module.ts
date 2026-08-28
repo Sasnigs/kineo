@@ -1,5 +1,6 @@
 import {
   buildRoutineSessionSnapshot,
+  decodeRoutineSessionSnapshot,
   findSnapshotAlternative,
   parseRoutineSessionId,
   type RoutineSessionId,
@@ -28,12 +29,12 @@ import {
   type RoutineEventReason,
   type RoutineSession,
 } from '../core/persistence/routine-persistence-domain';
+import type { KineoPersistence } from '../core/persistence/kineo-store';
 import type {
   ProductFlowError,
   ProductResult,
   RoutinePresentation,
 } from '../core/product/product-flow';
-import type { KineoPersistence } from '../infrastructure/persistence/protected-kineo-store';
 
 type RoutineEnvironment = Readonly<{
   nowMilliseconds(): number;
@@ -45,6 +46,7 @@ const initialStepIndex = 0;
 const noElapsedTime = 0;
 const firstEventSequence = 1;
 const stepIndexIncrement = 1;
+const millisecondsPerSecond = 1_000;
 
 function failure<Value>(error: ProductFlowError): ProductResult<Value> {
   return { ok: false, error };
@@ -78,9 +80,10 @@ export class KineoRoutineModule {
     const existing = await this.store.loadNonterminalRoutine();
     if (!existing.ok) return failure({ code: 'persistence', cause: existing.error });
     if (existing.value !== undefined) {
-      return existing.value.decisionId === decisionId
-        ? this.presentation(existing.value)
-        : invalidState();
+      if (existing.value.decisionId !== decisionId) return invalidState();
+      return existing.value.status === 'prepared'
+        ? this.transition(existing.value, 'started', 'inProgress')
+        : this.presentation(existing.value);
     }
     const decision = await this.store.loadLatestUnconsumedSelectionDecision();
     if (!decision.ok) return failure({ code: 'persistence', cause: decision.error });
@@ -159,7 +162,7 @@ export class KineoRoutineModule {
   async restoreInterrupted(
     session: RoutineSession,
   ): Promise<ProductResult<RoutinePresentation>> {
-    if (session.status === 'prepared') return this.transition(session, 'started', 'inProgress');
+    if (session.status === 'prepared') return this.presentation(session);
     if (session.status === 'inProgress') return this.transition(session, 'paused', 'paused');
     return this.presentation(session);
   }
@@ -182,17 +185,26 @@ export class KineoRoutineModule {
     if (!session.ok) return session;
     if (session.value.status !== 'inProgress') return invalidState();
     if (session.value.currentStepIndex !== expectedStepIndex) return invalidState();
-    const snapshot = this.decodeSnapshot(session.value);
-    if (!snapshot.ok) return snapshot;
+    const presented = await this.presentation(session.value);
+    if (!presented.ok) return presented;
     if (
       session.value.currentStepIndex < initialStepIndex ||
-      session.value.currentStepIndex >= snapshot.value.items.length
+      session.value.currentStepIndex >= presented.value.totalStepCount
     ) return invalidData();
+    const item = presented.value.currentItem;
+    if (item === undefined) return invalidData();
+    if (item.kind === 'movement') {
+      const dose = presented.value.selectedAlternative?.scheduledDose ?? item.scheduledDose;
+      if (
+        dose.kind === 'timed' &&
+        presented.value.stepElapsedMilliseconds <
+          dose.activeSeconds * millisecondsPerSecond
+      ) return invalidState();
+    }
     const nextIndex = session.value.currentStepIndex + stepIndexIncrement;
-    if (nextIndex >= snapshot.value.items.length) {
+    if (nextIndex >= presented.value.totalStepCount) {
       return this.transition(session.value, 'completed', 'completed');
     }
-    const item = snapshot.value.items[session.value.currentStepIndex];
     return this.transition(
       session.value,
       'stepCompleted',
@@ -462,6 +474,7 @@ export class KineoRoutineModule {
       ok: true,
       value: {
         sessionId: session.id,
+        decisionId: session.decisionId,
         primaryArea,
         includedAreas: snapshot.value.includedAreas,
         selectedLevel: snapshot.value.selectedLevel,
@@ -511,23 +524,12 @@ export class KineoRoutineModule {
   private decodeSnapshot(
     session: RoutineSession,
   ): ProductResult<RoutineSessionSnapshot> {
-    try {
-      const parsed = JSON.parse(session.snapshot.json) as Partial<RoutineSessionSnapshot>;
-      if (
-        parsed.sessionId !== session.id ||
-        parsed.decisionId !== session.decisionId ||
-        !Array.isArray(parsed.includedAreas) ||
-        parsed.includedAreas.length === 0 ||
-        !Array.isArray(parsed.items) ||
-        parsed.items.length === 0 ||
-        parsed.selectedLevel === undefined ||
-        parsed.deliveredLevel === undefined ||
-        parsed.duration === undefined
-      ) return invalidData();
-      return { ok: true, value: parsed as RoutineSessionSnapshot };
-    } catch {
-      return invalidData();
-    }
+    const decoded = decodeRoutineSessionSnapshot(session.snapshot.json);
+    return decoded.ok &&
+      decoded.value.sessionId === session.id &&
+      decoded.value.decisionId === session.decisionId
+      ? decoded
+      : invalidData();
   }
 
   private catalogResources() {

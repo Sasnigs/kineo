@@ -35,11 +35,14 @@ function authorization(
 }
 
 export class ExpoReminderScheduler implements ReminderScheduling {
-  async authorizationStatus(): Promise<ReminderAuthorization> {
+  async authorizationStatus(): Promise<ReminderResult<ReminderAuthorization>> {
     try {
-      return authorization(await Notifications.getPermissionsAsync());
+      return {
+        ok: true,
+        value: authorization(await Notifications.getPermissionsAsync()),
+      };
     } catch {
-      return 'denied';
+      return { ok: false, error: { code: 'unavailable' } };
     }
   }
 
@@ -59,7 +62,10 @@ export class ExpoReminderScheduler implements ReminderScheduling {
     timeZoneId: string,
   ): Promise<ReminderResult<void>> {
     const status = await this.authorizationStatus();
-    if (status !== 'authorized' && status !== 'provisional') {
+    if (
+      !status.ok ||
+      (status.value !== 'authorized' && status.value !== 'provisional')
+    ) {
       return { ok: false, error: { code: 'unavailable' } };
     }
     const hour = Math.floor(window.startMinutes / minutesPerHour);

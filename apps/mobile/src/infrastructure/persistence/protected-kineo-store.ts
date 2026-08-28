@@ -4,6 +4,7 @@ import type { SelectionDecision } from '../../core/persistence/decision-persiste
 import type {
   AreaHistoryRecord,
   KineoStore,
+  KineoPersistence,
   PauseTodayHistoryRecord,
 } from '../../core/persistence/kineo-store';
 import type { PersistenceResult } from '../../core/persistence/persistence-contract';
@@ -27,10 +28,6 @@ import type {
 type ProtectionCheck = () => Promise<PersistenceResult<void>>;
 type PoisonCleanup = () => Promise<void>;
 type DeleteStore = () => Promise<PersistenceResult<void>>;
-
-export interface KineoPersistence extends KineoStore {
-  deleteAllData(): Promise<PersistenceResult<void>>;
-}
 
 const poisonedResult = Object.freeze({
   ok: false,

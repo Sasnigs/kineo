@@ -93,3 +93,7 @@ export interface KineoStore {
   loadSafetyEvent(id: SafetyEventId): Promise<PersistenceResult<SafetyEvent | undefined>>;
   resetHistory(): Promise<PersistenceResult<void>>;
 }
+
+export interface KineoPersistence extends KineoStore {
+  deleteAllData(): Promise<PersistenceResult<void>>;
+}

@@ -5,6 +5,7 @@ export const reminderAuthorizations = [
   'denied',
   'authorized',
   'provisional',
+  'unavailable',
 ] as const;
 
 export type ReminderAuthorization = (typeof reminderAuthorizations)[number];
@@ -18,7 +19,7 @@ export type ReminderResult<Value> =
   | Readonly<{ ok: false; error: ReminderServiceError }>;
 
 export interface ReminderScheduling {
-  authorizationStatus(): Promise<ReminderAuthorization>;
+  authorizationStatus(): Promise<ReminderResult<ReminderAuthorization>>;
   requestAuthorization(): Promise<ReminderResult<ReminderAuthorization>>;
   replaceDailyReminder(
     window: ReminderWindow,

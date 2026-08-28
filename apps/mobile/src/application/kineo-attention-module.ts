@@ -16,6 +16,7 @@ import {
   type LocalDayContext,
   type SafetyEvent,
 } from '../core/persistence/persistence-domain';
+import type { KineoPersistence } from '../core/persistence/kineo-store';
 import type {
   AreaCheckInAnswers,
   AttentionCorrectionDraft,
@@ -24,7 +25,6 @@ import type {
   CheckInDraft,
   ProductResult,
 } from '../core/product/product-flow';
-import type { KineoPersistence } from '../infrastructure/persistence/protected-kineo-store';
 import type { ProductClock, ProductRuntime } from './kineo-product-service';
 
 const timestampIncrement = 1;

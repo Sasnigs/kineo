@@ -26,6 +26,7 @@ import {
   type SelectionDecision,
 } from '../core/persistence/decision-persistence-domain';
 import type { PersistenceError } from '../core/persistence/persistence-contract';
+import type { KineoPersistence } from '../core/persistence/kineo-store';
 import {
   createProfileState,
   createReminderSettings,
@@ -66,7 +67,6 @@ import type {
   ProductResult,
   ProductStartState,
 } from '../core/product/product-flow';
-import type { KineoPersistence } from '../infrastructure/persistence/protected-kineo-store';
 import {
   createPauseTodayEvent,
   parsePauseTodayEventId,
@@ -725,7 +725,10 @@ export class KineoProductService implements KineoProductServing {
     const state = await this.store.loadProfileState();
     if (!state.ok) return persistenceFailure(state.error);
     if (state.value === undefined) return invalidState;
-    const reminderAuthorization = await this.reminderScheduler.authorizationStatus();
+    const authorization = await this.reminderScheduler.authorizationStatus();
+    const reminderAuthorization = authorization.ok
+      ? authorization.value
+      : 'unavailable';
     return {
       ok: true,
       value: {
@@ -782,7 +785,11 @@ export class KineoProductService implements KineoProductServing {
     const pendingSaved = await this.store.saveProfileState(pendingState.value);
     if (!pendingSaved.ok) return persistenceFailure(pendingSaved.error);
 
-    let authorization = await this.reminderScheduler.authorizationStatus();
+    const currentAuthorization = await this.reminderScheduler.authorizationStatus();
+    if (!currentAuthorization.ok) {
+      return { ok: false, error: { code: 'reminderUnavailable' } };
+    }
+    let authorization = currentAuthorization.value;
     if (authorization === 'notDetermined') {
       const requested = await this.reminderScheduler.requestAuthorization();
       if (!requested.ok) return { ok: false, error: { code: 'reminderUnavailable' } };
@@ -812,17 +819,22 @@ export class KineoProductService implements KineoProductServing {
     });
     if (!enabledState.ok) return { ok: false, error: { code: 'invalidData' } };
     const enabledSaved = await this.store.saveProfileState(enabledState.value);
-    if (!enabledSaved.ok) return persistenceFailure(enabledSaved.error);
+    if (!enabledSaved.ok) {
+      const rolledBack = await this.reminderScheduler.cancelAll();
+      return rolledBack.ok
+        ? persistenceFailure(enabledSaved.error)
+        : { ok: false, error: { code: 'reminderUnavailable' } };
+    }
     return this.loadProfile();
   }
 
   async disableReminder(): Promise<ProductResult<ProfilePresentation>> {
-    const cancelled = await this.reminderScheduler.cancelAll();
-    if (!cancelled.ok) return { ok: false, error: { code: 'reminderUnavailable' } };
     const state = await this.store.loadProfileState();
     if (!state.ok) return persistenceFailure(state.error);
     if (state.value === undefined) return invalidState;
     const existing = state.value.reminderSettings;
+    const cancelled = await this.reminderScheduler.cancelAll();
+    if (!cancelled.ok) return { ok: false, error: { code: 'reminderUnavailable' } };
     if (existing !== undefined) {
       const disabled = createReminderSettings({
         enabled: false,
@@ -838,7 +850,22 @@ export class KineoProductService implements KineoProductServing {
       });
       if (!disabledState.ok) return { ok: false, error: { code: 'invalidData' } };
       const saved = await this.store.saveProfileState(disabledState.value);
-      if (!saved.ok) return persistenceFailure(saved.error);
+      if (!saved.ok) {
+        if (
+          existing.enabled &&
+          existing.window !== undefined &&
+          existing.timeZoneId !== undefined
+        ) {
+          const restored = await this.reminderScheduler.replaceDailyReminder(
+            existing.window,
+            existing.timeZoneId,
+          );
+          if (!restored.ok) {
+            return { ok: false, error: { code: 'reminderUnavailable' } };
+          }
+        }
+        return persistenceFailure(saved.error);
+      }
     }
     return this.loadProfile();
   }

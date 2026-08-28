@@ -69,6 +69,7 @@ export type CheckInResult =
 
 export type RoutinePresentation = Readonly<{
   sessionId: RoutineSessionId;
+  decisionId: SelectionDecisionId;
   primaryArea: BodyArea;
   includedAreas: readonly BodyArea[];
   selectedLevel: RoutineLevel;

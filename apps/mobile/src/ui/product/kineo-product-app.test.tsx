@@ -2,6 +2,7 @@ import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import { describe, expect, it, jest } from '@jest/globals';
 
 import type { KineoProductServing } from '@/application/kineo-product-service';
+import type { RoutineSessionId } from '@/core/content/routine-session-snapshot';
 import {
   parseCheckInEntryId,
   parseCheckInId,
@@ -130,6 +131,7 @@ class OnboardingService implements KineoProductServing {
       ok: true as const,
       value: {
         sessionId: '00000000-0000-0000-0000-000000000204' as never,
+        decisionId: required(parseSelectionDecisionId('00000000-0000-0000-0000-000000000203')),
         primaryArea: 'neck' as const,
         includedAreas: ['neck'] as const,
         selectedLevel: 'balanced' as const,
@@ -158,7 +160,7 @@ class OnboardingService implements KineoProductServing {
           },
           availableAlternatives: [] as const,
         },
-        stepElapsedMilliseconds: 0,
+        stepElapsedMilliseconds: 60_000,
         contentAvailable: true,
       },
     };
@@ -169,11 +171,14 @@ class OnboardingService implements KineoProductServing {
   }
 
   async pauseRoutine() {
-    return { ok: false as const, error: { code: 'invalidState' as const } };
+    const started = await this.startRoutine();
+    return started.ok
+      ? { ok: true as const, value: { ...started.value, status: 'paused' as const } }
+      : started;
   }
 
   async resumeRoutine() {
-    return { ok: false as const, error: { code: 'invalidState' as const } };
+    return this.startRoutine();
   }
 
   async advanceRoutine() {
@@ -198,8 +203,18 @@ class OnboardingService implements KineoProductServing {
     return { ok: false as const, error: { code: 'invalidState' as const } };
   }
 
-  async endRoutine() {
-    return { ok: false as const, error: { code: 'invalidState' as const } };
+  async endRoutine(_sessionId: RoutineSessionId, forSafety: boolean) {
+    const started = await this.startRoutine();
+    return started.ok
+      ? {
+          ok: true as const,
+          value: {
+            ...started.value,
+            status: forSafety ? 'safetyStopped' as const : 'stopped' as const,
+            currentItem: undefined,
+          },
+        }
+      : started;
   }
 
   async submitFeedback() {
@@ -328,11 +343,44 @@ describe('Kineo product app', () => {
     await fireEvent.press(view.getByRole('button', { name: 'Continue' }));
     await view.findByText('How did neck feel afterward?');
     await fireEvent.press(view.getByRole('button', { name: 'About the same' }));
+    await view.findByText('You made a choice for today.');
+    await fireEvent.press(view.getByRole('button', { name: 'Done' }));
     await view.findByText('How are you moving?');
     await fireEvent.press(view.getByRole('tab', { name: 'Progress' }));
     await view.findByText('Progress without pressure');
     await fireEvent.press(view.getByRole('tab', { name: 'Profile' }));
     await waitFor(() => expect(view.getByRole('header', { name: 'Profile' })).toBeTruthy());
+  });
+
+  it('freezes routine menus and keeps safety guidance behind an explicit choice', async () => {
+    const service = new OnboardingService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const view = await render(
+      <KineoProductApp
+        service={service}
+        onStoreRestartRequired={() => undefined}
+      />,
+    );
+
+    await view.findByText('How are you moving?');
+    await fireEvent.press(view.getByRole('button', { name: 'Check in' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Similar' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Okay' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Begin routine' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'More options' }));
+    await view.findByText('What do you need?');
+    await fireEvent.press(view.getByRole('button', { name: 'Something feels wrong' }));
+    await view.findByText('Stop if something feels wrong.');
+    await fireEvent.press(view.getByRole('button', { name: 'I tapped this by mistake' }));
+    await view.findByText('Your place is saved.');
+    await fireEvent.press(view.getByRole('button', { name: 'End routine' }));
+    await view.findByText('End this routine now?');
+    await fireEvent.press(view.getByRole('button', { name: 'Keep routine paused' }));
+    await view.findByText('Your place is saved.');
   });
 
   it('requires confirmation before resetting profile history', async () => {

@@ -47,4 +47,7 @@ export const layout = {
   readableWidth: 560,
   controlMinimumHeight: 52,
   borderWidth: 1,
+  disabledOpacity: 0.45,
+  pressedOpacity: 0.72,
+  mediaAspectRatio: 1.35,
 } as const;

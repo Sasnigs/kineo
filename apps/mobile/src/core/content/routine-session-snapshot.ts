@@ -4,6 +4,12 @@ import type {
   RoutineLevel,
   SelectionDecisionId,
 } from '../domain/selection-domain';
+import {
+  bodyAreas,
+  durationVariants,
+  parseSelectionDecisionId,
+  routineLevels,
+} from '../domain/selection-domain';
 import type { Result } from '../shared/result';
 import type { MovementDefinition } from './catalog-content';
 import type {
@@ -16,10 +22,19 @@ import type {
   Dose,
   Sha256Digest,
 } from './catalog-primitives';
+import {
+  contentRoles,
+  createDose,
+  parseCatalogId,
+  parseCatalogVersion,
+  parseContentRevision,
+  parseSha256Digest,
+} from './catalog-primitives';
 import type { CatalogValidationResources } from './catalog-validator';
 import { validateCatalog } from './catalog-validator';
 import {
   computeCompositionFingerprint,
+  parseCompositionId,
   type CompositionId,
   type ComposedRoutine,
   type ComposedSequenceItem,
@@ -118,6 +133,226 @@ const minimumIncludedAreaCount = 1;
 const maximumIncludedAreaCount = 2;
 const transitionTitleKey = 'routine.transition.title';
 const restTitleKey = 'routine.rest.title';
+
+export type RoutineSessionSnapshotDecodingError = 'invalidRoutineSessionSnapshot';
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && isNonEmpty(value);
+}
+
+function stringArray(value: unknown): readonly string[] | undefined {
+  return Array.isArray(value) && value.every(nonEmptyString)
+    ? Object.freeze([...value])
+    : undefined;
+}
+
+function decodeDose(value: unknown): Dose | undefined {
+  const candidate = record(value);
+  if (candidate === undefined) return undefined;
+  const decoded = createDose(candidate as Dose);
+  return decoded.ok ? decoded.value : undefined;
+}
+
+function decodeAlternative(value: unknown): PresentedAlternative | undefined {
+  const candidate = record(value);
+  if (candidate === undefined) return undefined;
+  const movementId = nonEmptyString(candidate.movementId)
+    ? parseCatalogId(candidate.movementId)
+    : undefined;
+  const movementRevision = typeof candidate.movementRevision === 'number'
+    ? parseContentRevision(candidate.movementRevision)
+    : undefined;
+  const scheduledDose = decodeDose(candidate.scheduledDose);
+  if (
+    movementId?.ok !== true ||
+    movementRevision?.ok !== true ||
+    scheduledDose === undefined ||
+    !nonEmptyString(candidate.localizedTitle) ||
+    !nonEmptyString(candidate.localizedInstruction) ||
+    !nonEmptyString(candidate.localizedSafetyCue) ||
+    !nonEmptyString(candidate.accessibleDescription) ||
+    (candidate.mediaAssetId !== undefined && !nonEmptyString(candidate.mediaAssetId))
+  ) return undefined;
+  return Object.freeze({
+    movementId: movementId.value,
+    movementRevision: movementRevision.value,
+    localizedTitle: candidate.localizedTitle,
+    localizedInstruction: candidate.localizedInstruction,
+    localizedSafetyCue: candidate.localizedSafetyCue,
+    accessibleDescription: candidate.accessibleDescription,
+    mediaAssetId: candidate.mediaAssetId as string | undefined,
+    scheduledDose,
+  });
+}
+
+function decodePresentedItem(value: unknown): PresentedRoutineItem | undefined {
+  const candidate = record(value);
+  if (candidate === undefined) return undefined;
+  const sourceOwnerId = nonEmptyString(candidate.sourceOwnerId)
+    ? parseCatalogId(candidate.sourceOwnerId)
+    : undefined;
+  const sourceOwnerRevision = typeof candidate.sourceOwnerRevision === 'number'
+    ? parseContentRevision(candidate.sourceOwnerRevision)
+    : undefined;
+  const itemId = nonEmptyString(candidate.itemId)
+    ? parseCatalogId(candidate.itemId)
+    : undefined;
+  if (
+    sourceOwnerId?.ok !== true ||
+    sourceOwnerRevision?.ok !== true ||
+    itemId?.ok !== true ||
+    !contentRoles.includes(candidate.sourceRole as (typeof contentRoles)[number]) ||
+    !bodyAreas.includes(candidate.sourceArea as BodyArea) ||
+    !nonEmptyString(candidate.localizedTitle) ||
+    !Array.isArray(candidate.availableAlternatives)
+  ) return undefined;
+  const source = {
+    sourceOwnerId: sourceOwnerId.value,
+    sourceOwnerRevision: sourceOwnerRevision.value,
+    sourceRole: candidate.sourceRole as (typeof contentRoles)[number],
+    sourceArea: candidate.sourceArea as BodyArea,
+    itemId: itemId.value,
+    localizedTitle: candidate.localizedTitle,
+  };
+  if (candidate.kind === 'transition' || candidate.kind === 'rest') {
+    return candidate.availableAlternatives.length === 0
+      ? Object.freeze({
+          ...source,
+          kind: candidate.kind,
+          availableAlternatives: Object.freeze([] as const),
+        })
+      : undefined;
+  }
+  if (candidate.kind !== 'movement') return undefined;
+  const movementId = nonEmptyString(candidate.movementId)
+    ? parseCatalogId(candidate.movementId)
+    : undefined;
+  const movementRevision = typeof candidate.movementRevision === 'number'
+    ? parseContentRevision(candidate.movementRevision)
+    : undefined;
+  const scheduledDose = decodeDose(candidate.scheduledDose);
+  const alternatives = candidate.availableAlternatives.map(decodeAlternative);
+  if (
+    movementId?.ok !== true ||
+    movementRevision?.ok !== true ||
+    scheduledDose === undefined ||
+    alternatives.some((alternative) => alternative === undefined) ||
+    !nonEmptyString(candidate.localizedInstruction) ||
+    !nonEmptyString(candidate.localizedSafetyCue) ||
+    !nonEmptyString(candidate.accessibleDescription) ||
+    (candidate.mediaAssetId !== undefined && !nonEmptyString(candidate.mediaAssetId))
+  ) return undefined;
+  return Object.freeze({
+    ...source,
+    kind: 'movement',
+    movementId: movementId.value,
+    movementRevision: movementRevision.value,
+    localizedInstruction: candidate.localizedInstruction,
+    localizedSafetyCue: candidate.localizedSafetyCue,
+    accessibleDescription: candidate.accessibleDescription,
+    mediaAssetId: candidate.mediaAssetId as string | undefined,
+    scheduledDose,
+    availableAlternatives: Object.freeze(alternatives as PresentedAlternative[]),
+  });
+}
+
+export function decodeRoutineSessionSnapshot(
+  source: string,
+): Result<RoutineSessionSnapshot, RoutineSessionSnapshotDecodingError> {
+  let candidate: Record<string, unknown> | undefined;
+  try {
+    candidate = record(JSON.parse(source));
+  } catch {
+    return { ok: false, error: 'invalidRoutineSessionSnapshot' };
+  }
+  if (candidate === undefined) {
+    return { ok: false, error: 'invalidRoutineSessionSnapshot' };
+  }
+  const sessionId = nonEmptyString(candidate.sessionId)
+    ? parseRoutineSessionId(candidate.sessionId)
+    : undefined;
+  const decisionId = nonEmptyString(candidate.decisionId)
+    ? parseSelectionDecisionId(candidate.decisionId)
+    : undefined;
+  const compositionId = nonEmptyString(candidate.compositionId)
+    ? parseCompositionId(candidate.compositionId)
+    : undefined;
+  const catalogVersion = nonEmptyString(candidate.catalogVersion)
+    ? parseCatalogVersion(candidate.catalogVersion)
+    : undefined;
+  const fingerprint = nonEmptyString(candidate.fingerprint)
+    ? parseSha256Digest(candidate.fingerprint)
+    : undefined;
+  const includedAreas = Array.isArray(candidate.includedAreas) &&
+    candidate.includedAreas.every((area) => bodyAreas.includes(area as BodyArea))
+    ? candidate.includedAreas as BodyArea[]
+    : undefined;
+  const notices = stringArray(candidate.notices);
+  const explanationKeys = stringArray(candidate.presentedExplanationKeys);
+  const rawParameters = candidate.presentedExplanationParameters;
+  const parameters = Array.isArray(rawParameters)
+    ? rawParameters.map(record)
+    : undefined;
+  const items = Array.isArray(candidate.items)
+    ? candidate.items.map(decodePresentedItem)
+    : undefined;
+  const parametersAreValid = parameters !== undefined && parameters.every(
+    (entry) => entry !== undefined && Object.entries(entry).every(
+      ([key, value]) => isNonEmpty(key) && nonEmptyString(value),
+    ),
+  );
+  if (
+    sessionId?.ok !== true ||
+    decisionId?.ok !== true ||
+    compositionId?.ok !== true ||
+    catalogVersion?.ok !== true ||
+    fingerprint?.ok !== true ||
+    !nonEmptyString(candidate.rulesVersion) ||
+    !routineLevels.includes(candidate.selectedLevel as RoutineLevel) ||
+    !routineLevels.includes(candidate.deliveredLevel as RoutineLevel) ||
+    !durationVariants.includes(candidate.duration as DurationVariant) ||
+    includedAreas === undefined ||
+    includedAreas.length < minimumIncludedAreaCount ||
+    includedAreas.length > maximumIncludedAreaCount ||
+    new Set(includedAreas).size !== includedAreas.length ||
+    notices === undefined ||
+    explanationKeys === undefined ||
+    !parametersAreValid ||
+    parameters?.length !== explanationKeys.length ||
+    items === undefined ||
+    items.length === 0 ||
+    items.some((item) => item === undefined) ||
+    !Number.isSafeInteger(candidate.createdAtMilliseconds)
+  ) return { ok: false, error: 'invalidRoutineSessionSnapshot' };
+  return {
+    ok: true,
+    value: Object.freeze({
+      sessionId: sessionId.value,
+      decisionId: decisionId.value,
+      compositionId: compositionId.value,
+      catalogVersion: catalogVersion.value,
+      rulesVersion: candidate.rulesVersion,
+      fingerprint: fingerprint.value,
+      selectedLevel: candidate.selectedLevel as RoutineLevel,
+      deliveredLevel: candidate.deliveredLevel as RoutineLevel,
+      duration: candidate.duration as DurationVariant,
+      includedAreas: Object.freeze([...includedAreas]),
+      notices,
+      presentedExplanationKeys: explanationKeys,
+      presentedExplanationParameters: Object.freeze(
+        (parameters as Record<string, string>[]).map((entry) => Object.freeze({ ...entry })),
+      ),
+      items: Object.freeze(items as PresentedRoutineItem[]),
+      createdAtMilliseconds: candidate.createdAtMilliseconds as number,
+    }),
+  };
+}
 
 export function parseRoutineSessionId(
   candidate: string,

@@ -62,6 +62,14 @@ type LocalScreen =
   | Readonly<{ kind: 'plan'; plan: PlanPresentation }>
   | Readonly<{ kind: 'routine'; routine: RoutinePresentation }>
   | Readonly<{ kind: 'routineOptions'; routine: RoutinePresentation }>
+  | Readonly<{
+      kind: 'alternativePreview';
+      routine: RoutinePresentation;
+      alternative: NonNullable<RoutinePresentation['selectedAlternative']>;
+    }>
+  | Readonly<{ kind: 'endConfirmation'; routine: RoutinePresentation }>
+  | Readonly<{ kind: 'safetyGuidance'; routine: RoutinePresentation }>
+  | Readonly<{ kind: 'completion'; routine: RoutinePresentation }>
   | Readonly<{ kind: 'progress'; progress: ProgressPresentation }>
   | Readonly<{ kind: 'profile'; profile: ProfilePresentation }>
   | Readonly<{ kind: 'profileAreas'; profile: ProfilePresentation }>
@@ -274,6 +282,23 @@ export function KineoProductApp({
       : { kind: 'error', error: result.error });
   }, [load, service]);
 
+  const pauseForRoutineMenu = useCallback(async (
+    routine: RoutinePresentation,
+    destination: 'options' | 'end' | 'safety',
+  ) => {
+    const paused = routine.status === 'inProgress'
+      ? await submit(() => service.pauseRoutine(routine.sessionId))
+      : { ok: true as const, value: routine };
+    if (!paused?.ok) return;
+    setScreen(
+      destination === 'options'
+        ? { kind: 'routineOptions', routine: paused.value }
+        : destination === 'end'
+          ? { kind: 'endConfirmation', routine: paused.value }
+          : { kind: 'safetyGuidance', routine: paused.value },
+    );
+  }, [service, submit]);
+
   const activeCheckIn = screen.kind === 'checkIn'
     ? screen
     : screen.kind === 'start' && screen.state.kind === 'unfinishedCheckIn'
@@ -378,44 +403,125 @@ export function KineoProductApp({
     const movement = routine.currentItem?.kind === 'movement'
       ? routine.currentItem
       : undefined;
-    const update = async (
-      operation: () => Promise<
-        | Readonly<{ ok: true; value: RoutinePresentation }>
-        | Readonly<{ ok: false; error: ProductFlowError }>
-      >,
-    ) => {
-      const result = await submit(operation);
-      if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
-    };
+    const alternative = movement?.availableAlternatives[0];
     return (
       <Shell>
         <PageHeader eyebrow="ROUTINE OPTIONS" title="What do you need?" />
-        {movement?.availableAlternatives[0] === undefined ? null : (
+        {alternative === undefined ? null : (
           <ChoiceButton
             label="Try an alternative"
-            onPress={() => void update(() => service.selectRoutineAlternative(
-              routine.sessionId,
-              routine.currentStepIndex,
-              movement.availableAlternatives[0].movementId,
-            ))}
+            onPress={() => setScreen({
+              kind: 'alternativePreview',
+              routine,
+              alternative,
+            })}
           />
         )}
         <ChoiceButton
           label="Skip this step"
-          onPress={() => void update(() => service.skipRoutineStep(
-            routine.sessionId,
-            routine.currentStepIndex,
-          ))}
+          onPress={() => void (async () => {
+            const resumed = await submit(() => service.resumeRoutine(routine.sessionId));
+            if (!resumed?.ok) return;
+            const skipped = await submit(() => service.skipRoutineStep(
+              resumed.value.sessionId,
+              resumed.value.currentStepIndex,
+            ));
+            if (skipped?.ok) setScreen({ kind: 'routine', routine: skipped.value });
+          })()}
         />
         <ChoiceButton
           label="End routine"
-          onPress={() => void update(() => service.endRoutine(routine.sessionId, false))}
+          onPress={() => setScreen({ kind: 'endConfirmation', routine })}
         />
         <ChoiceButton
           label="Something feels wrong"
-          onPress={() => void update(() => service.endRoutine(routine.sessionId, true))}
+          onPress={() => setScreen({ kind: 'safetyGuidance', routine })}
         />
         <SecondaryButton label="Back to routine" onPress={() => setScreen({ kind: 'routine', routine })} />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'alternativePreview') {
+    return (
+      <Shell>
+        <PageHeader eyebrow="ALTERNATIVE" title={screen.alternative.localizedTitle} />
+        <Text style={styles.supporting}>{screen.alternative.localizedInstruction}</Text>
+        <Text style={styles.safetyCue}>{screen.alternative.localizedSafetyCue}</Text>
+        <PrimaryButton
+          label="Use this alternative"
+          disabled={isSubmitting}
+          onPress={() => void (async () => {
+            const result = await submit(() => service.selectRoutineAlternative(
+              screen.routine.sessionId,
+              screen.routine.currentStepIndex,
+              screen.alternative.movementId,
+            ));
+            if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
+          })()}
+        />
+        <SecondaryButton
+          label="Cancel"
+          onPress={() => setScreen({ kind: 'routine', routine: screen.routine })}
+        />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'endConfirmation') {
+    return (
+      <Shell>
+        <PageHeader eyebrow="END ROUTINE" title="End this routine now?" />
+        <Text style={styles.supporting}>Your intentional stop will remain in Progress as participation.</Text>
+        <SecondaryButton
+          danger
+          disabled={isSubmitting}
+          label="End routine"
+          onPress={() => void (async () => {
+            const result = await submit(() => service.endRoutine(screen.routine.sessionId, false));
+            if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
+          })()}
+        />
+        <SecondaryButton
+          label="Keep routine paused"
+          onPress={() => setScreen({ kind: 'routine', routine: screen.routine })}
+        />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'safetyGuidance') {
+    return (
+      <Shell>
+        <PageHeader eyebrow="PAUSE AND CHECK IN" title="Stop if something feels wrong." />
+        <Text style={styles.supporting}>
+          Kineo cannot assess a new or concerning change. End the routine and seek appropriate professional support if needed.
+        </Text>
+        <PrimaryButton
+          label="End routine"
+          disabled={isSubmitting}
+          onPress={() => void (async () => {
+            const result = await submit(() => service.endRoutine(screen.routine.sessionId, true));
+            if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
+          })()}
+        />
+        <SecondaryButton
+          label="I tapped this by mistake"
+          onPress={() => setScreen({ kind: 'routine', routine: screen.routine })}
+        />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'completion') {
+    return (
+      <Shell>
+        <PageHeader eyebrow="ROUTINE SAVED" title="You made a choice for today." />
+        <Text style={styles.supporting}>
+          {levelLabel(screen.routine.deliveredLevel)} · {durationLabel(screen.routine.duration)} · {screen.routine.includedAreas.map((area) => areaLabels[area]).join(' + ')}
+        </Text>
+        <PrimaryButton label="Done" onPress={() => void load()} />
+        <SecondaryButton label="Start another check-in" onPress={() => void startCheckIn()} />
       </Shell>
     );
   }
@@ -469,6 +575,19 @@ export function KineoProductApp({
       const result = await submit(operation);
       if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
     };
+    if (activeRoutine.status === 'prepared') {
+      return (
+        <Shell>
+          <PageHeader eyebrow="ROUTINE READY" title="Begin when you’re ready." />
+          <Text style={styles.supporting}>Kineo did not start this routine while the app was interrupted.</Text>
+          <PrimaryButton
+            label="Begin routine"
+            disabled={isSubmitting}
+            onPress={() => void updateRoutine(() => service.startRoutine(activeRoutine.decisionId))}
+          />
+        </Shell>
+      );
+    }
     if (activeRoutine.status === 'paused') {
       return (
         <Shell>
@@ -478,6 +597,14 @@ export function KineoProductApp({
             label="Resume routine"
             disabled={isSubmitting}
             onPress={() => void updateRoutine(() => service.resumeRoutine(activeRoutine.sessionId))}
+          />
+          <SecondaryButton
+            label="End routine"
+            onPress={() => void pauseForRoutineMenu(activeRoutine, 'end')}
+          />
+          <SecondaryButton
+            label="Something feels wrong"
+            onPress={() => void pauseForRoutineMenu(activeRoutine, 'safety')}
           />
         </Shell>
       );
@@ -525,7 +652,7 @@ export function KineoProductApp({
           {safetyCue === undefined ? null : <Text style={styles.safetyCue}>{safetyCue}</Text>}
           <PrimaryButton
             label="Continue"
-            disabled={isSubmitting}
+            disabled={isSubmitting || !routineStepCanAdvance(activeRoutine, dose)}
             onPress={() => void updateRoutine(() => service.advanceRoutine(
               activeRoutine.sessionId,
               activeRoutine.currentStepIndex,
@@ -537,8 +664,12 @@ export function KineoProductApp({
             onPress={() => void updateRoutine(() => service.pauseRoutine(activeRoutine.sessionId))}
           />
           <SecondaryButton
+            label="Something feels wrong"
+            onPress={() => void pauseForRoutineMenu(activeRoutine, 'safety')}
+          />
+          <SecondaryButton
             label="More options"
-            onPress={() => setScreen({ kind: 'routineOptions', routine: activeRoutine })}
+            onPress={() => void pauseForRoutineMenu(activeRoutine, 'options')}
           />
         </Shell>
       );
@@ -562,7 +693,7 @@ export function KineoProductApp({
         return;
       }
       const result = await submit(() => service.submitFeedback(activeRoutine.sessionId, responses));
-      if (result?.ok) await load();
+      if (result?.ok) setScreen({ kind: 'completion', routine: activeRoutine });
     };
     return (
       <Shell>
@@ -1295,6 +1426,14 @@ function routineTimerText(
   return `${Math.floor(routine.stepElapsedMilliseconds / millisecondsPerSecond)} seconds elapsed`;
 }
 
+function routineStepCanAdvance(
+  routine: RoutinePresentation,
+  dose: Dose | undefined,
+): boolean {
+  return dose?.kind !== 'timed' ||
+    routine.stepElapsedMilliseconds >= dose.activeSeconds * millisecondsPerSecond;
+}
+
 function screenForAttentionResolution(resolution: AttentionResolution): LocalScreen {
   return resolution.kind === 'ready'
     ? { kind: 'start', state: { kind: 'today', primaryArea: resolution.primaryArea } }
@@ -1322,8 +1461,8 @@ const styles = StyleSheet.create({
   secondaryButton: { alignItems: 'center', borderRadius: radius.button, justifyContent: 'center', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.roomy, paddingVertical: spacing.controlVertical },
   secondaryButtonText: { color: colors.accentDark, fontSize: typography.bodySize, fontWeight: typography.buttonWeight },
   dangerText: { color: colors.danger },
-  buttonDisabled: { opacity: 0.45 },
-  buttonPressed: { opacity: 0.72 },
+  buttonDisabled: { opacity: layout.disabledOpacity },
+  buttonPressed: { opacity: layout.pressedOpacity },
   optionList: { gap: spacing.compact },
   choiceButton: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.option, borderWidth: layout.borderWidth, flexDirection: 'row', justifyContent: 'space-between', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.roomy, paddingVertical: spacing.controlVertical },
   choiceButtonText: { color: colors.ink, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
@@ -1354,7 +1493,7 @@ const styles = StyleSheet.create({
   metricLabel: { color: colors.inverseInk, fontSize: typography.bodySize },
   historyCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.compact, padding: spacing.roomy },
   routineProgressRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  mediaPlaceholder: { alignItems: 'center', aspectRatio: 1.35, backgroundColor: colors.accentSoft, borderRadius: radius.card, justifyContent: 'center' },
+  mediaPlaceholder: { alignItems: 'center', aspectRatio: layout.mediaAspectRatio, backgroundColor: colors.accentSoft, borderRadius: radius.card, justifyContent: 'center' },
   mediaPlaceholderText: { color: colors.accentDark, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   routineVideo: { height: '100%', width: '100%' },
   prototypeMediaBadge: { backgroundColor: colors.accentDark, borderRadius: radius.status, bottom: spacing.compact, left: spacing.compact, paddingHorizontal: spacing.compact, paddingVertical: spacing.compact, position: 'absolute' },
