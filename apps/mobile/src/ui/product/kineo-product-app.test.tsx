@@ -8,7 +8,10 @@ import {
   parseSelectionDecisionId,
   type BodyArea,
 } from '@/core/domain/selection-domain';
-import type { ProductStartState } from '@/core/product/product-flow';
+import type {
+  ProductResult,
+  ProductStartState,
+} from '@/core/product/product-flow';
 
 import { KineoProductApp } from './kineo-product-app';
 
@@ -22,6 +25,7 @@ class OnboardingService implements KineoProductServing {
     kind: 'onboarding',
     progress: { step: 'welcome' },
   };
+  deleteResult: ProductResult<void> = { ok: true, value: undefined };
 
   async loadStartState() {
     return { ok: true as const, value: this.state };
@@ -249,14 +253,14 @@ class OnboardingService implements KineoProductServing {
   }
 
   async deleteAllData() {
-    return { ok: true as const, value: undefined };
+    return this.deleteResult;
   }
 }
 
 describe('Kineo product app', () => {
   it('runs the complete durable onboarding flow', async () => {
     const view = await render(
-      <KineoProductApp service={new OnboardingService()} onDeleted={() => undefined} />,
+      <KineoProductApp service={new OnboardingService()} onStoreRestartRequired={() => undefined} />,
     );
 
     await view.findByText('A routine shaped around how you feel now.');
@@ -286,12 +290,17 @@ describe('Kineo product app', () => {
     await service.saveSecondaryArea();
     await service.acknowledgeSafetyBoundary();
     await service.completeOnboarding();
-    const onDeleted = jest.fn();
-    const view = await render(<KineoProductApp service={service} onDeleted={onDeleted} />);
+    const onStoreRestartRequired = jest.fn();
+    const view = await render(
+      <KineoProductApp
+        service={service}
+        onStoreRestartRequired={onStoreRestartRequired}
+      />,
+    );
 
     await view.findByText('How are you moving?');
     await fireEvent.press(view.getByRole('button', { name: 'Reset demo to first use' }));
-    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onStoreRestartRequired).toHaveBeenCalledTimes(1));
   });
 
   it('runs a short daily check-in into a plan', async () => {
@@ -302,7 +311,7 @@ describe('Kineo product app', () => {
     await service.acknowledgeSafetyBoundary();
     await service.completeOnboarding();
     const view = await render(
-      <KineoProductApp service={service} onDeleted={() => undefined} />,
+      <KineoProductApp service={service} onStoreRestartRequired={() => undefined} />,
     );
 
     await view.findByText('How are you moving?');
@@ -335,7 +344,7 @@ describe('Kineo product app', () => {
     await service.completeOnboarding();
     const reset = jest.spyOn(service, 'resetHistory');
     const view = await render(
-      <KineoProductApp service={service} onDeleted={() => undefined} />,
+      <KineoProductApp service={service} onStoreRestartRequired={() => undefined} />,
     );
 
     await view.findByText('How are you moving?');
@@ -346,5 +355,32 @@ describe('Kineo product app', () => {
     await view.findByRole('header', { name: 'Reset history?' });
     await fireEvent.press(view.getByRole('button', { name: 'Reset history' }));
     await waitFor(() => expect(reset).toHaveBeenCalledTimes(1));
+  });
+
+  it('restarts the protected store after a failed deletion attempt', async () => {
+    const service = new OnboardingService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    service.deleteResult = {
+      ok: false,
+      error: { code: 'persistence', cause: { code: 'deletionFailed' } },
+    };
+    const onStoreRestartRequired = jest.fn();
+    const view = await render(
+      <KineoProductApp
+        service={service}
+        onStoreRestartRequired={onStoreRestartRequired}
+      />,
+    );
+
+    await view.findByText('How are you moving?');
+    await fireEvent.press(view.getByRole('tab', { name: 'Profile' }));
+    await view.findByRole('header', { name: 'Profile' });
+    await fireEvent.press(view.getByRole('button', { name: 'Delete All Data' }));
+    await fireEvent.press(view.getByRole('button', { name: 'Delete all data' }));
+    await waitFor(() => expect(onStoreRestartRequired).toHaveBeenCalledTimes(1));
   });
 });

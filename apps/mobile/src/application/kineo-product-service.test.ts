@@ -740,8 +740,10 @@ describe('Kineo product service check-in', () => {
       area: 'neck',
       checkInCount: qualifyingRoutineCount,
       completedRoutineCount: qualifyingRoutineCount,
+      participationCount: qualifyingRoutineCount,
       qualifyingOutcomeCount: qualifyingRoutineCount,
       activeUnlocked: true,
+      latestResponse: 'same',
       responses: { better: 0, same: qualifyingRoutineCount, worse: 0 },
     });
 
@@ -789,6 +791,16 @@ describe('Kineo product service check-in', () => {
       ok: true,
       value: { kind: 'today', primaryArea: 'neck' },
     });
+    const progress = await service.loadProgress();
+    expect(progress).toMatchObject({ ok: true, value: { participationDayCount: 1 } });
+    const neckProgress = progress.ok
+      ? progress.value.areas.find(({ area }) => area === 'neck')
+      : undefined;
+    expect(neckProgress).toMatchObject({
+      area: 'neck',
+      participationCount: 1,
+      latestResponse: undefined,
+    });
 
     const profile = await service.saveAreaPreferences('lowerBack', 'upperMidBack');
     expect(profile).toMatchObject({
@@ -800,6 +812,27 @@ describe('Kineo product service check-in', () => {
           onboardingCompletedAtMilliseconds: initialTimestamp,
         },
       },
+    });
+    await database.closeAsync();
+  });
+
+  it('abandons an unfinished check-in before changing its selected areas', async () => {
+    const { database, service, store } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const draft = await service.beginCheckIn();
+    if (!draft.ok) throw new Error('Area-change check-in did not start.');
+
+    await expect(service.saveAreaPreferences('lowerBack')).resolves.toMatchObject({
+      ok: true,
+      value: { profile: { primaryArea: 'lowerBack' } },
+    });
+    await expect(store.loadCheckIn(draft.value.checkInId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'abandoned' },
     });
     await database.closeAsync();
   });

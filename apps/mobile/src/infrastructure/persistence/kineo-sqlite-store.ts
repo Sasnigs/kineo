@@ -26,6 +26,7 @@ import {
 import type {
   AreaHistoryRecord,
   KineoStore,
+  PauseTodayHistoryRecord,
 } from '../../core/persistence/kineo-store';
 import {
   createSelectionDecision,
@@ -212,6 +213,12 @@ type AreaHistoryRow = Readonly<{
   delivered_level: string | null;
   included: number | null;
   response: string | null;
+}>;
+
+type PauseTodayHistoryRow = Readonly<{
+  local_day: string;
+  primary_area: string;
+  secondary_area: string | null;
 }>;
 
 function asBoolean(value: number): boolean | undefined {
@@ -402,6 +409,44 @@ export class KineoSqliteStore implements KineoStore {
         });
       }
       return { ok: true, value: Object.freeze(result) };
+    } catch (error) {
+      return error instanceof StoreAbort
+        ? { ok: false, error: error.persistenceError }
+        : { ok: false, error: { code: 'readFailed' } };
+    }
+  }
+
+  async loadPauseTodayHistory(): Promise<
+    PersistenceResult<readonly PauseTodayHistoryRecord[]>
+  > {
+    try {
+      const rows = await this.database.getAllAsync<PauseTodayHistoryRow>(
+        `SELECT pause.local_day, check_in.primary_area, check_in.secondary_area
+         FROM pause_today_events AS pause
+         JOIN check_ins AS check_in ON check_in.id = pause.check_in_id
+         ORDER BY pause.chosen_at_ms, pause.id`,
+      );
+      const records: PauseTodayHistoryRecord[] = [];
+      for (const row of rows) {
+        const localDay = parseLocalDay(row.local_day);
+        const primaryArea = asBodyArea(row.primary_area);
+        const secondaryArea = asBodyArea(row.secondary_area);
+        if (
+          !localDay.ok ||
+          primaryArea === undefined ||
+          (row.secondary_area !== null && secondaryArea === undefined) ||
+          primaryArea === secondaryArea
+        ) {
+          throw new StoreAbort({ code: 'corruptedStore' });
+        }
+        records.push({
+          localDay: localDay.value,
+          areas: secondaryArea === undefined
+            ? Object.freeze([primaryArea])
+            : Object.freeze([primaryArea, secondaryArea]),
+        });
+      }
+      return { ok: true, value: Object.freeze(records) };
     } catch (error) {
       return error instanceof StoreAbort
         ? { ok: false, error: error.persistenceError }

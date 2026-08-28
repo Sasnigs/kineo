@@ -76,7 +76,7 @@ type LocalScreen =
 
 type KineoProductAppProps = Readonly<{
   service: KineoProductServing;
-  onDeleted: () => void;
+  onStoreRestartRequired: () => void;
 }>;
 
 type MainTab = 'today' | 'progress' | 'profile';
@@ -115,7 +115,10 @@ function errorMessage(error: ProductFlowError): string {
   }
 }
 
-export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
+export function KineoProductApp({
+  service,
+  onStoreRestartRequired,
+}: KineoProductAppProps) {
   const [screen, setScreen] = useState<LocalScreen>({ kind: 'loading' });
   const [selectedPrimaryArea, setSelectedPrimaryArea] = useState<BodyArea>();
   const [selectedSecondaryArea, setSelectedSecondaryArea] = useState<BodyArea>();
@@ -661,14 +664,18 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
         <PageHeader eyebrow="YOUR HISTORY" title="Progress without pressure" />
         <View style={styles.metricCard}>
           <Text style={styles.metricValue}>{screen.progress.participationDayCount}</Text>
-          <Text style={styles.metricLabel}>days you chose a routine</Text>
+          <Text style={styles.metricLabel}>days you participated</Text>
         </View>
         {screen.progress.areas.map((area) => (
           <View key={area.area} style={styles.historyCard}>
             <Text style={styles.cardTitle}>{areaLabels[area.area]}</Text>
             <Text style={styles.cardBody}>{area.checkInCount} check-ins · {area.completedRoutineCount} completed routines</Text>
+            <Text style={styles.cardBody}>{area.participationCount} routine or intentional pause choices</Text>
             <Text style={styles.cardBody}>
               Responses: {area.responses.better} better · {area.responses.same} same · {area.responses.worse} worse
+            </Text>
+            <Text style={styles.cardBody}>
+              Latest response: {area.latestResponse ?? 'None recorded'}
             </Text>
             <Text style={styles.cardBody}>{area.activeUnlocked ? 'Active option available' : 'Active remains locked'}</Text>
           </View>
@@ -764,7 +771,9 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
           label="Delete all data"
           onPress={() => void (async () => {
             const result = await submit(() => service.deleteAllData());
-            if (result?.ok) onDeleted();
+            if (result?.ok || result?.error.code === 'persistence') {
+              onStoreRestartRequired();
+            }
           })()}
         />
         <SecondaryButton
@@ -1063,7 +1072,9 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
           danger
           onPress={() => void (async () => {
             const result = await submit(() => service.deleteAllData());
-            if (result?.ok) onDeleted();
+            if (result?.ok || result?.error.code === 'persistence') {
+              onStoreRestartRequired();
+            }
           })()}
         />
       </View>

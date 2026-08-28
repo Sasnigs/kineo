@@ -4,6 +4,7 @@ import type { SelectionDecision } from '../../core/persistence/decision-persiste
 import type {
   AreaHistoryRecord,
   KineoStore,
+  PauseTodayHistoryRecord,
 } from '../../core/persistence/kineo-store';
 import type { PersistenceResult } from '../../core/persistence/persistence-contract';
 import type {
@@ -132,6 +133,12 @@ export class ProtectedKineoStore implements KineoPersistence {
 
   loadAreaHistory(): Promise<PersistenceResult<readonly AreaHistoryRecord[]>> {
     return this.read(() => this.base.loadAreaHistory());
+  }
+
+  loadPauseTodayHistory(): Promise<
+    PersistenceResult<readonly PauseTodayHistoryRecord[]>
+  > {
+    return this.read(() => this.base.loadPauseTodayHistory());
   }
 
   loadAttentionStates(): Promise<PersistenceResult<readonly AttentionState[]>> {

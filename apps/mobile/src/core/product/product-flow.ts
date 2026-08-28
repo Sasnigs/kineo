@@ -5,6 +5,7 @@ import type {
 } from '../content/routine-session-snapshot';
 import type {
   BodyArea,
+  AreaResponse,
   ChangeReport,
   CheckInEntryId,
   CheckInId,
@@ -102,8 +103,10 @@ export type AreaProgressPresentation = Readonly<{
   area: BodyArea;
   checkInCount: number;
   completedRoutineCount: number;
+  participationCount: number;
   qualifyingOutcomeCount: number;
   activeUnlocked: boolean;
+  latestResponse?: AreaResponse;
   responses: Readonly<Record<'better' | 'same' | 'worse', number>>;
 }>;
 

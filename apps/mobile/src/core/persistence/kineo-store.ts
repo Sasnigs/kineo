@@ -41,6 +41,11 @@ export type AreaHistoryRecord = Readonly<{
   }>;
 }>;
 
+export type PauseTodayHistoryRecord = Readonly<{
+  localDay: LocalDay;
+  areas: readonly BodyArea[];
+}>;
+
 export interface KineoStore {
   loadProfileState(): Promise<PersistenceResult<ProfileState | undefined>>;
   saveProfileState(state: ProfileState): Promise<PersistenceResult<void>>;
@@ -79,6 +84,9 @@ export interface KineoStore {
     id: RoutineSessionId,
   ): Promise<PersistenceResult<boolean>>;
   loadAreaHistory(): Promise<PersistenceResult<readonly AreaHistoryRecord[]>>;
+  loadPauseTodayHistory(): Promise<
+    PersistenceResult<readonly PauseTodayHistoryRecord[]>
+  >;
   loadAttentionStates(): Promise<
     PersistenceResult<readonly AttentionState[]>
   >;

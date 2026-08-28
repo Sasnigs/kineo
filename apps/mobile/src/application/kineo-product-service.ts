@@ -652,6 +652,8 @@ export class KineoProductService implements KineoProductServing {
   async loadProgress(): Promise<ProductResult<ProgressPresentation>> {
     const history = await this.store.loadAreaHistory();
     if (!history.ok) return persistenceFailure(history.error);
+    const pauseTodayHistory = await this.store.loadPauseTodayHistory();
+    if (!pauseTodayHistory.ok) return persistenceFailure(pauseTodayHistory.error);
     const participatingStatuses = new Set(['completed', 'stopped'] as const);
     const participationDays = new Set(
       history.value.flatMap((record) =>
@@ -662,9 +664,21 @@ export class KineoProductService implements KineoProductServing {
           : [],
       ),
     );
+    for (const record of pauseTodayHistory.value) {
+      participationDays.add(record.localDay);
+    }
     const areas = [];
     for (const area of bodyAreas) {
       const areaRecords = history.value.filter((record) => record.area === area);
+      const participatingRoutineCount = areaRecords.filter(
+        ({ routine }) =>
+          routine !== undefined &&
+          routine.wasIncluded &&
+          participatingStatuses.has(routine.status as 'completed' | 'stopped'),
+      ).length;
+      const pauseTodayCount = pauseTodayHistory.value.filter(({ areas }) =>
+        areas.includes(area),
+      ).length;
       let activeHistory = createActiveHistoryState({ area, qualifyingOutcomeCount: 0 });
       if (!activeHistory.ok) return { ok: false, error: { code: 'invalidData' } };
       const responses = { better: 0, same: 0, worse: 0 };
@@ -694,8 +708,10 @@ export class KineoProductService implements KineoProductServing {
         completedRoutineCount: areaRecords.filter(
           ({ routine }) => routine?.status === 'completed' && routine.wasIncluded,
         ).length,
+        participationCount: participatingRoutineCount + pauseTodayCount,
         qualifyingOutcomeCount: activeHistory.value.qualifyingOutcomeCount,
         activeUnlocked: isActiveUnlocked(activeHistory.value),
+        latestResponse: activeHistory.value.mostRecentRecordedResponse,
         responses,
       });
     }
@@ -725,6 +741,16 @@ export class KineoProductService implements KineoProductServing {
     secondaryArea?: BodyArea,
   ): Promise<ProductResult<ProfilePresentation>> {
     if (primaryArea === secondaryArea) return invalidState;
+    const draft = await this.store.loadLatestCheckInDraft('normal');
+    if (!draft.ok) return persistenceFailure(draft.error);
+    if (
+      draft.value !== undefined &&
+      (draft.value.primaryArea !== primaryArea ||
+        draft.value.secondaryArea !== secondaryArea)
+    ) {
+      const abandoned = await this.store.abandonCheckInDraft(draft.value.id);
+      if (!abandoned.ok) return persistenceFailure(abandoned.error);
+    }
     const updated = await this.updateExistingProfile((existing, timestamp) => ({
       ...existing,
       primaryArea,

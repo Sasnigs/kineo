@@ -59,7 +59,7 @@ export function KineoAppBootstrap() {
     [state],
   );
 
-  const restartAfterDeletion = () => {
+  const restartProtectedStore = () => {
     openingStore = undefined;
     setGeneration((value) => value + 1);
   };
@@ -69,7 +69,7 @@ export function KineoAppBootstrap() {
       <KineoProductApp
         key={generation}
         service={service}
-        onDeleted={restartAfterDeletion}
+        onStoreRestartRequired={restartProtectedStore}
       />
     );
   }
