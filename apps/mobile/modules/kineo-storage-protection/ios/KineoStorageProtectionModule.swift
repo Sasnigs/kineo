@@ -9,6 +9,7 @@ private let exceptionCode = 1
 
 private struct ProtectedDirectoryRecord: Record {
   @Field var path: String = ""
+  @Field var uri: String = ""
   @Field var backupExcluded: Bool = false
   @Field var completeProtectionVerified: Bool = false
   @Field var completeProtectionSupported: Bool = true
@@ -55,12 +56,16 @@ public class KineoStorageProtectionModule: Module {
         throw storageException("Protected data is unavailable.")
       }
       let directory = try privateDirectoryURL().standardizedFileURL
-      let candidatePaths = [databasePath, databasePath + "-wal", databasePath + "-shm"]
-      guard FileManager.default.fileExists(atPath: databasePath) else {
+      let databaseURL = localFileURL(from: databasePath)
+      let candidateURLs = [
+        databaseURL,
+        localFileURL(from: databasePath + "-wal"),
+        localFileURL(from: databasePath + "-shm")
+      ]
+      guard FileManager.default.fileExists(atPath: databaseURL.path) else {
         throw storageException("The Kineo database does not exist.")
       }
-      return try candidatePaths.compactMap { path in
-        let candidate = URL(fileURLWithPath: path).standardizedFileURL
+      return try candidateURLs.compactMap { candidate in
         let prefix = directory.path + "/"
         guard candidate.path == directory.path || candidate.path.hasPrefix(prefix) else {
           throw storageException("A path escaped Kineo's private directory.")
@@ -120,6 +125,13 @@ public class KineoStorageProtectionModule: Module {
       appropriateFor: nil,
       create: true
     ).appendingPathComponent(privateDirectoryName, isDirectory: true)
+  }
+
+  private func localFileURL(from value: String) -> URL {
+    if let url = URL(string: value), url.isFileURL {
+      return url.standardizedFileURL
+    }
+    return URL(fileURLWithPath: value).standardizedFileURL
   }
 
   private func applicationSupportURL() throws -> URL {
@@ -184,6 +196,7 @@ public class KineoStorageProtectionModule: Module {
 
     return ProtectedDirectoryRecord(
       path: mutableURL.path,
+      uri: mutableURL.absoluteString,
       backupExcluded: true,
       completeProtectionVerified: protectionVerified,
       completeProtectionSupported: protectionSupported

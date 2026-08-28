@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { deleteProtectedStore } from './protected-storage';
+import {
+  deleteProtectedStore,
+  prepareProtectedStorageDirectory,
+  protectDatabaseFiles,
+} from './protected-storage';
 
 const mockCalls: string[] = [];
 const mockInspection = {
   path: '/private/kineo',
+  uri: 'file:///private/kineo',
   backupExcluded: true,
   completeProtectionVerified: true,
   completeProtectionSupported: true,
@@ -36,6 +41,19 @@ describe('protected storage deletion', () => {
   beforeEach(() => {
     mockCalls.length = 0;
     jest.clearAllMocks();
+  });
+
+  it('uses the verified file URI when opening SQLite', async () => {
+    await expect(prepareProtectedStorageDirectory()).resolves.toEqual({
+      ok: true,
+      value: mockInspection.uri,
+    });
+  });
+
+  it('accepts a file URI when protecting SQLite files', async () => {
+    await expect(
+      protectDatabaseFiles('file:///private/kineo/kineo.sqlite'),
+    ).resolves.toEqual({ ok: true, value: undefined });
   });
 
   it('persists the marker before closing and removing the store', async () => {
