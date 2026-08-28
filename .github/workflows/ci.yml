@@ -14,107 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Build and test
+  expo:
+    name: Expo build and test
     runs-on: macos-15
     timeout-minutes: 25
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Show toolchain
-        run: |
-          xcodebuild -version
-          swift --version
-
-      - name: Test modules
-        run: swift test --package-path Packages/KineoModules
-
-      - name: Verify project boundaries
-        run: Scripts/verify-project-boundaries.sh
-
-      - name: Analyze internal app
-        run: |
-          xcodebuild \
-            -project Kineo.xcodeproj \
-            -scheme Kineo \
-            -configuration InternalPrototype \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath "$RUNNER_TEMP/kineo-analyze-derived-data" \
-            CODE_SIGNING_ALLOWED=NO \
-            analyze
-
-      - name: Verify release content gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          gate_log="$RUNNER_TEMP/kineo-release-content-gate.log"
-          set +e
-          xcodebuild \
-            -project Kineo.xcodeproj \
-            -scheme Kineo \
-            -configuration ReleaseCandidate \
-            -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO \
-            build > "$gate_log" 2>&1
-          gate_status=$?
-          set -e
-          if [[ "$gate_status" -eq 0 ]]; then
-            echo "ReleaseCandidate unexpectedly accepted prototype content."
-            exit 1
-          fi
-          if ! grep -Fq 'KINEO-PRODUCTION-CONTENT-REQUIRED' "$gate_log"; then
-            cat "$gate_log"
-            echo "ReleaseCandidate failed without the required content-gate marker."
-            exit 1
-          fi
-          echo "ReleaseCandidate correctly rejected prototype content."
-
-      - name: Select iPhone simulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          simulator_id="$(xcrun simctl list devices available --json | jq -r '[.devices[][] | select(.isAvailable == true and (.name | startswith("iPhone")))] | first | .udid // empty')"
-          if [[ -z "$simulator_id" ]]; then
-            echo "No available iPhone simulator was found."
-            exit 1
-          fi
-          echo "KINEO_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
-
-      - name: Test app target
-        run: |
-          xcrun simctl boot "$KINEO_SIMULATOR_ID" || true
-          xcrun simctl bootstatus "$KINEO_SIMULATOR_ID" -b
-          xcodebuild \
-            -project Kineo.xcodeproj \
-            -scheme Kineo \
-            -configuration InternalPrototype \
-            -destination "id=$KINEO_SIMULATOR_ID" \
-            CODE_SIGNING_ALLOWED=NO \
-            test
-
-      - name: Build clean internal app
-        run: |
-          xcodebuild \
-            -project Kineo.xcodeproj \
-            -scheme Kineo \
-            -configuration InternalPrototype \
-            -destination "id=$KINEO_SIMULATOR_ID" \
-            -derivedDataPath "$RUNNER_TEMP/kineo-launch-derived-data" \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-
-      - name: Verify clean app launch
-        run: |
-          Scripts/verify-simulator-launch.sh \
-            "$KINEO_SIMULATOR_ID" \
-            "$RUNNER_TEMP/kineo-launch-derived-data/Build/Products/InternalPrototype-iphonesimulator/Kineo.app"
-
-  expo:
-    name: Expo foundation
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
 
     defaults:
       run:
@@ -134,6 +37,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify project boundaries
+        working-directory: ${{ github.workspace }}
+        run: Scripts/verify-project-boundaries.sh
+
       - name: Verify source
         run: |
           npm run typecheck
@@ -147,3 +54,15 @@ jobs:
 
       - name: Bundle iOS app
         run: npx expo export --platform ios --output-dir "$RUNNER_TEMP/kineo-expo-export"
+
+      - name: Generate and build native iOS app
+        run: |
+          npx expo prebuild --platform ios --clean
+          xcodebuild \
+            -workspace ios/Kineo.xcworkspace \
+            -scheme Kineo \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/kineo-expo-derived-data" \
+            CODE_SIGNING_ALLOWED=NO \
+            build

@@ -11,23 +11,11 @@
 - Create a short-lived branch from an up-to-date `main`, such as `feat/m2-persistence`, `fix/check-in-recovery`, or `docs/testing-contract`.
 - Keep each pull request focused on one outcome.
 - Use short imperative commit messages, such as `Add profile repository contract`.
-- Never commit secrets, credentials, user data, build output, or Xcode user state.
+- Never commit secrets, credentials, user data, build output, or generated native projects.
 
 ## Required verification
 
 Run the relevant tests before requesting review:
-
-```sh
-swift test --package-path Packages/KineoModules
-xcodebuild -project Kineo.xcodeproj \
-  -scheme Kineo \
-  -configuration DebugPrototype \
-  -destination 'generic/platform=iOS Simulator' \
-  CODE_SIGNING_ALLOWED=NO \
-  build
-```
-
-For Expo migration changes:
 
 ```sh
 cd apps/mobile
@@ -54,6 +42,6 @@ Run the Expo app with `npm run ios`.
 - Include screenshots or a short recording for visible UI changes.
 - Call out safety, privacy, persistence, dependency, capability, and entitlement changes explicitly.
 - Resolve review comments and pass CI before merge.
-- Prefer squash merge and delete the branch afterward.
+- Preserve logical commits when merging and delete the branch afterward.
 
 Until another maintainer is assigned, the product owner performs the final scope and contract review. Safety-boundary or production-content changes require the review evidence specified by the technical designs; ordinary code review does not replace it.

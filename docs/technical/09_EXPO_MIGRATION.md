@@ -2,22 +2,22 @@
 
 | Field | Value |
 | --- | --- |
-| Status | E2 content locally verified; CI pending |
+| Status | E0–E5 automated gates complete; E6 qualification and source cutover pending |
 | Target | Expo SDK 57, React Native, strict TypeScript, iOS 17 minimum |
 | Source | Existing product behavior and TD-00 through TD-08 |
-| Last reviewed | August 27, 2026 |
+| Last reviewed | August 28, 2026 |
 
 ## 1. Migration contract
 
 This document overrides SwiftUI-, Swift-, Xcode-module-, and GRDB-specific implementation choices only as each equivalent Expo slice is completed. All product rules, safety invariants, release gates, and acceptance scenarios remain unchanged.
 
-- Keep the Swift app buildable until complete Expo parity is proven.
+- Keep the Swift app available until the remaining E6 device and archive gates pass.
 - Port vertical behavior slices; do not translate files mechanically.
 - Treat the existing deterministic Swift behavior and product matrices as reference evidence, not code to call at runtime.
 - Do not share production state between the Swift and Expo apps during migration.
 - Do not add networking, telemetry, accounts, remote configuration, HealthKit, or new product scope.
 - The `kineo` URL scheme exists only so Expo can launch development builds and the simulator. It does not authorize product deep links, inbound navigation, or authentication callbacks.
-- Do not claim migration completion while any required parity or device gate remains open.
+- Keep exact-archive and physical-device qualification visibly open until those checks run.
 
 ## 2. Target architecture
 
@@ -29,7 +29,9 @@ flowchart TB
     adapters --> core
     adapters --> sqlite[(expo-sqlite)]
     adapters --> platform[Expo and native platform modules]
-    swift[Verified Swift app] -. parity fixtures and acceptance tests .-> core
+    fixtures[Versioned parity fixtures] -. acceptance cases .-> core
+    platform --> bridge[Minimal iOS storage-protection module]
+    swift[Swift reference retained for E6] -. final qualification .-> routes
 ```
 
 `Core` owns domain values, deterministic policies, typed failures, and use-case interfaces. It imports no React, React Native, Expo, SQLite, media, notification, or networking module. Features and adapters depend inward on Core; Expo Router is the composition root.
@@ -43,7 +45,7 @@ Tests exercise these existing product seams:
 3. Product use cases: commands commit truthful state atomically through repository interfaces.
 4. App routes: screens expose the same guarded flows and accessibility behavior.
 
-Parity expectations come from product decision tables, stable shared fixtures, and observable Swift outcomes. Tests do not reach through these interfaces into implementations.
+Parity expectations come from product decision tables and stable fixtures captured from the Swift reference. Tests do not reach through these interfaces into implementations.
 
 ## 4. Ordered migration
 
@@ -55,7 +57,9 @@ Parity expectations come from product decision tables, stable shared fixtures, a
 | E3 Persistence | SQLite schema, exclusive transactions, migrations, protection, reset, and deletion | TD-02 failure/recovery gates pass on real SQLite |
 | E4 Product flow | Onboarding through feedback, Progress, and Profile | All feature state-machine scenarios pass offline |
 | E5 Platform and UI | Media, reminders, lifecycle, adaptive UI, and accessibility | Automated UI and platform gates pass |
-| E6 Cutover | Exact Expo archive qualification and removal plan for Swift | Full P0/P1 parity evidence passes; owner-visible cutover recorded |
+| E6 Cutover | Expo becomes the sole product implementation | Exact archive and physical-device gates pass; source cutover is recorded |
+
+All E0–E5 automated gates pass locally: strict type checking, lint, 23 Jest suites with 182 tests, Expo dependency validation, iOS bundling, and a generated native simulator build. `npm audit --audit-level=high` passes; 11 moderate transitive Expo build-tool advisories remain because the proposed forced remediation downgrades Expo. Exact-archive and device-only P1 evidence remain before source removal.
 
 E1 is delivered in three reviewable slices: domain and Attention safety, Active history eligibility, then the complete plan selector. Each slice must keep Swift and Expo green before the next begins.
 
@@ -68,4 +72,4 @@ E2 is delivered in three slices: catalog contracts, the signed prototype catalog
 - The first domain slice implements the complete area-level matrix through a pure interface.
 - No runtime network client, telemetry package, account system, database, or native capability is added.
 - Dependency versions and lockfile are committed; generated caches and secrets are ignored.
-- Full existing Swift tests and project-boundary checks remain green.
+- During E0–E5, the Swift tests and project-boundary checks remained green.

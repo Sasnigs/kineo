@@ -8,6 +8,7 @@ readonly EXPECTED_GRDB_VERSION="7.10.0"
 readonly EXPECTED_GRDB_REVISION="36e30a6f1ef10e4194f6af0cff90888526f0c115"
 readonly EXPECTED_PACKAGE_DECLARATION_COUNT="1"
 readonly RELEASE_CONTENT_GATE_MARKER="KINEO-PRODUCTION-CONTENT-REQUIRED"
+readonly APPROVED_EXPO_RUNTIME_DEPENDENCIES="@noble/hashes expo expo-constants expo-crypto expo-linking expo-notifications expo-router expo-splash-screen expo-sqlite expo-status-bar expo-video react react-native react-native-safe-area-context react-native-screens"
 
 fail() {
     printf 'Project boundary check failed: %s\n' "$1" >&2
@@ -49,6 +50,10 @@ package_declaration_count="$(grep -c '\.package(' Packages/KineoModules/Package.
 verify_resolved_pin "Packages/KineoModules/Package.resolved"
 verify_resolved_pin "Kineo.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
 
+actual_expo_dependencies="$(node -e "const dependencies = Object.keys(require('./apps/mobile/package.json').dependencies).sort(); process.stdout.write(dependencies.join(' '))")"
+[[ "$actual_expo_dependencies" == "$APPROVED_EXPO_RUNTIME_DEPENDENCIES" ]] || \
+    fail "apps/mobile/package.json contains an unreviewed runtime dependency"
+
 require_text "Configurations/Base.xcconfig" "KINEO_HEALTHKIT_ENABLED = NO"
 require_text "Configurations/Base.xcconfig" "KINEO_TELEMETRY_ENABLED = NO"
 require_text "Configurations/Base.xcconfig" "KINEO_NETWORK_CLIENT_ENABLED = NO"
@@ -63,9 +68,23 @@ if git grep -n -E \
     fail "an entitlement, capability, or prohibited framework was introduced"
 fi
 
+if git grep -n -I -E \
+    '(^|[[:space:]])(fetch|XMLHttpRequest|WebSocket)[[:space:](]|from[[:space:]].*(axios|@apollo|firebase|@sentry)|https?://' \
+    -- 'apps/mobile/src/**/*.ts' 'apps/mobile/src/**/*.tsx' \
+       'apps/mobile/modules/**/*.ts' 'apps/mobile/modules/**/*.tsx'; then
+    fail "production Expo sources contain a network client or endpoint"
+fi
+
+if git grep -n -I -E \
+    'HealthKit|com\.apple\.developer\.|UIBackgroundModes|associatedDomains' \
+    -- apps/mobile/app.json apps/mobile/modules; then
+    fail "Expo configuration or native modules contain an unapproved capability"
+fi
+
 if git grep -n -E \
     '(^|[[:space:]])import[[:space:]]+(HealthKit|Network|CloudKit)([[:space:]]|$)|URLSession|NW(Connection|Path|Browser)|https?://' \
-    -- 'App/*.swift' 'Packages/KineoModules/Sources/**/*.swift'; then
+    -- 'App/*.swift' 'Packages/KineoModules/Sources/**/*.swift' \
+       'apps/mobile/modules/**/*.swift'; then
     fail "production Swift sources contain a network or cloud API"
 fi
 
@@ -75,7 +94,7 @@ if git grep -n -I -E \
     fail "a tracked file matches a high-confidence secret pattern"
 fi
 
-if git ls-files | grep -Eq '(^|/)(\.DS_Store|DerivedData|xcuserdata)(/|$)|\.xcuserstate$'; then
+if git ls-files | grep -Eq '(^|/)(\.DS_Store|DerivedData|xcuserdata|\.expo|dist)(/|$)|apps/mobile/(ios|android)(/|$)|\.xcuserstate$'; then
     fail "generated or user-specific files are tracked"
 fi
 
