@@ -6,6 +6,7 @@ import type {
   SafetyMutation,
 } from './persistence-domain';
 import type { PersistenceResult } from './persistence-contract';
+import type { SelectionDecision } from './decision-persistence-domain';
 
 export interface KineoStore {
   loadProfileState(): Promise<PersistenceResult<ProfileState | undefined>>;
@@ -16,6 +17,12 @@ export interface KineoStore {
     checkIn: CheckIn,
     safetyMutations: readonly SafetyMutation[],
   ): Promise<PersistenceResult<void>>;
+  appendSelectionDecision(
+    decision: SelectionDecision,
+  ): Promise<PersistenceResult<void>>;
+  loadLatestSelectionDecision(
+    checkInId: CheckInId,
+  ): Promise<PersistenceResult<SelectionDecision | undefined>>;
   loadAttentionStates(): Promise<
     PersistenceResult<readonly AttentionState[]>
   >;

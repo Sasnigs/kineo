@@ -5,7 +5,13 @@ import { describe, expect, it } from '@jest/globals';
 import {
   parseCheckInEntryId,
   parseCheckInId,
+  parseSelectionDecisionId,
 } from '../../core/domain/selection-domain';
+import { parseCatalogVersion } from '../../core/content/catalog-primitives';
+import {
+  createSelectionDecision,
+  type SelectionDecision,
+} from '../../core/persistence/decision-persistence-domain';
 import {
   createCheckIn,
   createCheckInEntry,
@@ -33,6 +39,7 @@ const safetyEventIdValue = '00000000-0000-0000-0000-000000000003';
 const secondCheckInIdValue = '00000000-0000-0000-0000-000000000004';
 const secondEntryIdValue = '00000000-0000-0000-0000-000000000005';
 const secondSafetyEventIdValue = '00000000-0000-0000-0000-000000000006';
+const decisionIdValue = '00000000-0000-0000-0000-000000000007';
 const safetyBoundaryVersion = 'prototype-safety-v1';
 const timeZoneId = 'America/Chicago';
 const calendarId = 'gregorian';
@@ -129,6 +136,42 @@ function attentionMutation(
     createSafetyMutation({
       event,
       statusAfter: 'attentionRequired',
+    }),
+  );
+}
+
+function unavailableDecision(completedCheckIn: CheckIn): SelectionDecision {
+  const sourceEntry = completedCheckIn.entries[0];
+  if (sourceEntry === undefined) {
+    throw new Error('A decision requires its check-in entry.');
+  }
+  return required(
+    createSelectionDecision({
+      id: required(parseSelectionDecisionId(decisionIdValue)),
+      checkInId: completedCheckIn.id,
+      revision: 1,
+      rulesVersion: 'selection-v1.0.0-prototype',
+      catalogVersionRequested: required(parseCatalogVersion('0.1.0')),
+      outcome: 'contentUnavailable',
+      recommendedLevel: 'balanced',
+      overrideDisposition: 'none',
+      selectedLevel: 'balanced',
+      duration: 'standard',
+      validationResult: 'unavailable',
+      createdAtMilliseconds: safetyAtMilliseconds,
+      areaInputs: [
+        {
+          area: sourceEntry.area,
+          role: sourceEntry.role,
+          checkInEntryId: sourceEntry.id,
+          baseLevel: 'balanced',
+          activeUnlocked: false,
+          qualifyingCount: 0,
+          included: true,
+        },
+      ],
+      reasons: [],
+      notices: [],
     }),
   );
 }
@@ -253,6 +296,35 @@ describe('Kineo SQLite store', () => {
     await expect(store.loadCheckIn(draft.id)).resolves.toEqual({
       ok: true,
       value: draft,
+    });
+    await database.closeAsync();
+  });
+
+  it('appends a decision only after an eligible completed check-in', async () => {
+    const { database, store } = await makeStore();
+    const draft = checkIn('draft');
+    const completed = checkIn('completed');
+    const decision = unavailableDecision(completed);
+    await store.saveCheckInDraft(draft);
+    await store.completeCheckIn(completed, []);
+
+    await expect(store.appendSelectionDecision(decision)).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    const count = await database.getFirstAsync<{ count: number }>(
+      'SELECT count(*) AS count FROM selection_decisions',
+    );
+    expect(count?.count).toBe(1);
+    await expect(store.appendSelectionDecision(decision)).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    await expect(
+      store.loadLatestSelectionDecision(completed.id),
+    ).resolves.toEqual({
+      ok: true,
+      value: decision,
     });
     await database.closeAsync();
   });

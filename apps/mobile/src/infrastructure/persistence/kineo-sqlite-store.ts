@@ -1,7 +1,14 @@
 import {
+  areaResponses,
+  areaRoles,
   bodyAreas,
+  durationVariants,
+  omissionReasons,
+  overrideDispositions,
   parseCheckInEntryId,
   parseCheckInId,
+  parseSelectionDecisionId,
+  routineLevels,
   type AreaRole,
   type BodyArea,
   type ChangeReport,
@@ -10,7 +17,20 @@ import {
   type ConditionalSafetyAnswer,
   type MovementComfort,
 } from '../../core/domain/selection-domain';
+import {
+  parseCatalogId,
+  parseCatalogVersion,
+  parseContentRevision,
+  parseSha256Digest,
+} from '../../core/content/catalog-primitives';
 import type { KineoStore } from '../../core/persistence/kineo-store';
+import {
+  createSelectionDecision,
+  decisionReasonKinds,
+  selectionOutcomes,
+  validationResults,
+  type SelectionDecision,
+} from '../../core/persistence/decision-persistence-domain';
 import type {
   PersistenceError,
   PersistenceResult,
@@ -112,6 +132,56 @@ type SafetyEventRow = Readonly<{
   calendar_id: string;
 }>;
 
+type SelectionDecisionRow = Readonly<{
+  id: string;
+  check_in_id: string;
+  revision: number;
+  rules_version: string;
+  catalog_version_requested: string;
+  catalog_version_delivered: string | null;
+  outcome: string;
+  recommended_level: string;
+  requested_override: string | null;
+  override_disposition: string;
+  selected_level: string;
+  delivered_level: string | null;
+  duration_variant: string;
+  secondary_omission_reason: string | null;
+  validation_result: string;
+  primary_template_id: string | null;
+  primary_template_revision: number | null;
+  secondary_module_id: string | null;
+  secondary_module_revision: number | null;
+  compatibility_rule_id: string | null;
+  composition_fingerprint: string | null;
+  created_at_ms: number;
+}>;
+
+type DecisionAreaInputRow = Readonly<{
+  area: string;
+  role: string;
+  check_in_entry_id: string;
+  base_level: string;
+  active_unlocked: number;
+  qualifying_count: number;
+  latest_response: string | null;
+  included: number;
+}>;
+
+type DecisionReasonRow = Readonly<{
+  kind: string;
+  position: number;
+  reason_code: string;
+  parameters_json: string;
+}>;
+
+type DecisionNoticeRow = Readonly<{
+  position: number;
+  notice_code: string;
+  area: string | null;
+  parameters_json: string;
+}>;
+
 function asBoolean(value: number): boolean | undefined {
   return value === trueInteger
     ? true
@@ -164,6 +234,33 @@ function checkInEntryIdOrAbort(value: string): CheckInEntryId {
     throw new StoreAbort({ code: 'corruptedStore' });
   }
   return parsed.value;
+}
+
+function canonicalParameters(
+  parameters: Readonly<Record<string, string>>,
+): string {
+  return JSON.stringify(
+    Object.fromEntries(
+      Object.entries(parameters).sort(([left], [right]) =>
+        left < right ? -trueInteger : left > right ? trueInteger : falseInteger,
+      ),
+    ),
+  );
+}
+
+function parametersOrAbort(value: string): Readonly<Record<string, string>> {
+  const parsed: unknown = JSON.parse(value);
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    !Object.entries(parsed).every(
+      ([key, entry]) => key.trim().length > 0 && typeof entry === 'string',
+    )
+  ) {
+    throw new StoreAbort({ code: 'corruptedStore' });
+  }
+  return parsed as Readonly<Record<string, string>>;
 }
 
 export class KineoSqliteStore implements KineoStore {
@@ -602,6 +699,176 @@ export class KineoSqliteStore implements KineoStore {
     }
   }
 
+  async appendSelectionDecision(
+    decision: SelectionDecision,
+  ): Promise<PersistenceResult<void>> {
+    const validated = createSelectionDecision(decision);
+    if (!validated.ok) {
+      return {
+        ok: false,
+        error: { code: 'constraintViolation', constraint: 'domainInvariant' },
+      };
+    }
+    try {
+      await this.database.withExclusiveTransactionAsync(async (transaction) => {
+        const checkIn = await transaction.getFirstAsync<{ status: string }>(
+          'SELECT status FROM check_ins WHERE id = ?',
+          [validated.value.checkInId],
+        );
+        if (checkIn?.status !== 'completed') {
+          throw new StoreAbort({
+            code: 'constraintViolation',
+            constraint: 'relationship',
+          });
+        }
+        const attention = await transaction.getFirstAsync<{ count: number }>(
+          'SELECT count(*) AS count FROM attention_states',
+        );
+        if ((attention?.count ?? trueInteger) !== falseInteger) {
+          throw new StoreAbort({ code: 'conflictingWrite' });
+        }
+        const existing = await transaction.getFirstAsync<{
+          id: string;
+          revision: number;
+        }>(
+          'SELECT id, revision FROM selection_decisions WHERE check_in_id = ? ORDER BY revision DESC LIMIT 1',
+          [validated.value.checkInId],
+        );
+        const expectedRevision = (existing?.revision ?? falseInteger) + trueInteger;
+        if (validated.value.revision !== expectedRevision) {
+          if (existing?.revision === validated.value.revision) {
+            const stored = await this.loadSelectionDecisionWithExecutor(
+              transaction,
+              validated.value.checkInId,
+              validated.value.revision,
+            );
+            if (
+              stored !== undefined &&
+              JSON.stringify(stored) === JSON.stringify(validated.value)
+            ) {
+              return;
+            }
+          }
+          throw new StoreAbort({
+            code: 'constraintViolation',
+            constraint: 'duplicateRevision',
+          });
+        }
+        await transaction.runAsync(
+          `INSERT INTO selection_decisions(
+            id, check_in_id, revision, rules_version, catalog_version_requested,
+            catalog_version_delivered, outcome, recommended_level,
+            requested_override, override_disposition, selected_level,
+            delivered_level, duration_variant, secondary_omission_reason,
+            validation_result, primary_template_id, primary_template_revision,
+            secondary_module_id, secondary_module_revision,
+            compatibility_rule_id, composition_fingerprint, created_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            validated.value.id,
+            validated.value.checkInId,
+            validated.value.revision,
+            validated.value.rulesVersion,
+            validated.value.catalogVersionRequested,
+            validated.value.catalogVersionDelivered ?? null,
+            validated.value.outcome,
+            validated.value.recommendedLevel,
+            validated.value.requestedOverride ?? null,
+            validated.value.overrideDisposition,
+            validated.value.selectedLevel,
+            validated.value.deliveredLevel ?? null,
+            validated.value.duration,
+            validated.value.secondaryOmissionReason ?? null,
+            validated.value.validationResult,
+            validated.value.primaryTemplateId ?? null,
+            validated.value.primaryTemplateRevision ?? null,
+            validated.value.secondaryModuleId ?? null,
+            validated.value.secondaryModuleRevision ?? null,
+            validated.value.compatibilityRuleId ?? null,
+            validated.value.compositionFingerprint ?? null,
+            validated.value.createdAtMilliseconds,
+          ],
+        );
+        for (const areaInput of validated.value.areaInputs) {
+          await transaction.runAsync(
+            `INSERT INTO decision_area_inputs(
+              decision_id, area, role, check_in_entry_id, base_level,
+              active_unlocked, qualifying_count, latest_response, included
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              validated.value.id,
+              areaInput.area,
+              areaInput.role,
+              areaInput.checkInEntryId,
+              areaInput.baseLevel,
+              areaInput.activeUnlocked ? trueInteger : falseInteger,
+              areaInput.qualifyingCount,
+              areaInput.latestResponse ?? null,
+              areaInput.included ? trueInteger : falseInteger,
+            ],
+          );
+        }
+        for (const reason of validated.value.reasons) {
+          await transaction.runAsync(
+            `INSERT INTO decision_reasons(
+              decision_id, kind, position, reason_code, parameters_json
+            ) VALUES (?, ?, ?, ?, ?)`,
+            [
+              validated.value.id,
+              reason.kind,
+              reason.position,
+              reason.code,
+              canonicalParameters(reason.parameters),
+            ],
+          );
+        }
+        for (const notice of validated.value.notices) {
+          await transaction.runAsync(
+            `INSERT INTO decision_notices(
+              decision_id, position, notice_code, area, parameters_json
+            ) VALUES (?, ?, ?, ?, ?)`,
+            [
+              validated.value.id,
+              notice.position,
+              notice.code,
+              notice.area ?? null,
+              canonicalParameters(notice.parameters),
+            ],
+          );
+        }
+      });
+      return { ok: true, value: undefined };
+    } catch (error) {
+      return sqliteWriteFailure(error);
+    }
+  }
+
+  async loadLatestSelectionDecision(
+    checkInId: CheckInId,
+  ): Promise<PersistenceResult<SelectionDecision | undefined>> {
+    try {
+      const row = await this.database.getFirstAsync<{ revision: number }>(
+        'SELECT revision FROM selection_decisions WHERE check_in_id = ? ORDER BY revision DESC LIMIT 1',
+        [checkInId],
+      );
+      if (row === null) {
+        return { ok: true, value: undefined };
+      }
+      const decision = await this.loadSelectionDecisionWithExecutor(
+        this.database,
+        checkInId,
+        row.revision,
+      );
+      return decision === undefined
+        ? { ok: false, error: { code: 'corruptedStore' } }
+        : { ok: true, value: decision };
+    } catch (error) {
+      return error instanceof StoreAbort
+        ? { ok: false, error: error.persistenceError }
+        : { ok: false, error: { code: 'readFailed' } };
+    }
+  }
+
   async resetHistory(): Promise<PersistenceResult<void>> {
     const deletionOrder = [
       'area_feedback',
@@ -781,5 +1048,131 @@ export class KineoSqliteStore implements KineoStore {
     } catch {
       return false;
     }
+  }
+
+  private async loadSelectionDecisionWithExecutor(
+    executor: SqliteExecutor,
+    checkInId: CheckInId,
+    revision: number,
+  ): Promise<SelectionDecision | undefined> {
+    const row = await executor.getFirstAsync<SelectionDecisionRow>(
+      'SELECT * FROM selection_decisions WHERE check_in_id = ? AND revision = ?',
+      [checkInId, revision],
+    );
+    if (row === null) {
+      return undefined;
+    }
+    const areaRows = await executor.getAllAsync<DecisionAreaInputRow>(
+      'SELECT * FROM decision_area_inputs WHERE decision_id = ? ORDER BY role, area',
+      [row.id],
+    );
+    const reasonRows = await executor.getAllAsync<DecisionReasonRow>(
+      'SELECT * FROM decision_reasons WHERE decision_id = ? ORDER BY kind, position',
+      [row.id],
+    );
+    const noticeRows = await executor.getAllAsync<DecisionNoticeRow>(
+      'SELECT * FROM decision_notices WHERE decision_id = ? ORDER BY position',
+      [row.id],
+    );
+    const id = parseSelectionDecisionId(row.id);
+    const storedCheckInId = parseCheckInId(row.check_in_id);
+    const requestedCatalog = parseCatalogVersion(row.catalog_version_requested);
+    const deliveredCatalog = row.catalog_version_delivered === null
+      ? undefined
+      : parseCatalogVersion(row.catalog_version_delivered);
+    const primaryId = row.primary_template_id === null
+      ? undefined
+      : parseCatalogId(row.primary_template_id);
+    const primaryRevision = row.primary_template_revision === null
+      ? undefined
+      : parseContentRevision(row.primary_template_revision);
+    const secondaryId = row.secondary_module_id === null
+      ? undefined
+      : parseCatalogId(row.secondary_module_id);
+    const secondaryRevision = row.secondary_module_revision === null
+      ? undefined
+      : parseContentRevision(row.secondary_module_revision);
+    const compatibilityId = row.compatibility_rule_id === null
+      ? undefined
+      : parseCatalogId(row.compatibility_rule_id);
+    const fingerprint = row.composition_fingerprint === null
+      ? undefined
+      : parseSha256Digest(row.composition_fingerprint);
+    if (
+      !id.ok ||
+      !storedCheckInId.ok ||
+      !requestedCatalog.ok ||
+      deliveredCatalog?.ok === false ||
+      primaryId?.ok === false ||
+      primaryRevision?.ok === false ||
+      secondaryId?.ok === false ||
+      secondaryRevision?.ok === false ||
+      compatibilityId?.ok === false ||
+      fingerprint?.ok === false
+    ) {
+      throw new StoreAbort({ code: 'corruptedStore' });
+    }
+    const created = createSelectionDecision({
+      id: id.value,
+      checkInId: storedCheckInId.value,
+      revision: row.revision,
+      rulesVersion: row.rules_version,
+      catalogVersionRequested: requestedCatalog.value,
+      catalogVersionDelivered: deliveredCatalog?.value,
+      outcome: definedOrAbort(oneOf(row.outcome, selectionOutcomes)),
+      recommendedLevel: definedOrAbort(oneOf(row.recommended_level, routineLevels)),
+      requestedOverride: row.requested_override === null
+        ? undefined
+        : definedOrAbort(oneOf(row.requested_override, routineLevels)),
+      overrideDisposition: definedOrAbort(
+        oneOf(row.override_disposition, overrideDispositions),
+      ),
+      selectedLevel: definedOrAbort(oneOf(row.selected_level, routineLevels)),
+      deliveredLevel: row.delivered_level === null
+        ? undefined
+        : definedOrAbort(oneOf(row.delivered_level, routineLevels)),
+      duration: definedOrAbort(oneOf(row.duration_variant, durationVariants)),
+      secondaryOmissionReason: row.secondary_omission_reason === null
+        ? undefined
+        : definedOrAbort(oneOf(row.secondary_omission_reason, omissionReasons)),
+      validationResult: definedOrAbort(oneOf(row.validation_result, validationResults)),
+      primaryTemplateId: primaryId?.value,
+      primaryTemplateRevision: primaryRevision?.value,
+      secondaryModuleId: secondaryId?.value,
+      secondaryModuleRevision: secondaryRevision?.value,
+      compatibilityRuleId: compatibilityId?.value,
+      compositionFingerprint: fingerprint?.value,
+      createdAtMilliseconds: row.created_at_ms,
+      areaInputs: areaRows.map((area) => ({
+        area: definedOrAbort(oneOf(area.area, bodyAreas)),
+        role: definedOrAbort(oneOf(area.role, areaRoles)),
+        checkInEntryId: checkInEntryIdOrAbort(area.check_in_entry_id),
+        baseLevel: definedOrAbort(oneOf(area.base_level, routineLevels)),
+        activeUnlocked: definedOrAbort(asBoolean(area.active_unlocked)),
+        qualifyingCount: area.qualifying_count,
+        latestResponse: area.latest_response === null
+          ? undefined
+          : definedOrAbort(oneOf(area.latest_response, areaResponses)),
+        included: definedOrAbort(asBoolean(area.included)),
+      })),
+      reasons: reasonRows.map((reason) => ({
+        kind: definedOrAbort(oneOf(reason.kind, decisionReasonKinds)),
+        position: reason.position,
+        code: reason.reason_code,
+        parameters: parametersOrAbort(reason.parameters_json),
+      })),
+      notices: noticeRows.map((notice) => ({
+        position: notice.position,
+        code: notice.notice_code,
+        area: notice.area === null
+          ? undefined
+          : definedOrAbort(oneOf(notice.area, bodyAreas)),
+        parameters: parametersOrAbort(notice.parameters_json),
+      })),
+    });
+    if (!created.ok) {
+      throw new StoreAbort({ code: 'corruptedStore' });
+    }
+    return created.value;
   }
 }
