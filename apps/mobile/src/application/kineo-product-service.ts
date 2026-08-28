@@ -41,7 +41,10 @@ import {
   type ReminderWindow,
   type UserProfile,
 } from '../core/persistence/persistence-domain';
-import type { ReminderScheduling } from '../core/product/reminder-scheduling';
+import type {
+  ReminderAuthorization,
+  ReminderScheduling,
+} from '../core/product/reminder-scheduling';
 import {
   createActiveHistoryState,
   isActiveUnlocked,
@@ -49,6 +52,7 @@ import {
   type ActiveHistoryState,
 } from '../core/selection/active-history';
 import {
+  nextGentlerLevel,
   prototypeSelectionRulesVersion,
   selectPlan,
   type SelectedPlan,
@@ -63,6 +67,7 @@ import type {
   PlanPresentation,
   ProfilePresentation,
   ProgressPresentation,
+  RoutineEndReason,
   RoutinePresentation,
   ProductResult,
   ProductStartState,
@@ -93,6 +98,7 @@ export const prototypeSafetyBoundaryVersion = 'prototype-safety-v1';
 const firstEntryRevision = 1;
 const firstDecisionRevision = 1;
 const noExistingRevision = 0;
+const minimumTimestampIncrementMilliseconds = 1;
 const daysPerWeek = 7;
 const mondayWeekdayIndex = 1;
 const maximumRecentSessionCount = 5;
@@ -173,7 +179,7 @@ export interface KineoProductServing {
   ): Promise<ProductResult<RoutinePresentation>>;
   endRoutine(
     sessionId: RoutinePresentation['sessionId'],
-    forSafety: boolean,
+    reason: RoutineEndReason,
   ): Promise<ProductResult<RoutinePresentation>>;
   submitFeedback(
     sessionId: RoutinePresentation['sessionId'],
@@ -181,6 +187,8 @@ export interface KineoProductServing {
   ): Promise<ProductResult<void>>;
   loadProgress(): Promise<ProductResult<ProgressPresentation>>;
   loadProfile(): Promise<ProductResult<ProfilePresentation>>;
+  reconcileReminder(): Promise<ProductResult<void>>;
+  openReminderSettings(): Promise<ProductResult<void>>;
   saveAreaPreferences(
     primaryArea: BodyArea,
     secondaryArea?: BodyArea,
@@ -656,9 +664,9 @@ export class KineoProductService implements KineoProductServing {
 
   endRoutine(
     sessionId: RoutinePresentation['sessionId'],
-    forSafety: boolean,
+    reason: RoutineEndReason,
   ): Promise<ProductResult<RoutinePresentation>> {
-    return this.routineModule.end(sessionId, forSafety);
+    return this.routineModule.end(sessionId, reason);
   }
 
   submitFeedback(
@@ -797,17 +805,53 @@ export class KineoProductService implements KineoProductServing {
     if (!state.ok) return persistenceFailure(state.error);
     if (state.value === undefined) return invalidState;
     const authorization = await this.reminderScheduler.authorizationStatus();
-    const reminderAuthorization = authorization.ok
-      ? authorization.value
-      : 'unavailable';
+    if (!authorization.ok) {
+      return {
+        ok: true,
+        value: {
+          profile: state.value.profile,
+          reminderSettings: state.value.reminderSettings,
+          reminderAuthorization: 'unavailable',
+        },
+      };
+    }
+    const reconciled = await this.reconcileReminderState(
+      state.value,
+      authorization.value,
+    );
+    if (!reconciled.ok) return reconciled;
     return {
       ok: true,
       value: {
-        profile: state.value.profile,
-        reminderSettings: state.value.reminderSettings,
-        reminderAuthorization,
+        profile: reconciled.value.profile,
+        reminderSettings: reconciled.value.reminderSettings,
+        reminderAuthorization: authorization.value,
       },
     };
+  }
+
+  async reconcileReminder(): Promise<ProductResult<void>> {
+    const state = await this.store.loadProfileState();
+    if (!state.ok) return persistenceFailure(state.error);
+    if (state.value === undefined) return { ok: true, value: undefined };
+    const authorization = await this.reminderScheduler.authorizationStatus();
+    if (!authorization.ok) {
+      return { ok: false, error: { code: 'reminderUnavailable' } };
+    }
+    const reconciled = await this.reconcileReminderState(
+      state.value,
+      authorization.value,
+    );
+    return reconciled.ok
+      ? { ok: true, value: undefined }
+      : reconciled;
+  }
+
+  async openReminderSettings(): Promise<ProductResult<void>> {
+    const opened = await this.reminderScheduler.openSettings();
+    return opened.ok
+      ? { ok: true, value: undefined }
+      : { ok: false, error: { code: 'reminderUnavailable' } };
   }
 
   async saveAreaPreferences(
@@ -880,7 +924,7 @@ export class KineoProductService implements KineoProductServing {
       timeZoneId: moment.timeZoneId,
       updatedAtMilliseconds: Math.max(
         this.clock.nowMilliseconds(),
-        pending.value.updatedAtMilliseconds + firstEntryRevision,
+        pending.value.updatedAtMilliseconds + minimumTimestampIncrementMilliseconds,
       ),
     });
     if (!enabled.ok) return { ok: false, error: { code: 'invalidData' } };
@@ -911,7 +955,7 @@ export class KineoProductService implements KineoProductServing {
         enabled: false,
         updatedAtMilliseconds: Math.max(
           this.clock.nowMilliseconds(),
-          existing.updatedAtMilliseconds + firstEntryRevision,
+          existing.updatedAtMilliseconds + minimumTimestampIncrementMilliseconds,
         ),
       });
       if (!disabled.ok) return { ok: false, error: { code: 'invalidData' } };
@@ -951,6 +995,53 @@ export class KineoProductService implements KineoProductServing {
     if (!cancelled.ok) return { ok: false, error: { code: 'reminderUnavailable' } };
     const result = await this.store.deleteAllData();
     return result.ok ? result : persistenceFailure(result.error);
+  }
+
+  private async reconcileReminderState(
+    state: ProfileState,
+    authorization: ReminderAuthorization,
+  ): Promise<ProductResult<ProfileState>> {
+    const settings = state.reminderSettings;
+    const canSchedule = authorization === 'authorized' || authorization === 'provisional';
+    if (settings?.enabled !== true || !canSchedule) {
+      const cancelled = await this.reminderScheduler.cancelAll();
+      return cancelled.ok
+        ? { ok: true, value: state }
+        : { ok: false, error: { code: 'reminderUnavailable' } };
+    }
+    if (settings.window === undefined || settings.timeZoneId === undefined) {
+      return { ok: false, error: { code: 'invalidData' } };
+    }
+    const currentTimeZoneId = this.runtime.localDayContext().timeZoneId;
+    const scheduled = await this.reminderScheduler.replaceDailyReminder(
+      settings.window,
+      currentTimeZoneId,
+    );
+    if (!scheduled.ok) {
+      return { ok: false, error: { code: 'reminderUnavailable' } };
+    }
+    if (settings.timeZoneId === currentTimeZoneId) {
+      return { ok: true, value: state };
+    }
+    const updatedSettings = createReminderSettings({
+      enabled: true,
+      window: settings.window,
+      timeZoneId: currentTimeZoneId,
+      updatedAtMilliseconds: Math.max(
+        this.clock.nowMilliseconds(),
+        settings.updatedAtMilliseconds + minimumTimestampIncrementMilliseconds,
+      ),
+    });
+    if (!updatedSettings.ok) return { ok: false, error: { code: 'invalidData' } };
+    const updatedState = createProfileState({
+      profile: state.profile,
+      reminderSettings: updatedSettings.value,
+    });
+    if (!updatedState.ok) return { ok: false, error: { code: 'invalidData' } };
+    const saved = await this.store.saveProfileState(updatedState.value);
+    return saved.ok
+      ? { ok: true, value: updatedState.value }
+      : persistenceFailure(saved.error);
   }
 
   private onboardingProgress(
@@ -1163,6 +1254,7 @@ export class KineoProductService implements KineoProductServing {
         omittedSecondaryArea:
           composition.routine.omittedArea ?? selected.plan.omittedAreas[0]?.area,
         recommendedLevel: selected.plan.recommendedLevel,
+        gentlerLevel: nextGentlerLevel(selected.plan.recommendedLevel),
         selectedLevel: selected.plan.selectedLevel,
         deliveredLevel: composition.routine.deliveredLevel,
         duration,

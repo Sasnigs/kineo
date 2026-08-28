@@ -11,7 +11,7 @@ export const reminderAuthorizations = [
 export type ReminderAuthorization = (typeof reminderAuthorizations)[number];
 
 export type ReminderServiceError = Readonly<{
-  code: 'unavailable' | 'schedulingFailed' | 'cancellationFailed';
+  code: 'unavailable' | 'schedulingFailed' | 'cancellationFailed' | 'settingsFailed';
 }>;
 
 export type ReminderResult<Value> =
@@ -26,4 +26,5 @@ export interface ReminderScheduling {
     timeZoneId: string,
   ): Promise<ReminderResult<void>>;
   cancelAll(): Promise<ReminderResult<void>>;
+  openSettings(): Promise<ReminderResult<void>>;
 }

@@ -282,6 +282,14 @@ function rank(level: RoutineLevel): number {
   return routineLevelRanks[level];
 }
 
+export function nextGentlerLevel(level: RoutineLevel): RoutineLevel | undefined {
+  switch (level) {
+    case 'active': return 'balanced';
+    case 'balanced': return 'gentle';
+    case 'gentle': return undefined;
+  }
+}
+
 function gentlerLevel(
   left: RoutineLevel,
   right: RoutineLevel,

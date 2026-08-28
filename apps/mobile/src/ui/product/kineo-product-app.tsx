@@ -60,6 +60,7 @@ type LocalScreen =
       correctionDraft?: AttentionCorrectionDraft;
     }>
   | Readonly<{ kind: 'attentionReturn'; prompt: AttentionPrompt }>
+  | Readonly<{ kind: 'attentionGuidance'; prompt: AttentionPrompt }>
   | Readonly<{ kind: 'plan'; plan: PlanPresentation }>
   | Readonly<{ kind: 'routine'; routine: RoutinePresentation }>
   | Readonly<{ kind: 'routineOptions'; routine: RoutinePresentation }>
@@ -138,6 +139,7 @@ export function KineoProductApp({
   const [selectedSecondaryArea, setSelectedSecondaryArea] = useState<BodyArea>();
   const [isSecondaryCleared, setIsSecondaryCleared] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reminderReconciliationFailed, setReminderReconciliationFailed] = useState(false);
 
   const load = useCallback(async () => {
     setScreen({ kind: 'loading' });
@@ -162,6 +164,16 @@ export function KineoProductApp({
     return () => {
       isActive = false;
     };
+  }, [service]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') return;
+      void service.reconcileReminder().then((result) => {
+        setReminderReconciliationFailed(!result.ok);
+      });
+    });
+    return () => subscription.remove();
   }, [service]);
 
   const lifecycleRoutine = screen.kind === 'routine' || screen.kind === 'feedback'
@@ -257,15 +269,12 @@ export function KineoProductApp({
     setScreen(result.value.kind === 'plan'
       ? { kind: 'plan', plan: result.value.plan }
       : {
-          kind: 'start',
-          state: {
-            kind: 'attentionRequired',
-            prompt: {
-              area: result.value.area,
-              responseEventId: result.value.responseEventId,
-              expectedAttentionUpdatedAtMilliseconds:
-                result.value.expectedAttentionUpdatedAtMilliseconds,
-            },
+          kind: 'attentionGuidance',
+          prompt: {
+            area: result.value.area,
+            responseEventId: result.value.responseEventId,
+            expectedAttentionUpdatedAtMilliseconds:
+              result.value.expectedAttentionUpdatedAtMilliseconds,
           },
         });
   }, [service, submit]);
@@ -395,11 +404,20 @@ export function KineoProductApp({
     };
     return (
       <Shell>
-        <PageHeader eyebrow="ONE SAFETY CHECK" title="Is this new, unusual, or concerning for you?" />
+        <PageHeader eyebrow="ONE SAFETY CHECK" title="Is this new, sudden, or unusual for you?" />
         <Text style={styles.supporting}>Your answer may pause Kineo routines so you can decide what support you need.</Text>
         <ChoiceButton label="No" onPress={() => answerSafety('no')} />
         <ChoiceButton label="Yes" onPress={() => answerSafety('yes')} />
         <ChoiceButton label="Not sure" onPress={() => answerSafety('notSure')} />
+        <SecondaryButton
+          label="I selected that by mistake"
+          onPress={() => setScreen({
+            ...activeCheckIn,
+            stage: 'change',
+            changeReport: undefined,
+            movementComfort: undefined,
+          })}
+        />
       </Shell>
     );
   }
@@ -484,12 +502,20 @@ export function KineoProductApp({
           disabled={isSubmitting}
           label="End routine"
           onPress={() => void (async () => {
-            const result = await submit(() => service.endRoutine(screen.routine.sessionId, false));
-            if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
+            const result = await submit(() => service.endRoutine(
+              screen.routine.sessionId,
+              'intentional',
+            ));
+            if (result?.ok) {
+              if (result.value.status === 'abandoned') await load();
+              else setScreen({ kind: 'routine', routine: result.value });
+            }
           })()}
         />
         <SecondaryButton
-          label="Keep routine paused"
+          label={screen.routine.status === 'prepared'
+            ? 'Keep routine ready'
+            : 'Keep routine paused'}
           onPress={() => setScreen({ kind: 'routine', routine: screen.routine })}
         />
       </Shell>
@@ -507,7 +533,10 @@ export function KineoProductApp({
           label="End routine"
           disabled={isSubmitting}
           onPress={() => void (async () => {
-            const result = await submit(() => service.endRoutine(screen.routine.sessionId, true));
+            const result = await submit(() => service.endRoutine(
+              screen.routine.sessionId,
+              'safety',
+            ));
             if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
           })()}
         />
@@ -590,6 +619,10 @@ export function KineoProductApp({
             label="Begin routine"
             disabled={isSubmitting}
             onPress={() => void updateRoutine(() => service.startRoutine(activeRoutine.decisionId))}
+          />
+          <SecondaryButton
+            label="End routine"
+            onPress={() => setScreen({ kind: 'endConfirmation', routine: activeRoutine })}
           />
         </Shell>
       );
@@ -733,11 +766,7 @@ export function KineoProductApp({
       );
       if (result?.ok) setScreen({ kind: 'plan', plan: result.value });
     };
-    const gentlerLevel = activePlan.recommendedLevel === 'active'
-      ? 'balanced' as const
-      : activePlan.recommendedLevel === 'balanced'
-        ? 'gentle' as const
-        : undefined;
+    const gentlerLevel = activePlan.gentlerLevel;
     return (
       <Shell>
         <PageHeader eyebrow="READY WHEN YOU ARE" title="Your plan for today" />
@@ -747,7 +776,14 @@ export function KineoProductApp({
             {durationLabel(activePlan.duration)} · {activePlan.itemCount} steps · {Math.round(activePlan.nominalSeconds / secondsPerMinute)} min
           </Text>
         </View>
-        <Text style={styles.supporting}>{planExplanation(activePlan)}</Text>
+        {planExplanationLines(activePlan).map((line) => (
+          <Text key={line} style={styles.supporting}>{line}</Text>
+        ))}
+        {activePlan.omittedSecondaryArea === undefined ? null : (
+          <Text style={styles.supporting}>
+            {areaLabels[activePlan.omittedSecondaryArea]} is not included because compatible prototype content is unavailable.
+          </Text>
+        )}
         <View style={styles.segmentedControl} accessibilityRole="radiogroup">
           {(['quick', 'standard'] as const).map((duration) => (
             <Pressable
@@ -1030,7 +1066,10 @@ export function KineoProductApp({
         <View style={styles.historyCard}>
           <Text style={styles.cardTitle}>Reminders</Text>
           <Text style={styles.cardBody}>
-            {reminder?.enabled
+            {reminder?.enabled && (
+              screen.profile.reminderAuthorization === 'authorized' ||
+              screen.profile.reminderAuthorization === 'provisional'
+            )
               ? 'One generic daily reminder is scheduled.'
               : screen.profile.reminderAuthorization === 'denied'
                 ? 'Notifications are off in iPhone Settings. Kineo still works without them.'
@@ -1038,7 +1077,21 @@ export function KineoProductApp({
                   ? 'Reminder settings are temporarily unavailable. Kineo still works without them.'
                   : 'Optional. Kineo asks for notification access only after you choose a time.'}
           </Text>
-          {reminder?.enabled ? (
+          {reminderReconciliationFailed ? (
+            <Text style={styles.safetyCue}>
+              Kineo could not reconcile reminders after returning to the app. Try again from Profile.
+            </Text>
+          ) : null}
+          {screen.profile.reminderAuthorization === 'denied' ? (
+            <SecondaryButton
+              label="Open iPhone Settings"
+              onPress={() => void submit(() => service.openReminderSettings())}
+            />
+          ) : null}
+          {reminder?.enabled && (
+            screen.profile.reminderAuthorization === 'authorized' ||
+            screen.profile.reminderAuthorization === 'provisional'
+          ) ? (
             <SecondaryButton
               label="Turn reminders off"
               disabled={isSubmitting}
@@ -1227,7 +1280,10 @@ export function KineoProductApp({
         <View style={styles.safetyCard}>
           <Text style={styles.cardTitle}>Kineo is wellness guidance—not medical care.</Text>
           <Text style={styles.cardBody}>
-            Stop if a movement feels wrong. Kineo will withhold a routine when your answers need more caution.
+            Kineo is not intended for a new injury, sudden or unusual symptoms, postoperative rehabilitation, or emergencies.
+          </Text>
+          <Text style={styles.cardBody}>
+            Stop if you feel worse or something feels wrong, and seek appropriate professional help when needed. Kineo will withhold a routine when your answers need more caution.
           </Text>
         </View>
         <PrimaryButton
@@ -1273,6 +1329,24 @@ export function KineoProductApp({
           label="Review now"
           onPress={() => setScreen({ kind: 'attentionReturn', prompt: attentionPrompt })}
         />
+        <NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'attentionGuidance') {
+    return (
+      <Shell>
+        <PageHeader eyebrow="ATTENTION REQUIRED" title="Kineo cannot guide this change." />
+        <Text style={styles.supporting}>
+          Your answer for {areaLabels[screen.prompt.area].toLowerCase()} described a new, sudden, unusual, or uncertain change. Kineo will not provide another routine right now.
+        </Text>
+        <Text style={styles.supporting}>
+          Seek appropriate professional help if needed. Use urgent or emergency services when the situation may be an emergency.
+        </Text>
+        <Text style={styles.supporting}>
+          On your next visit, Kineo will ask whether this area has returned to its usual recurring pattern.
+        </Text>
         <NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />
       </Shell>
     );
@@ -1553,12 +1627,19 @@ function routineStatusLabel(status: RoutinePresentation['status']): string {
   }
 }
 
-function planExplanation(plan: PlanPresentation): string {
-  return plan.recommendedLevel === 'gentle'
-    ? 'A gentler routine matches what you shared today.'
-    : plan.recommendedLevel === 'active'
-      ? 'Your recent check-ins support the Active option.'
-      : 'A balanced routine matches what you shared today.';
+function planExplanationLines(plan: PlanPresentation): readonly string[] {
+  const copyByKey: Readonly<Record<string, string>> = {
+    'reason.user_gentler_override': 'You chose a gentler option for today.',
+    'reason.reported_worse': 'You reported feeling worse than your usual pattern.',
+    'reason.movement_limited': 'Movement felt limited today.',
+    'reason.better_good_active': 'You reported feeling better with good movement comfort.',
+    'reason.balanced_checkin': 'Your check-in supports a Balanced option today.',
+    'reason.active_locked': 'Active remains unavailable until enough qualifying history is recorded.',
+    'reason.secondary_more_conservative': 'The more cautious area set today’s level.',
+  };
+  return plan.explanationKeys.map(
+    (key) => copyByKey[key] ?? 'Your saved check-in determined this plan.',
+  );
 }
 
 function routineTimerText(
@@ -1591,7 +1672,7 @@ function routineStepCanAdvance(
 function screenForAttentionResolution(resolution: AttentionResolution): LocalScreen {
   return resolution.kind === 'ready'
     ? { kind: 'start', state: { kind: 'today', primaryArea: resolution.primaryArea } }
-    : { kind: 'start', state: { kind: 'attentionRequired', prompt: resolution.prompt } };
+    : { kind: 'attentionGuidance', prompt: resolution.prompt };
 }
 
 const styles = StyleSheet.create({

@@ -33,6 +33,7 @@ import type { KineoPersistence } from '../core/persistence/kineo-store';
 import type {
   ProductFlowError,
   ProductResult,
+  RoutineEndReason,
   RoutinePresentation,
 } from '../core/product/product-flow';
 
@@ -162,6 +163,8 @@ export class KineoRoutineModule {
   async restoreInterrupted(
     session: RoutineSession,
   ): Promise<ProductResult<RoutinePresentation>> {
+    const snapshot = this.decodeSnapshot(session);
+    if (!snapshot.ok) return snapshot;
     if (session.status === 'prepared') return this.presentation(session);
     if (session.status === 'inProgress') return this.transition(session, 'paused', 'paused');
     return this.presentation(session);
@@ -288,11 +291,16 @@ export class KineoRoutineModule {
 
   async end(
     sessionId: RoutineSessionId,
-    forSafety: boolean,
+    reason: RoutineEndReason,
   ): Promise<ProductResult<RoutinePresentation>> {
     let session = await this.requiredSession(sessionId);
     if (!session.ok) return session;
     if (this.isTerminal(session.value.status)) return this.presentation(session.value);
+    if (session.value.status === 'prepared') {
+      return reason === 'intentional'
+        ? this.transition(session.value, 'abandoned', 'abandoned')
+        : invalidState();
+    }
     if (session.value.status === 'inProgress') {
       const paused = await this.recordTransition(session.value, 'paused', 'paused');
       if (!paused.ok) return paused;
@@ -301,8 +309,8 @@ export class KineoRoutineModule {
     if (session.value.status !== 'paused') return invalidState();
     return this.transition(
       session.value,
-      forSafety ? 'safetyStopped' : 'stopped',
-      forSafety ? 'safetyStopped' : 'stopped',
+      reason === 'safety' ? 'safetyStopped' : 'stopped',
+      reason === 'safety' ? 'safetyStopped' : 'stopped',
     );
   }
 
@@ -412,7 +420,7 @@ export class KineoRoutineModule {
       occurredAtMilliseconds: timestamp,
     });
     if (!event.ok) return invalidData();
-    const terminal = status === 'completed' || status === 'stopped' || status === 'safetyStopped';
+    const terminal = this.isTerminal(status);
     const elapsed = kind === 'stepCompleted' || kind === 'skipped'
       ? { ok: true as const, value: noElapsedTime }
       : this.elapsedMilliseconds(session);

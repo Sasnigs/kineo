@@ -1,4 +1,5 @@
 import * as Notifications from 'expo-notifications';
+import { Linking } from 'react-native';
 
 import type { ReminderWindow } from '@/core/persistence/persistence-domain';
 import type {
@@ -97,6 +98,15 @@ export class ExpoReminderScheduler implements ReminderScheduling {
 
   async cancelAll(): Promise<ReminderResult<void>> {
     return this.cancelExisting();
+  }
+
+  async openSettings(): Promise<ReminderResult<void>> {
+    try {
+      await Linking.openSettings();
+      return { ok: true, value: undefined };
+    } catch {
+      return { ok: false, error: { code: 'settingsFailed' } };
+    }
   }
 
   private async cancelExisting(): Promise<ReminderResult<void>> {

@@ -49,6 +49,7 @@ export type PlanPresentation = Readonly<{
   includedAreas: readonly BodyArea[];
   omittedSecondaryArea?: BodyArea;
   recommendedLevel: RoutineLevel;
+  gentlerLevel?: RoutineLevel;
   selectedLevel: RoutineLevel;
   deliveredLevel: RoutineLevel;
   duration: DurationVariant;
@@ -83,6 +84,8 @@ export type RoutinePresentation = Readonly<{
   stepElapsedMilliseconds: number;
   contentAvailable: boolean;
 }>;
+
+export type RoutineEndReason = 'intentional' | 'safety';
 
 export type AttentionPrompt = Readonly<{
   area: BodyArea;

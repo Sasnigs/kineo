@@ -10,9 +10,12 @@ import {
   type BodyArea,
 } from '@/core/domain/selection-domain';
 import type {
+  CheckInResult,
+  ProfilePresentation,
   ProgressPresentation,
   ProductResult,
   ProductStartState,
+  RoutineEndReason,
 } from '@/core/product/product-flow';
 
 import { KineoProductApp } from './kineo-product-app';
@@ -28,6 +31,7 @@ class OnboardingService implements KineoProductServing {
     progress: { step: 'welcome' },
   };
   deleteResult: ProductResult<void> = { ok: true, value: undefined };
+  reminderAuthorization: ProfilePresentation['reminderAuthorization'] = 'notDetermined';
   progress: ProgressPresentation = {
     participationDayCount: 0,
     weeklyParticipationDayCount: 0,
@@ -103,7 +107,7 @@ class OnboardingService implements KineoProductServing {
     };
   }
 
-  async submitCheckIn() {
+  async submitCheckIn(): Promise<ProductResult<CheckInResult>> {
     return {
       ok: true as const,
       value: {
@@ -114,6 +118,7 @@ class OnboardingService implements KineoProductServing {
           primaryArea: 'neck' as const,
           includedAreas: ['neck'] as const,
           recommendedLevel: 'balanced' as const,
+          gentlerLevel: 'gentle' as const,
           selectedLevel: 'balanced' as const,
           deliveredLevel: 'balanced' as const,
           duration: 'standard' as const,
@@ -211,14 +216,14 @@ class OnboardingService implements KineoProductServing {
     return { ok: false as const, error: { code: 'invalidState' as const } };
   }
 
-  async endRoutine(_sessionId: RoutineSessionId, forSafety: boolean) {
+  async endRoutine(_sessionId: RoutineSessionId, reason: RoutineEndReason) {
     const started = await this.startRoutine();
     return started.ok
       ? {
           ok: true as const,
           value: {
             ...started.value,
-            status: forSafety ? 'safetyStopped' as const : 'stopped' as const,
+            status: reason === 'safety' ? 'safetyStopped' as const : 'stopped' as const,
             currentItem: undefined,
           },
         }
@@ -237,7 +242,7 @@ class OnboardingService implements KineoProductServing {
     return {
       ok: true as const,
       value: {
-        reminderAuthorization: 'notDetermined' as const,
+        reminderAuthorization: this.reminderAuthorization,
         profile: {
           onboardingCompletedAtMilliseconds: 1_750_000_000_000,
           adultAcknowledged: true,
@@ -251,6 +256,14 @@ class OnboardingService implements KineoProductServing {
         },
       },
     };
+  }
+
+  async reconcileReminder() {
+    return { ok: true as const, value: undefined };
+  }
+
+  async openReminderSettings() {
+    return { ok: true as const, value: undefined };
   }
 
   async saveAreaPreferences() {
@@ -274,6 +287,37 @@ class OnboardingService implements KineoProductServing {
   }
 }
 
+class AttentionService extends OnboardingService {
+  async submitCheckIn() {
+    return {
+      ok: true as const,
+      value: {
+        kind: 'attentionRequired' as const,
+        area: 'neck' as const,
+        responseEventId: '00000000-0000-0000-0000-000000000205' as never,
+        expectedAttentionUpdatedAtMilliseconds: 1_750_000_000_001,
+      },
+    };
+  }
+}
+
+class OmittedSecondaryPlanService extends OnboardingService {
+  async submitCheckIn(): Promise<ProductResult<CheckInResult>> {
+    const result = await super.submitCheckIn();
+    if (!result.ok || result.value.kind !== 'plan') return result;
+    return {
+      ok: true,
+      value: {
+        kind: 'plan',
+        plan: {
+          ...result.value.plan,
+          omittedSecondaryArea: 'upperMidBack',
+        },
+      },
+    };
+  }
+}
+
 describe('Kineo product app', () => {
   it('runs the complete durable onboarding flow', async () => {
     const view = await render(
@@ -292,6 +336,8 @@ describe('Kineo product app', () => {
     await view.findByText('Anything else to include?');
     await fireEvent.press(view.getByRole('button', { name: 'Just focus on my main area' }));
     await view.findByText('You stay in control.');
+    expect(view.getByText(/not intended for a new injury/)).toBeTruthy();
+    expect(view.getByText(/seek appropriate professional help/)).toBeTruthy();
     await fireEvent.press(view.getByRole('button', { name: 'I understand' }));
 
     await view.findByText('Let’s make this useful.');
@@ -339,6 +385,7 @@ describe('Kineo product app', () => {
     await fireEvent.press(view.getByRole('button', { name: 'Okay' }));
     await view.findByText('Your plan for today');
     expect(view.getByText('Balanced')).toBeTruthy();
+    expect(view.getByText('Your check-in supports a Balanced option today.')).toBeTruthy();
     await fireEvent.press(view.getByRole('button', { name: 'Begin routine' }));
     await view.findByText('Prototype movement 1');
     expect(view.getByRole('button', { name: 'Continue' })).toBeTruthy();
@@ -355,6 +402,61 @@ describe('Kineo product app', () => {
     await waitFor(() => expect(view.getByRole('header', { name: 'Profile' })).toBeTruthy());
     expect(view.getByText('Health app context')).toBeTruthy();
     expect(view.getByText('App information')).toBeTruthy();
+  });
+
+  it('lets a user correct the conditional question before submission', async () => {
+    const service = new OnboardingService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const view = await render(
+      <KineoProductApp service={service} onStoreRestartRequired={() => undefined} />,
+    );
+
+    await fireEvent.press(await view.findByRole('button', { name: 'Check in' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Worse' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Okay' }));
+    await view.findByText('Is this new, sudden, or unusual for you?');
+    await fireEvent.press(view.getByRole('button', { name: 'I selected that by mistake' }));
+    await view.findByText('Compared with your usual pattern…');
+  });
+
+  it('shows immediate guidance instead of an immediate return-to-usual bypass', async () => {
+    const service = new AttentionService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const view = await render(
+      <KineoProductApp service={service} onStoreRestartRequired={() => undefined} />,
+    );
+
+    await fireEvent.press(await view.findByRole('button', { name: 'Check in' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Worse' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Limited' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Yes' }));
+    await view.findByText('Kineo cannot guide this change.');
+    expect(view.queryByRole('button', { name: 'Review now' })).toBeNull();
+  });
+
+  it('names a secondary area omitted by content fallback', async () => {
+    const service = new OmittedSecondaryPlanService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const view = await render(
+      <KineoProductApp service={service} onStoreRestartRequired={() => undefined} />,
+    );
+
+    await fireEvent.press(await view.findByRole('button', { name: 'Check in' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Similar' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Okay' }));
+    expect(await view.findByText(/Upper & mid back is not included/)).toBeTruthy();
   });
 
   it('shows private area history without implying causation', async () => {
@@ -458,6 +560,24 @@ describe('Kineo product app', () => {
     await view.findByRole('header', { name: 'Reset history?' });
     await fireEvent.press(view.getByRole('button', { name: 'Reset history' }));
     await waitFor(() => expect(reset).toHaveBeenCalledTimes(1));
+  });
+
+  it('offers iPhone Settings after reminder permission is denied', async () => {
+    const service = new OnboardingService();
+    service.reminderAuthorization = 'denied';
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const openSettings = jest.spyOn(service, 'openReminderSettings');
+    const view = await render(
+      <KineoProductApp service={service} onStoreRestartRequired={() => undefined} />,
+    );
+
+    await fireEvent.press(await view.findByRole('tab', { name: 'Profile' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Open iPhone Settings' }));
+    await waitFor(() => expect(openSettings).toHaveBeenCalledTimes(1));
   });
 
   it('restarts the protected store after a failed deletion attempt', async () => {

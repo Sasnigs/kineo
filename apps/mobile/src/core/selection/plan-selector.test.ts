@@ -27,6 +27,7 @@ import {
 } from './active-history';
 import { selectAreaLevel } from './area-level-rule';
 import {
+  nextGentlerLevel,
   prototypeSelectionRulesVersion,
   selectPlan,
   type PlanSelectionRequest,
@@ -169,6 +170,11 @@ function inputForLevel(level: RoutineLevel): Readonly<{
 }
 
 describe('Plan selector', () => {
+  it('owns the single-step gentler option exposed to presentation', () => {
+    expect(nextGentlerLevel('active')).toBe('balanced');
+    expect(nextGentlerLevel('balanced')).toBe('gentle');
+    expect(nextGentlerLevel('gentle')).toBeUndefined();
+  });
   it.each(parityFixture)('matches shared parity: $name', (testCase) => {
     const fixtureRequest = testCase.request;
     const primaryArea = member(bodyAreas, fixtureRequest.primaryArea);
