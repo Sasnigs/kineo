@@ -22,6 +22,13 @@ private func storageException(_ reason: String) -> NSError {
   )
 }
 
+private func isProtectedDataAvailable() async -> Bool {
+  await MainActor.run {
+    UIApplication.shared.isProtectedDataAvailable
+  }
+}
+
+/// Provides verified private-storage operations to the Expo application.
 public class KineoStorageProtectionModule: Module {
   public func definition() -> ModuleDefinition {
     Name("KineoStorageProtection")
@@ -30,8 +37,8 @@ public class KineoStorageProtectionModule: Module {
       UIApplication.shared.isProtectedDataAvailable
     }.runOnQueue(.main)
 
-    AsyncFunction("preparePrivateDirectoryAsync") { () throws -> ProtectedDirectoryRecord in
-      guard UIApplication.shared.isProtectedDataAvailable else {
+    AsyncFunction("preparePrivateDirectoryAsync") { () async throws -> ProtectedDirectoryRecord in
+      guard await isProtectedDataAvailable() else {
         throw storageException("Protected data is unavailable.")
       }
       try resumePendingDeletion()
@@ -43,8 +50,8 @@ public class KineoStorageProtectionModule: Module {
       return try protectAndInspect(directory)
     }
 
-    AsyncFunction("protectDatabaseFilesAsync") { (databasePath: String) throws -> [ProtectedDirectoryRecord] in
-      guard UIApplication.shared.isProtectedDataAvailable else {
+    AsyncFunction("protectDatabaseFilesAsync") { (databasePath: String) async throws -> [ProtectedDirectoryRecord] in
+      guard await isProtectedDataAvailable() else {
         throw storageException("Protected data is unavailable.")
       }
       let directory = try privateDirectoryURL().standardizedFileURL
@@ -65,8 +72,8 @@ public class KineoStorageProtectionModule: Module {
       }
     }
 
-    AsyncFunction("beginDeletionAsync") { () throws -> ProtectedDirectoryRecord in
-      guard UIApplication.shared.isProtectedDataAvailable else {
+    AsyncFunction("beginDeletionAsync") { () async throws -> ProtectedDirectoryRecord in
+      guard await isProtectedDataAvailable() else {
         throw storageException("Protected data is unavailable.")
       }
       let marker = try deletionMarkerURL()
@@ -78,8 +85,8 @@ public class KineoStorageProtectionModule: Module {
       return try protectAndInspect(marker)
     }
 
-    AsyncFunction("deletePrivateStorageAsync") { () throws -> Bool in
-      guard UIApplication.shared.isProtectedDataAvailable else {
+    AsyncFunction("deletePrivateStorageAsync") { () async throws -> Bool in
+      guard await isProtectedDataAvailable() else {
         throw storageException("Protected data is unavailable.")
       }
       let marker = try deletionMarkerURL()
@@ -90,8 +97,8 @@ public class KineoStorageProtectionModule: Module {
       return !FileManager.default.fileExists(atPath: try privateDirectoryURL().path)
     }
 
-    AsyncFunction("finishDeletionAsync") { () throws -> Bool in
-      guard UIApplication.shared.isProtectedDataAvailable else {
+    AsyncFunction("finishDeletionAsync") { () async throws -> Bool in
+      guard await isProtectedDataAvailable() else {
         throw storageException("Protected data is unavailable.")
       }
       let directory = try privateDirectoryURL()
