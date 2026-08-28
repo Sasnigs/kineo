@@ -52,8 +52,34 @@ jobs:
           npm run dependencies:check
           npm run audit
 
+      - name: Verify native storage path policy
+        run: |
+          swiftc \
+            -module-cache-path "$RUNNER_TEMP/kineo-swift-module-cache" \
+            modules/kineo-storage-protection/ios/KineoStoragePathPolicy.swift \
+            ../../Scripts/KineoStoragePathPolicyTests.swift \
+            -o "$RUNNER_TEMP/kineo-storage-path-policy-tests"
+          "$RUNNER_TEMP/kineo-storage-path-policy-tests"
+
       - name: Bundle iOS app
         run: npx expo export --platform ios --output-dir "$RUNNER_TEMP/kineo-expo-export"
+
+      - name: Boot iOS simulator
+        run: |
+          simulator_id="$(xcrun simctl list devices available -j | \
+            jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')"
+          if [[ -z "$simulator_id" || "$simulator_id" == "null" ]]; then
+            printf 'No available iPhone simulator was found.\n' >&2
+            exit 1
+          fi
+          simulator_state="$(xcrun simctl list devices -j | \
+            jq -r --arg simulator_id "$simulator_id" \
+              '.devices[][] | select(.udid == $simulator_id) | .state')"
+          if [[ "$simulator_state" != "Booted" ]]; then
+            xcrun simctl boot "$simulator_id"
+          fi
+          xcrun simctl bootstatus "$simulator_id" -b
+          printf 'KINEO_SIMULATOR_ID=%s\n' "$simulator_id" >> "$GITHUB_ENV"
 
       - name: Generate and build native iOS app
         run: |
@@ -61,8 +87,23 @@ jobs:
           xcodebuild \
             -workspace ios/Kineo.xcworkspace \
             -scheme Kineo \
-            -configuration Debug \
-            -destination 'generic/platform=iOS Simulator' \
+            -configuration Release \
+            -destination "platform=iOS Simulator,id=$KINEO_SIMULATOR_ID" \
             -derivedDataPath "$RUNNER_TEMP/kineo-expo-derived-data" \
-            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=YES \
             build
+
+      - name: Verify clean Expo launch
+        working-directory: ${{ github.workspace }}
+        run: |
+          Scripts/verify-simulator-launch.sh \
+            "$KINEO_SIMULATOR_ID" \
+            "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
+            "Get started"
+          xcrun simctl ui "$KINEO_SIMULATOR_ID" \
+            content_size accessibility-extra-extra-extra-large
+          xcrun simctl ui "$KINEO_SIMULATOR_ID" appearance dark
+          Scripts/verify-simulator-launch.sh \
+            "$KINEO_SIMULATOR_ID" \
+            "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
+            "routine shaped"

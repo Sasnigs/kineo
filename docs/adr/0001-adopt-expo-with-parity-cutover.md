@@ -4,7 +4,7 @@ status: accepted
 
 # Adopt Expo through a parity-gated cutover
 
-Kineo moved from SwiftUI to an Expo SDK 57 / React Native implementation in `apps/mobile`. The Expo app has passed automated product, safety, persistence, privacy, accessibility, and offline parity gates. Stable parity fixtures now live with the Expo tests; the Swift reference remains only until the E6 device and archive gates pass.
+Kineo moved from SwiftUI to an Expo SDK 57 / React Native implementation in `apps/mobile`. Automated product, safety, persistence, privacy, offline, native-path, and first-screen accessibility gates pass. Stable parity fixtures now live with the Expo tests; common-task UI qualification and the E6 device/archive gates remain before the Swift reference is removed.
 
 Brownfield embedding is rejected because it adds two runtimes and Expo currently labels that integration path alpha. Android and web become possible future targets, but this decision does not expand version-one scope beyond iPhone or authorize networking, telemetry, accounts, public distribution, or changes to product behavior.
 

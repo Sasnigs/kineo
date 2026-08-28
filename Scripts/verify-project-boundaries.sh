@@ -81,6 +81,12 @@ if git grep -n -I -E \
     fail "Expo configuration or native modules contain an unapproved capability"
 fi
 
+if git grep -n -I -E \
+    'maxFontSizeMultiplier|allowFontScaling[[:space:]]*=[[:space:]]*\{?false' \
+    -- 'apps/mobile/src/**/*.ts' 'apps/mobile/src/**/*.tsx'; then
+    fail "Expo UI sources must not cap or disable Dynamic Type"
+fi
+
 if git grep -n -E \
     '(^|[[:space:]])import[[:space:]]+(HealthKit|Network|CloudKit)([[:space:]]|$)|URLSession|NW(Connection|Path|Browser)|https?://' \
     -- 'App/*.swift' 'Packages/KineoModules/Sources/**/*.swift' \
