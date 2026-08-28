@@ -242,6 +242,7 @@ describe('Kineo product service check-in', () => {
       value: {
         kind: 'attentionRequired',
         area: 'lowerBack',
+        responseEventId: '00000000-0000-0000-0000-000000000104',
         expectedAttentionUpdatedAtMilliseconds: initialTimestamp,
       },
     });
@@ -249,13 +250,94 @@ describe('Kineo product service check-in', () => {
       ok: true,
       value: {
         kind: 'attentionRequired',
-        area: 'lowerBack',
-        expectedAttentionUpdatedAtMilliseconds: initialTimestamp,
+        prompt: {
+          area: 'lowerBack',
+          responseEventId: '00000000-0000-0000-0000-000000000105',
+          expectedAttentionUpdatedAtMilliseconds: initialTimestamp,
+        },
       },
     });
     await expect(service.beginCheckIn()).resolves.toEqual({
       ok: false,
       error: { code: 'invalidState' },
+    });
+    await database.closeAsync();
+  });
+
+  it('keeps Attention on uncertainty and clears it only after return-to-usual', async () => {
+    const { database, service } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const draft = await service.beginCheckIn();
+    if (!draft.ok) throw new Error('Check-in fixture did not start.');
+    const flagged = await service.submitCheckIn(draft.value, {
+      area: 'neck',
+      changeReport: 'worse',
+      movementComfort: 'okay',
+      conditionalSafetyAnswer: 'yes',
+    });
+    if (!flagged.ok || flagged.value.kind !== 'attentionRequired') {
+      throw new Error('Attention fixture was not created.');
+    }
+    const kept = await service.respondToAttentionReturn({
+      area: flagged.value.area,
+      responseEventId: flagged.value.responseEventId,
+      expectedAttentionUpdatedAtMilliseconds:
+        flagged.value.expectedAttentionUpdatedAtMilliseconds,
+    }, 'notSure');
+    expect(kept).toMatchObject({
+      ok: true,
+      value: { kind: 'attentionRequired', prompt: { area: 'neck' } },
+    });
+    if (!kept.ok || kept.value.kind !== 'attentionRequired') {
+      throw new Error('Attention was not reaffirmed.');
+    }
+    await expect(service.respondToAttentionReturn(kept.value.prompt, 'yes')).resolves.toEqual({
+      ok: true,
+      value: { kind: 'ready', primaryArea: 'neck' },
+    });
+    await expect(service.loadStartState()).resolves.toEqual({
+      ok: true,
+      value: { kind: 'today', primaryArea: 'neck' },
+    });
+    await database.closeAsync();
+  });
+
+  it('clears Attention only after a complete valid correction', async () => {
+    const { database, service } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const draft = await service.beginCheckIn();
+    if (!draft.ok) throw new Error('Check-in fixture did not start.');
+    const flagged = await service.submitCheckIn(draft.value, {
+      area: 'neck',
+      changeReport: 'worse',
+      movementComfort: 'limited',
+      conditionalSafetyAnswer: 'notSure',
+    });
+    if (!flagged.ok || flagged.value.kind !== 'attentionRequired') {
+      throw new Error('Attention fixture was not created.');
+    }
+    const correction = await service.beginAttentionCorrection({
+      area: flagged.value.area,
+      responseEventId: flagged.value.responseEventId,
+      expectedAttentionUpdatedAtMilliseconds:
+        flagged.value.expectedAttentionUpdatedAtMilliseconds,
+    });
+    if (!correction.ok) throw new Error('Correction fixture did not start.');
+    await expect(service.submitAttentionCorrection(correction.value, {
+      area: 'neck',
+      changeReport: 'similar',
+      movementComfort: 'okay',
+    })).resolves.toEqual({
+      ok: true,
+      value: { kind: 'ready', primaryArea: 'neck' },
     });
     await database.closeAsync();
   });
@@ -313,6 +395,65 @@ describe('Kineo product service check-in', () => {
     await expect(service.loadStartState()).resolves.toEqual({
       ok: true,
       value: { kind: 'today', primaryArea: 'neck' },
+    });
+    await database.closeAsync();
+  });
+
+  it('persists alternatives, skip reasons, safe stopping, and idempotent feedback', async () => {
+    const { database, service } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const draft = await service.beginCheckIn();
+    if (!draft.ok) throw new Error('Check-in fixture did not start.');
+    const checkedIn = await service.submitCheckIn(draft.value, {
+      area: 'neck',
+      changeReport: 'better',
+      movementComfort: 'good',
+    });
+    if (!checkedIn.ok || checkedIn.value.kind !== 'plan') {
+      throw new Error('Plan fixture was not created.');
+    }
+    let routine = await service.startRoutine(checkedIn.value.plan.decisionId);
+    if (!routine.ok || routine.value.currentItem?.kind !== 'movement') {
+      throw new Error('Routine movement fixture was not created.');
+    }
+    const alternative = routine.value.currentItem.availableAlternatives[0];
+    if (alternative === undefined) throw new Error('Alternative fixture is missing.');
+
+    routine = await service.selectRoutineAlternative(
+      routine.value.sessionId,
+      alternative.movementId,
+    );
+    expect(routine).toMatchObject({
+      ok: true,
+      value: {
+        status: 'paused',
+        selectedAlternative: { movementId: alternative.movementId },
+      },
+    });
+    if (!routine.ok) throw new Error('Alternative was not selected.');
+    routine = await service.resumeRoutine(routine.value.sessionId);
+    if (!routine.ok) throw new Error('Routine did not resume.');
+    routine = await service.skipRoutineStep(routine.value.sessionId, 'unclear');
+    expect(routine).toMatchObject({
+      ok: true,
+      value: { status: 'inProgress', currentStepIndex: 1 },
+    });
+    if (!routine.ok) throw new Error('Routine step was not skipped.');
+    routine = await service.endRoutine(routine.value.sessionId, true);
+    expect(routine).toMatchObject({ ok: true, value: { status: 'safetyStopped' } });
+    if (!routine.ok) throw new Error('Routine did not stop safely.');
+    const feedback = { neck: 'same' as const };
+    await expect(service.submitFeedback(routine.value.sessionId, feedback)).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    await expect(service.submitFeedback(routine.value.sessionId, feedback)).resolves.toEqual({
+      ok: true,
+      value: undefined,
     });
     await database.closeAsync();
   });

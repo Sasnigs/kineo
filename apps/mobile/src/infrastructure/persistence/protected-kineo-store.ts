@@ -8,6 +8,8 @@ import type {
   CheckIn,
   LocalDay,
   ProfileState,
+  SafetyEvent,
+  SafetyEventId,
   SafetyMutation,
 } from '../../core/persistence/persistence-domain';
 import type {
@@ -69,6 +71,10 @@ export class ProtectedKineoStore implements KineoPersistence {
     return this.write(() => this.base.completeCheckIn(checkIn, safetyMutations));
   }
 
+  applySafetyMutation(mutation: SafetyMutation): Promise<PersistenceResult<void>> {
+    return this.write(() => this.base.applySafetyMutation(mutation));
+  }
+
   appendSelectionDecision(decision: SelectionDecision): Promise<PersistenceResult<void>> {
     return this.write(() => this.base.appendSelectionDecision(decision));
   }
@@ -113,8 +119,16 @@ export class ProtectedKineoStore implements KineoPersistence {
     return this.write(() => this.base.submitFeedback(submission));
   }
 
+  hasFeedbackForRoutine(id: RoutineSessionId): Promise<PersistenceResult<boolean>> {
+    return this.read(() => this.base.hasFeedbackForRoutine(id));
+  }
+
   loadAttentionStates(): Promise<PersistenceResult<readonly AttentionState[]>> {
     return this.read(() => this.base.loadAttentionStates());
+  }
+
+  loadSafetyEvent(id: SafetyEventId): Promise<PersistenceResult<SafetyEvent | undefined>> {
+    return this.read(() => this.base.loadSafetyEvent(id));
   }
 
   resetHistory(): Promise<PersistenceResult<void>> {

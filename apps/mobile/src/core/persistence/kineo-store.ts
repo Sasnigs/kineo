@@ -4,6 +4,8 @@ import type {
   CheckIn,
   LocalDay,
   ProfileState,
+  SafetyEvent,
+  SafetyEventId,
   SafetyMutation,
 } from './persistence-domain';
 import type { PersistenceResult } from './persistence-contract';
@@ -29,6 +31,7 @@ export interface KineoStore {
     checkIn: CheckIn,
     safetyMutations: readonly SafetyMutation[],
   ): Promise<PersistenceResult<void>>;
+  applySafetyMutation(mutation: SafetyMutation): Promise<PersistenceResult<void>>;
   appendSelectionDecision(
     decision: SelectionDecision,
   ): Promise<PersistenceResult<void>>;
@@ -49,8 +52,12 @@ export interface KineoStore {
   ): Promise<PersistenceResult<void>>;
   loadRoutineEvents(id: RoutineSessionId): Promise<PersistenceResult<readonly RoutineEvent[]>>;
   submitFeedback(submission: FeedbackSubmission): Promise<PersistenceResult<void>>;
+  hasFeedbackForRoutine(
+    id: RoutineSessionId,
+  ): Promise<PersistenceResult<boolean>>;
   loadAttentionStates(): Promise<
     PersistenceResult<readonly AttentionState[]>
   >;
+  loadSafetyEvent(id: SafetyEventId): Promise<PersistenceResult<SafetyEvent | undefined>>;
   resetHistory(): Promise<PersistenceResult<void>>;
 }

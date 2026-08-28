@@ -45,8 +45,10 @@ import {
   createCheckInEntry,
   createLocalDayContext,
   createProfileState,
+  createSafetyEvent,
   createSafetyMutation,
   parseLocalDay,
+  parseSafetyEventId,
   telemetryChoices,
   type AttentionState,
   type CheckIn,
@@ -56,6 +58,8 @@ import {
   type LocalDay,
   type ProfileState,
   type SafetyMutation,
+  type SafetyEvent,
+  type SafetyEventId,
   type TelemetryChoice,
 } from '../../core/persistence/persistence-domain';
 import type {
@@ -310,6 +314,10 @@ export class KineoSqliteStore implements KineoStore {
 
   submitFeedback(submission: FeedbackSubmission): Promise<PersistenceResult<void>> {
     return this.routineRepository.submitFeedback(submission);
+  }
+
+  hasFeedbackForRoutine(id: RoutineSessionId): Promise<PersistenceResult<boolean>> {
+    return this.routineRepository.hasFeedbackForRoutine(id);
   }
 
   async loadProfileState(): Promise<
@@ -730,9 +738,48 @@ export class KineoSqliteStore implements KineoStore {
         await this.replaceCheckInEntries(transaction, validated.value);
         await this.upsertCheckIn(transaction, validated.value);
         for (const mutation of mutations) {
-          await this.applySafetyMutation(transaction, mutation);
+          await this.applySafetyMutationInTransaction(transaction, mutation);
         }
       });
+      return { ok: true, value: undefined };
+    } catch (error) {
+      return sqliteWriteFailure(error);
+    }
+  }
+
+  async applySafetyMutation(
+    input: SafetyMutation,
+  ): Promise<PersistenceResult<void>> {
+    const mutation = createSafetyMutation(input);
+    if (!mutation.ok) {
+      return {
+        ok: false,
+        error: { code: 'constraintViolation', constraint: 'domainInvariant' },
+      };
+    }
+    try {
+      const existing = await this.database.getFirstAsync<SafetyEventRow>(
+        'SELECT * FROM safety_events WHERE id = ?',
+        [mutation.value.event.id],
+      );
+      if (existing !== null) {
+        const event = mutation.value.event;
+        const matches =
+          existing.area === event.area &&
+          existing.kind === event.kind &&
+          optional(existing.source_check_in_entry_id) === event.sourceCheckInEntryId &&
+          optional(existing.return_answer) === event.returnAnswer &&
+          existing.occurred_at_ms === event.occurredAtMilliseconds &&
+          existing.local_day === event.dayContext.localDay &&
+          existing.time_zone_id === event.dayContext.timeZoneId &&
+          existing.calendar_id === event.dayContext.calendarId;
+        return matches
+          ? { ok: true, value: undefined }
+          : { ok: false, error: { code: 'conflictingWrite' } };
+      }
+      await this.database.withExclusiveTransactionAsync((transaction) =>
+        this.applySafetyMutationInTransaction(transaction, mutation.value),
+      );
       return { ok: true, value: undefined };
     } catch (error) {
       return sqliteWriteFailure(error);
@@ -764,6 +811,60 @@ export class KineoSqliteStore implements KineoStore {
       return { ok: true, value: Object.freeze(states) };
     } catch {
       return { ok: false, error: { code: 'readFailed' } };
+    }
+  }
+
+  async loadSafetyEvent(
+    id: SafetyEventId,
+  ): Promise<PersistenceResult<SafetyEvent | undefined>> {
+    try {
+      const row = await this.database.getFirstAsync<SafetyEventRow>(
+        'SELECT * FROM safety_events WHERE id = ?',
+        [id],
+      );
+      if (row === null) return { ok: true, value: undefined };
+      const parsedId = parseSafetyEventId(row.id);
+      const localDay = parseLocalDay(row.local_day);
+      const area = asBodyArea(row.area);
+      const kind = oneOf(row.kind, [
+        'attentionEntered',
+        'attentionClearedReturnedToUsual',
+        'attentionClearedCorrection',
+        'attentionReaffirmed',
+        'attentionReaffirmedCorrection',
+      ] as const);
+      const sourceId = row.source_check_in_entry_id === null
+        ? undefined
+        : parseCheckInEntryId(row.source_check_in_entry_id);
+      if (
+        !parsedId.ok ||
+        !localDay.ok ||
+        area === undefined ||
+        kind === undefined ||
+        (sourceId !== undefined && !sourceId.ok)
+      ) throw new StoreAbort({ code: 'corruptedStore' });
+      const event = createSafetyEvent({
+        id: parsedId.value,
+        area,
+        kind,
+        sourceCheckInEntryId: sourceId?.value,
+        returnAnswer: row.return_answer === null
+          ? undefined
+          : definedOrAbort(oneOf(row.return_answer, ['no', 'yes', 'notSure'] as const)),
+        occurredAtMilliseconds: row.occurred_at_ms,
+        dayContext: {
+          localDay: localDay.value,
+          timeZoneId: row.time_zone_id,
+          calendarId: row.calendar_id,
+        },
+      });
+      return event.ok
+        ? { ok: true, value: event.value }
+        : { ok: false, error: { code: 'corruptedStore' } };
+    } catch (error) {
+      return error instanceof StoreAbort
+        ? { ok: false, error: error.persistenceError }
+        : { ok: false, error: { code: 'readFailed' } };
     }
   }
 
@@ -1057,7 +1158,7 @@ export class KineoSqliteStore implements KineoStore {
     }
   }
 
-  private async applySafetyMutation(
+  private async applySafetyMutationInTransaction(
     transaction: SqliteExecutor,
     mutation: SafetyMutation,
   ): Promise<void> {

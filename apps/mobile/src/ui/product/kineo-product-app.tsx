@@ -14,11 +14,15 @@ import {
   bodyAreas,
   requiresConditionalSafetyAnswer,
   type BodyArea,
+  type AreaResponse,
   type ChangeReport,
   type MovementComfort,
 } from '@/core/domain/selection-domain';
 import type {
   AreaCheckInAnswers,
+  AttentionCorrectionDraft,
+  AttentionPrompt,
+  AttentionResolution,
   CheckInDraft,
   PlanPresentation,
   ProductFlowError,
@@ -47,9 +51,18 @@ type LocalScreen =
       stage: 'change' | 'comfort' | 'safety';
       changeReport?: ChangeReport;
       movementComfort?: MovementComfort;
+      correctionDraft?: AttentionCorrectionDraft;
     }>
+  | Readonly<{ kind: 'attentionReturn'; prompt: AttentionPrompt }>
   | Readonly<{ kind: 'plan'; plan: PlanPresentation }>
-  | Readonly<{ kind: 'routine'; routine: RoutinePresentation }>;
+  | Readonly<{ kind: 'routine'; routine: RoutinePresentation }>
+  | Readonly<{ kind: 'routineOptions'; routine: RoutinePresentation }>
+  | Readonly<{
+      kind: 'feedback';
+      routine: RoutinePresentation;
+      areaIndex: number;
+      responses: Readonly<Partial<Record<BodyArea, AreaResponse>>>;
+    }>;
 
 type KineoProductAppProps = Readonly<{
   service: KineoProductServing;
@@ -146,9 +159,17 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
   const submitCompletedAnswers = useCallback(async (
     draft: CheckInDraft,
     answers: Readonly<Partial<Record<BodyArea, AreaCheckInAnswers>>>,
+    correctionDraft?: AttentionCorrectionDraft,
   ) => {
     const primary = answers[draft.primaryArea];
     if (primary === undefined) return;
+    if (correctionDraft !== undefined) {
+      const corrected = await submit(() =>
+        service.submitAttentionCorrection(correctionDraft, primary),
+      );
+      if (corrected?.ok) setScreen(screenForAttentionResolution(corrected.value));
+      return;
+    }
     const secondary = draft.secondaryArea === undefined
       ? undefined
       : answers[draft.secondaryArea];
@@ -160,9 +181,12 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
           kind: 'start',
           state: {
             kind: 'attentionRequired',
-            area: result.value.area,
-            expectedAttentionUpdatedAtMilliseconds:
-              result.value.expectedAttentionUpdatedAtMilliseconds,
+            prompt: {
+              area: result.value.area,
+              responseEventId: result.value.responseEventId,
+              expectedAttentionUpdatedAtMilliseconds:
+                result.value.expectedAttentionUpdatedAtMilliseconds,
+            },
           },
         });
   }, [service, submit]);
@@ -198,7 +222,11 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
         });
         return;
       }
-      void submitCompletedAnswers(activeCheckIn.draft, answers);
+      void submitCompletedAnswers(
+        activeCheckIn.draft,
+        answers,
+        activeCheckIn.correctionDraft,
+      );
     };
     if (activeCheckIn.stage === 'change') {
       return (
@@ -212,7 +240,11 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
           {activeCheckIn.currentArea === activeCheckIn.draft.secondaryArea ? (
             <SecondaryButton
               label="Skip this area today"
-              onPress={() => void submitCompletedAnswers(activeCheckIn.draft, activeCheckIn.answers)}
+              onPress={() => void submitCompletedAnswers(
+                activeCheckIn.draft,
+                activeCheckIn.answers,
+                activeCheckIn.correctionDraft,
+              )}
             />
           ) : null}
         </Shell>
@@ -258,7 +290,84 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
     );
   }
 
-  const activeRoutine = screen.kind === 'routine'
+  if (screen.kind === 'routineOptions') {
+    const routine = screen.routine;
+    const movement = routine.currentItem?.kind === 'movement'
+      ? routine.currentItem
+      : undefined;
+    const update = async (
+      operation: () => Promise<
+        | Readonly<{ ok: true; value: RoutinePresentation }>
+        | Readonly<{ ok: false; error: ProductFlowError }>
+      >,
+    ) => {
+      const result = await submit(operation);
+      if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
+    };
+    return (
+      <Shell>
+        <PageHeader eyebrow="ROUTINE OPTIONS" title="What do you need?" />
+        {movement?.availableAlternatives[0] === undefined ? null : (
+          <ChoiceButton
+            label="Try an alternative"
+            onPress={() => void update(() => service.selectRoutineAlternative(
+              routine.sessionId,
+              movement.availableAlternatives[0].movementId,
+            ))}
+          />
+        )}
+        <ChoiceButton
+          label="Skip this step"
+          onPress={() => void update(() => service.skipRoutineStep(routine.sessionId))}
+        />
+        <ChoiceButton
+          label="End routine"
+          onPress={() => void update(() => service.endRoutine(routine.sessionId, false))}
+        />
+        <ChoiceButton
+          label="Something feels wrong"
+          onPress={() => void update(() => service.endRoutine(routine.sessionId, true))}
+        />
+        <SecondaryButton label="Back to routine" onPress={() => setScreen({ kind: 'routine', routine })} />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'attentionReturn') {
+    const respond = async (answer: 'yes' | 'no' | 'notSure') => {
+      const result = await submit(() => service.respondToAttentionReturn(screen.prompt, answer));
+      if (result?.ok) setScreen(screenForAttentionResolution(result.value));
+    };
+    return (
+      <Shell>
+        <PageHeader
+          eyebrow="ATTENTION CHECK"
+          title={`Has ${areaLabels[screen.prompt.area].toLowerCase()} returned to its usual pattern?`}
+        />
+        <Text style={styles.supporting}>Kineo will keep routines paused unless you answer yes.</Text>
+        <ChoiceButton label="Yes" onPress={() => void respond('yes')} />
+        <ChoiceButton label="No" onPress={() => void respond('no')} />
+        <ChoiceButton label="Not sure" onPress={() => void respond('notSure')} />
+        <SecondaryButton
+          label="I selected that by mistake"
+          onPress={() => void (async () => {
+            const result = await submit(() => service.beginAttentionCorrection(screen.prompt));
+            if (!result?.ok) return;
+            setScreen({
+              kind: 'checkIn',
+              draft: result.value.checkIn,
+              correctionDraft: result.value,
+              currentArea: result.value.checkIn.primaryArea,
+              answers: {},
+              stage: 'change',
+            });
+          })()}
+        />
+      </Shell>
+    );
+  }
+
+  const activeRoutine = screen.kind === 'routine' || screen.kind === 'feedback'
     ? screen.routine
     : screen.kind === 'start' && screen.state.kind === 'unfinishedRoutine'
       ? screen.state.routine
@@ -314,14 +423,47 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
             disabled={isSubmitting}
             onPress={() => void updateRoutine(() => service.pauseRoutine(activeRoutine.sessionId))}
           />
+          <SecondaryButton
+            label="More options"
+            onPress={() => setScreen({ kind: 'routineOptions', routine: activeRoutine })}
+          />
         </Shell>
       );
     }
+    const feedbackAreaIndex = screen.kind === 'feedback' ? screen.areaIndex : 0;
+    const feedbackResponses = screen.kind === 'feedback' ? screen.responses : {};
+    const feedbackArea = activeRoutine.includedAreas[feedbackAreaIndex];
+    const finishFeedback = async (response?: AreaResponse) => {
+      if (feedbackArea === undefined) return;
+      const responses = response === undefined
+        ? feedbackResponses
+        : { ...feedbackResponses, [feedbackArea]: response };
+      const nextAreaIndex = feedbackAreaIndex + displayIndexOffset;
+      if (nextAreaIndex < activeRoutine.includedAreas.length) {
+        setScreen({
+          kind: 'feedback',
+          routine: activeRoutine,
+          areaIndex: nextAreaIndex,
+          responses,
+        });
+        return;
+      }
+      const result = await submit(() => service.submitFeedback(activeRoutine.sessionId, responses));
+      if (result?.ok) await load();
+    };
     return (
       <Shell>
-        <PageHeader eyebrow="ROUTINE COMPLETE" title="You showed up for yourself." />
-        <Text style={styles.supporting}>Your routine is saved. A response is optional.</Text>
-        <PrimaryButton label="Finish" onPress={() => void load()} />
+        <PageHeader
+          eyebrow="OPTIONAL RESPONSE"
+          title={feedbackArea === undefined
+            ? 'Your routine is saved.'
+            : `How did ${areaLabels[feedbackArea].toLowerCase()} feel afterward?`}
+        />
+        <Text style={styles.supporting}>This helps Kineo interpret your own history. It does not measure recovery.</Text>
+        <ChoiceButton label="Better" onPress={() => void finishFeedback('better')} />
+        <ChoiceButton label="About the same" onPress={() => void finishFeedback('same')} />
+        <ChoiceButton label="Worse" onPress={() => void finishFeedback('worse')} />
+        <SecondaryButton label="Skip response" onPress={() => void finishFeedback()} />
       </Shell>
     );
   }
@@ -518,13 +660,17 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
   }
 
   if (screen.kind === 'start' && screen.state.kind === 'attentionRequired') {
+    const attentionPrompt = screen.state.prompt;
     return (
       <Shell>
         <PageHeader eyebrow="ATTENTION REQUIRED" title="Pause before another routine." />
         <Text style={styles.supporting}>
-          Your earlier answer for {areaLabels[screen.state.area].toLowerCase()} needs a fresh safety check before Kineo can continue.
+          Your earlier answer for {areaLabels[attentionPrompt.area].toLowerCase()} needs a fresh safety check before Kineo can continue.
         </Text>
-        <PrimaryButton label="Review now" onPress={() => undefined} />
+        <PrimaryButton
+          label="Review now"
+          onPress={() => setScreen({ kind: 'attentionReturn', prompt: attentionPrompt })}
+        />
       </Shell>
     );
   }
@@ -709,6 +855,12 @@ function planExplanation(plan: PlanPresentation): string {
     : plan.recommendedLevel === 'active'
       ? 'Your recent check-ins support the Active option.'
       : 'A balanced routine matches what you shared today.';
+}
+
+function screenForAttentionResolution(resolution: AttentionResolution): LocalScreen {
+  return resolution.kind === 'ready'
+    ? { kind: 'start', state: { kind: 'today', primaryArea: resolution.primaryArea } }
+    : { kind: 'start', state: { kind: 'attentionRequired', prompt: resolution.prompt } };
 }
 
 const styles = StyleSheet.create({

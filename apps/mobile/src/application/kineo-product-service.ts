@@ -4,6 +4,8 @@ import {
   parseCheckInId,
   parseSelectionDecisionId,
   type DurationVariant,
+  type AreaResponse,
+  type ConditionalSafetyAnswer,
   type RoutineLevel,
   type SelectionDecisionId,
   type BodyArea,
@@ -47,6 +49,9 @@ import {
 import type {
   CheckInDraft,
   AreaCheckInAnswers,
+  AttentionCorrectionDraft,
+  AttentionPrompt,
+  AttentionResolution,
   CheckInResult,
   PlanPresentation,
   RoutinePresentation,
@@ -54,7 +59,9 @@ import type {
   ProductStartState,
 } from '../core/product/product-flow';
 import type { KineoPersistence } from '../infrastructure/persistence/protected-kineo-store';
+import type { RoutineEventReason } from '../core/persistence/routine-persistence-domain';
 import { KineoRoutineModule } from './kineo-routine-module';
+import { KineoAttentionModule } from './kineo-attention-module';
 
 export type ProductClock = Readonly<{
   nowMilliseconds(): number;
@@ -81,6 +88,17 @@ export interface KineoProductServing {
   saveSecondaryArea(area?: BodyArea): Promise<ProductResult<void>>;
   acknowledgeSafetyBoundary(): Promise<ProductResult<void>>;
   completeOnboarding(): Promise<ProductResult<BodyArea>>;
+  respondToAttentionReturn(
+    prompt: AttentionPrompt,
+    answer: ConditionalSafetyAnswer,
+  ): Promise<ProductResult<AttentionResolution>>;
+  beginAttentionCorrection(
+    prompt: AttentionPrompt,
+  ): Promise<ProductResult<AttentionCorrectionDraft>>;
+  submitAttentionCorrection(
+    draft: AttentionCorrectionDraft,
+    answers: AreaCheckInAnswers,
+  ): Promise<ProductResult<AttentionResolution>>;
   beginCheckIn(): Promise<ProductResult<CheckInDraft>>;
   submitCheckIn(
     draft: CheckInDraft,
@@ -107,6 +125,22 @@ export interface KineoProductServing {
   advanceRoutine(
     sessionId: RoutinePresentation['sessionId'],
   ): Promise<ProductResult<RoutinePresentation>>;
+  skipRoutineStep(
+    sessionId: RoutinePresentation['sessionId'],
+    reason?: RoutineEventReason,
+  ): Promise<ProductResult<RoutinePresentation>>;
+  selectRoutineAlternative(
+    sessionId: RoutinePresentation['sessionId'],
+    movementId: NonNullable<RoutinePresentation['currentItem']>['availableAlternatives'][number]['movementId'],
+  ): Promise<ProductResult<RoutinePresentation>>;
+  endRoutine(
+    sessionId: RoutinePresentation['sessionId'],
+    forSafety: boolean,
+  ): Promise<ProductResult<RoutinePresentation>>;
+  submitFeedback(
+    sessionId: RoutinePresentation['sessionId'],
+    responses: Readonly<Partial<Record<BodyArea, AreaResponse>>>,
+  ): Promise<ProductResult<void>>;
   resetHistory(): Promise<ProductResult<void>>;
   deleteAllData(): Promise<ProductResult<void>>;
 }
@@ -124,6 +158,7 @@ const invalidState = Object.freeze({
 
 export class KineoProductService implements KineoProductServing {
   private readonly routineModule: KineoRoutineModule;
+  private readonly attentionModule: KineoAttentionModule;
 
   constructor(
     private readonly store: KineoPersistence,
@@ -134,6 +169,7 @@ export class KineoProductService implements KineoProductServing {
       nowMilliseconds: () => clock.nowMilliseconds(),
       nextIdentifier: () => runtime.nextIdentifier(),
     });
+    this.attentionModule = new KineoAttentionModule(store, clock, runtime);
   }
 
   async loadStartState(): Promise<ProductResult<ProductStartState>> {
@@ -158,13 +194,13 @@ export class KineoProductService implements KineoProductServing {
     if (!attention.ok) return persistenceFailure(attention.error);
     const firstAttention = attention.value[0];
     if (firstAttention !== undefined) {
+      const prompt = this.attentionModule.prompt(firstAttention);
+      if (!prompt.ok) return prompt;
       return {
           ok: true,
           value: {
             kind: 'attentionRequired',
-            area: firstAttention.area,
-            expectedAttentionUpdatedAtMilliseconds:
-              firstAttention.updatedAtMilliseconds,
+            prompt: prompt.value,
           },
         };
     }
@@ -282,6 +318,26 @@ export class KineoProductService implements KineoProductServing {
     return completedArea === undefined
       ? invalidState
       : { ok: true, value: completedArea };
+  }
+
+  respondToAttentionReturn(
+    prompt: AttentionPrompt,
+    answer: ConditionalSafetyAnswer,
+  ): Promise<ProductResult<AttentionResolution>> {
+    return this.attentionModule.respondToReturn(prompt, answer);
+  }
+
+  beginAttentionCorrection(
+    prompt: AttentionPrompt,
+  ): Promise<ProductResult<AttentionCorrectionDraft>> {
+    return this.attentionModule.beginCorrection(prompt);
+  }
+
+  submitAttentionCorrection(
+    draft: AttentionCorrectionDraft,
+    answers: AreaCheckInAnswers,
+  ): Promise<ProductResult<AttentionResolution>> {
+    return this.attentionModule.submitCorrection(draft, answers);
   }
 
   async beginCheckIn(): Promise<ProductResult<CheckInDraft>> {
@@ -432,14 +488,18 @@ export class KineoProductService implements KineoProductServing {
       const attention = await this.store.loadAttentionStates();
       if (!attention.ok) return persistenceFailure(attention.error);
       const first = attention.value[0];
-      return first === undefined
-        ? { ok: false, error: { code: 'invalidData' } }
+      if (first === undefined) return { ok: false, error: { code: 'invalidData' } };
+      const prompt = this.attentionModule.prompt(first);
+      return !prompt.ok
+        ? prompt
         : {
             ok: true,
             value: {
               kind: 'attentionRequired',
-              area: first.area,
-              expectedAttentionUpdatedAtMilliseconds: first.updatedAtMilliseconds,
+              area: prompt.value.area,
+              responseEventId: prompt.value.responseEventId,
+              expectedAttentionUpdatedAtMilliseconds:
+                prompt.value.expectedAttentionUpdatedAtMilliseconds,
             },
           };
     }
@@ -485,6 +545,34 @@ export class KineoProductService implements KineoProductServing {
     sessionId: RoutinePresentation['sessionId'],
   ): Promise<ProductResult<RoutinePresentation>> {
     return this.routineModule.advance(sessionId);
+  }
+
+  skipRoutineStep(
+    sessionId: RoutinePresentation['sessionId'],
+    reason?: RoutineEventReason,
+  ): Promise<ProductResult<RoutinePresentation>> {
+    return this.routineModule.skip(sessionId, reason);
+  }
+
+  selectRoutineAlternative(
+    sessionId: RoutinePresentation['sessionId'],
+    movementId: NonNullable<RoutinePresentation['currentItem']>['availableAlternatives'][number]['movementId'],
+  ): Promise<ProductResult<RoutinePresentation>> {
+    return this.routineModule.selectAlternative(sessionId, movementId);
+  }
+
+  endRoutine(
+    sessionId: RoutinePresentation['sessionId'],
+    forSafety: boolean,
+  ): Promise<ProductResult<RoutinePresentation>> {
+    return this.routineModule.end(sessionId, forSafety);
+  }
+
+  submitFeedback(
+    sessionId: RoutinePresentation['sessionId'],
+    responses: Readonly<Partial<Record<BodyArea, AreaResponse>>>,
+  ): Promise<ProductResult<void>> {
+    return this.routineModule.submitFeedback(sessionId, responses);
   }
 
   async resetHistory(): Promise<ProductResult<void>> {

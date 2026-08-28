@@ -1,5 +1,6 @@
 import {
   buildRoutineSessionSnapshot,
+  findSnapshotAlternative,
   parseRoutineSessionId,
   type RoutineSessionId,
   type RoutineSessionSnapshot,
@@ -10,13 +11,21 @@ import {
   prototypeCatalogAssetDigests,
   prototypeCatalogLocalizedStrings,
 } from '../core/content/prototype-routine-catalog';
-import type { SelectionDecisionId } from '../core/domain/selection-domain';
+import type {
+  AreaResponse,
+  BodyArea,
+  SelectionDecisionId,
+} from '../core/domain/selection-domain';
 import {
+  createFeedbackSubmission,
   createRoutineEvent,
   createRoutineSession,
   encodeRoutineSnapshot,
+  parseAreaFeedbackId,
+  parseFeedbackSubmissionId,
   parseRoutineEventId,
   type RoutineEventKind,
+  type RoutineEventReason,
   type RoutineSession,
 } from '../core/persistence/routine-persistence-domain';
 import type {
@@ -187,6 +196,141 @@ export class KineoRoutineModule {
     );
   }
 
+  async skip(
+    sessionId: RoutineSessionId,
+    reason?: RoutineEventReason,
+  ): Promise<ProductResult<RoutinePresentation>> {
+    const session = await this.requiredSession(sessionId);
+    if (!session.ok) return session;
+    if (this.isTerminal(session.value.status)) return this.presentation(session.value);
+    if (session.value.status !== 'inProgress') return invalidState();
+    const snapshot = this.decodeSnapshot(session.value);
+    if (!snapshot.ok) return snapshot;
+    const item = snapshot.value.items[session.value.currentStepIndex];
+    if (item === undefined) return invalidData();
+    const nextIndex = session.value.currentStepIndex + stepIndexIncrement;
+    const skipped = await this.recordTransition(
+      session.value,
+      'skipped',
+      'inProgress',
+      nextIndex,
+      item.itemId,
+      item.sourceOwnerId,
+      undefined,
+      reason,
+    );
+    if (!skipped.ok) return skipped;
+    return nextIndex >= snapshot.value.items.length
+      ? this.transition(skipped.value, 'completed', 'completed')
+      : this.presentation(skipped.value);
+  }
+
+  async selectAlternative(
+    sessionId: RoutineSessionId,
+    movementId: NonNullable<RoutinePresentation['currentItem']>['availableAlternatives'][number]['movementId'],
+  ): Promise<ProductResult<RoutinePresentation>> {
+    let session = await this.requiredSession(sessionId);
+    if (!session.ok) return session;
+    if (session.value.status !== 'inProgress' && session.value.status !== 'paused') {
+      return invalidState();
+    }
+    const snapshot = this.decodeSnapshot(session.value);
+    if (!snapshot.ok) return snapshot;
+    const item = snapshot.value.items[session.value.currentStepIndex];
+    if (item === undefined || !findSnapshotAlternative(snapshot.value, item.itemId, movementId).ok) {
+      return invalidState();
+    }
+    const events = await this.store.loadRoutineEvents(sessionId);
+    if (!events.ok) return failure({ code: 'persistence', cause: events.error });
+    const alreadySelected = [...events.value].reverse().find(
+      (event) => event.kind === 'alternativeSelected' && event.stepId === item.itemId,
+    )?.alternativeId;
+    if (alreadySelected === movementId) return this.presentation(session.value, movementId);
+    if (session.value.status === 'inProgress') {
+      const paused = await this.recordTransition(session.value, 'paused', 'paused');
+      if (!paused.ok) return paused;
+      session = paused;
+    }
+    const selected = await this.recordTransition(
+      session.value,
+      'alternativeSelected',
+      'paused',
+      session.value.currentStepIndex,
+      item.itemId,
+      item.sourceOwnerId,
+      movementId,
+    );
+    return selected.ok ? this.presentation(selected.value, movementId) : selected;
+  }
+
+  async end(
+    sessionId: RoutineSessionId,
+    forSafety: boolean,
+  ): Promise<ProductResult<RoutinePresentation>> {
+    let session = await this.requiredSession(sessionId);
+    if (!session.ok) return session;
+    if (this.isTerminal(session.value.status)) return this.presentation(session.value);
+    if (session.value.status === 'inProgress') {
+      const paused = await this.recordTransition(session.value, 'paused', 'paused');
+      if (!paused.ok) return paused;
+      session = paused;
+    }
+    if (session.value.status !== 'paused') return invalidState();
+    return this.transition(
+      session.value,
+      forSafety ? 'safetyStopped' : 'stopped',
+      forSafety ? 'safetyStopped' : 'stopped',
+    );
+  }
+
+  async submitFeedback(
+    sessionId: RoutineSessionId,
+    responses: Readonly<Partial<Record<BodyArea, AreaResponse>>>,
+  ): Promise<ProductResult<void>> {
+    const existing = await this.store.hasFeedbackForRoutine(sessionId);
+    if (!existing.ok) return failure({ code: 'persistence', cause: existing.error });
+    if (existing.value) return { ok: true, value: undefined };
+    const session = await this.requiredSession(sessionId);
+    if (!session.ok) return session;
+    if (
+      session.value.status !== 'completed' &&
+      session.value.status !== 'stopped' &&
+      session.value.status !== 'safetyStopped'
+    ) return invalidState();
+    const snapshot = this.decodeSnapshot(session.value);
+    if (!snapshot.ok) return snapshot;
+    const responseAreas = Object.keys(responses) as BodyArea[];
+    if (responseAreas.some((area) => !snapshot.value.includedAreas.includes(area))) {
+      return invalidState();
+    }
+    const feedbackId = parseFeedbackSubmissionId(this.environment.nextIdentifier());
+    if (!feedbackId.ok) return invalidData();
+    const feedbackResponses = [];
+    for (const area of snapshot.value.includedAreas) {
+      const response = responses[area];
+      if (response === undefined) continue;
+      const id = parseAreaFeedbackId(this.environment.nextIdentifier());
+      if (!id.ok) return invalidData();
+      feedbackResponses.push({ id: id.value, area, response });
+    }
+    const timestamp = Math.max(
+      this.environment.nowMilliseconds(),
+      session.value.endedAtMilliseconds ?? session.value.updatedAtMilliseconds,
+    );
+    const submission = createFeedbackSubmission({
+      id: feedbackId.value,
+      routineSessionId: sessionId,
+      responses: feedbackResponses,
+      submittedAtMilliseconds: timestamp,
+      dayContext: session.value.dayContext,
+    });
+    if (!submission.ok) return invalidData();
+    const saved = await this.store.submitFeedback(submission.value);
+    return saved.ok
+      ? { ok: true, value: undefined }
+      : failure({ code: 'persistence', cause: saved.error });
+  }
+
   private async requiredSession(
     sessionId: RoutineSessionId,
   ): Promise<ProductResult<RoutineSession>> {
@@ -202,7 +346,32 @@ export class KineoRoutineModule {
     currentStepIndex = session.currentStepIndex,
     stepId?: string,
     moduleId?: string,
+    alternativeId?: string,
+    localReason?: RoutineEventReason,
   ): Promise<ProductResult<RoutinePresentation>> {
+    const updated = await this.recordTransition(
+      session,
+      kind,
+      status,
+      currentStepIndex,
+      stepId,
+      moduleId,
+      alternativeId,
+      localReason,
+    );
+    return updated.ok ? this.presentation(updated.value) : updated;
+  }
+
+  private async recordTransition(
+    session: RoutineSession,
+    kind: RoutineEventKind,
+    status: RoutineSession['status'],
+    currentStepIndex = session.currentStepIndex,
+    stepId?: string,
+    moduleId?: string,
+    alternativeId?: string,
+    localReason?: RoutineEventReason,
+  ): Promise<ProductResult<RoutineSession>> {
     const events = await this.store.loadRoutineEvents(session.id);
     if (!events.ok) return failure({ code: 'persistence', cause: events.error });
     const eventId = parseRoutineEventId(this.environment.nextIdentifier());
@@ -215,6 +384,8 @@ export class KineoRoutineModule {
       kind,
       stepId,
       moduleId,
+      alternativeId,
+      localReason,
       occurredAtMilliseconds: timestamp,
     });
     if (!event.ok) return invalidData();
@@ -229,10 +400,13 @@ export class KineoRoutineModule {
     if (!recorded.ok) return failure({ code: 'persistence', cause: recorded.error });
     const updated = await this.store.loadRoutineSession(session.id);
     if (!updated.ok) return failure({ code: 'persistence', cause: updated.error });
-    return updated.value === undefined ? invalidData() : this.presentation(updated.value);
+    return updated.value === undefined ? invalidData() : { ok: true, value: updated.value };
   }
 
-  private presentation(session: RoutineSession): ProductResult<RoutinePresentation> {
+  private presentation(
+    session: RoutineSession,
+    selectedMovementId?: NonNullable<RoutinePresentation['selectedAlternative']>['movementId'],
+  ): ProductResult<RoutinePresentation> {
     const snapshot = this.decodeSnapshot(session);
     if (!snapshot.ok) return snapshot;
     const terminal = session.status === 'completed' || session.status === 'stopped' ||
@@ -240,6 +414,12 @@ export class KineoRoutineModule {
     const currentItem = terminal ? undefined : snapshot.value.items[session.currentStepIndex];
     const primaryArea = snapshot.value.includedAreas[initialStepIndex];
     if ((!terminal && currentItem === undefined) || primaryArea === undefined) return invalidData();
+    const selectedAlternative =
+      selectedMovementId === undefined || currentItem === undefined
+        ? undefined
+        : currentItem.availableAlternatives.find(
+            ({ movementId }) => movementId === selectedMovementId,
+          );
     return {
       ok: true,
       value: {
@@ -253,10 +433,16 @@ export class KineoRoutineModule {
         currentStepIndex: session.currentStepIndex,
         totalStepCount: snapshot.value.items.length,
         currentItem,
+        selectedAlternative,
         stepElapsedMilliseconds: session.stepElapsedMilliseconds,
         contentAvailable: true,
       },
     };
+  }
+
+  private isTerminal(status: RoutineSession['status']): boolean {
+    return status === 'completed' || status === 'stopped' ||
+      status === 'safetyStopped' || status === 'abandoned';
   }
 
   private decodeSnapshot(

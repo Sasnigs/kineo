@@ -61,6 +61,18 @@ class OnboardingService implements KineoProductServing {
     return { ok: true as const, value: 'neck' as const };
   }
 
+  async respondToAttentionReturn() {
+    return { ok: false as const, error: { code: 'invalidState' as const } };
+  }
+
+  async beginAttentionCorrection() {
+    return { ok: false as const, error: { code: 'invalidState' as const } };
+  }
+
+  async submitAttentionCorrection() {
+    return { ok: false as const, error: { code: 'invalidState' as const } };
+  }
+
   async beginCheckIn() {
     return {
       ok: true as const,
@@ -157,7 +169,33 @@ class OnboardingService implements KineoProductServing {
   }
 
   async advanceRoutine() {
+    const started = await this.startRoutine();
+    if (!started.ok) return started;
+    return {
+      ok: true as const,
+      value: {
+        ...started.value,
+        status: 'completed' as const,
+        currentStepIndex: 1,
+        currentItem: undefined,
+      },
+    };
+  }
+
+  async skipRoutineStep() {
     return { ok: false as const, error: { code: 'invalidState' as const } };
+  }
+
+  async selectRoutineAlternative() {
+    return { ok: false as const, error: { code: 'invalidState' as const } };
+  }
+
+  async endRoutine() {
+    return { ok: false as const, error: { code: 'invalidState' as const } };
+  }
+
+  async submitFeedback() {
+    return { ok: true as const, value: undefined };
   }
 
   async resetHistory() {
@@ -232,5 +270,9 @@ describe('Kineo product app', () => {
     await fireEvent.press(view.getByRole('button', { name: 'Begin routine' }));
     await view.findByText('Prototype movement 1');
     expect(view.getByRole('button', { name: 'Continue' })).toBeTruthy();
+    await fireEvent.press(view.getByRole('button', { name: 'Continue' }));
+    await view.findByText('How did neck feel afterward?');
+    await fireEvent.press(view.getByRole('button', { name: 'About the same' }));
+    await view.findByText('How are you moving?');
   });
 });

@@ -16,7 +16,10 @@ import type {
   SelectionDecisionId,
 } from '../domain/selection-domain';
 import type { PersistenceError } from '../persistence/persistence-contract';
-import type { LocalDayContext } from '../persistence/persistence-domain';
+import type {
+  LocalDayContext,
+  SafetyEventId,
+} from '../persistence/persistence-domain';
 
 export type CheckInDraft = Readonly<{
   checkInId: CheckInId;
@@ -55,6 +58,7 @@ export type CheckInResult =
   | Readonly<{
       kind: 'attentionRequired';
       area: BodyArea;
+      responseEventId: SafetyEventId;
       expectedAttentionUpdatedAtMilliseconds: number;
     }>
   | Readonly<{ kind: 'plan'; plan: PlanPresentation }>;
@@ -75,6 +79,22 @@ export type RoutinePresentation = Readonly<{
   contentAvailable: boolean;
 }>;
 
+export type AttentionPrompt = Readonly<{
+  area: BodyArea;
+  responseEventId: SafetyEventId;
+  expectedAttentionUpdatedAtMilliseconds: number;
+}>;
+
+export type AttentionResolution =
+  | Readonly<{ kind: 'attentionRequired'; prompt: AttentionPrompt }>
+  | Readonly<{ kind: 'ready'; primaryArea: BodyArea }>;
+
+export type AttentionCorrectionDraft = Readonly<{
+  checkIn: CheckInDraft;
+  safetyEventId: SafetyEventId;
+  expectedAttentionUpdatedAtMilliseconds: number;
+}>;
+
 export type OnboardingProgress =
   | Readonly<{ step: 'welcome' }>
   | Readonly<{ step: 'primaryArea' }>
@@ -90,8 +110,7 @@ export type ProductStartState =
   | Readonly<{ kind: 'onboarding'; progress: OnboardingProgress }>
   | Readonly<{
       kind: 'attentionRequired';
-      area: BodyArea;
-      expectedAttentionUpdatedAtMilliseconds: number;
+      prompt: AttentionPrompt;
     }>
   | Readonly<{ kind: 'unfinishedCheckIn'; draft: CheckInDraft }>
   | Readonly<{ kind: 'unfinishedPlan'; plan: PlanPresentation }>
