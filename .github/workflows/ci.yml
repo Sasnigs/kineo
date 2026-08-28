@@ -16,7 +16,8 @@ concurrency:
 jobs:
   expo:
     name: Expo build and test
-    runs-on: macos-15
+    # Expo 57's ExpoModulesJSI package requires Swift 6.2 or newer.
+    runs-on: macos-26
     timeout-minutes: 25
 
     defaults:
