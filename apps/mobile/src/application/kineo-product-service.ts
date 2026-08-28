@@ -49,10 +49,12 @@ import type {
   AreaCheckInAnswers,
   CheckInResult,
   PlanPresentation,
+  RoutinePresentation,
   ProductResult,
   ProductStartState,
 } from '../core/product/product-flow';
 import type { KineoPersistence } from '../infrastructure/persistence/protected-kineo-store';
+import { KineoRoutineModule } from './kineo-routine-module';
 
 export type ProductClock = Readonly<{
   nowMilliseconds(): number;
@@ -85,6 +87,26 @@ export interface KineoProductServing {
     primary: AreaCheckInAnswers,
     secondary?: AreaCheckInAnswers,
   ): Promise<ProductResult<CheckInResult>>;
+  revisePlan(
+    checkInId: CheckInDraft['checkInId'],
+    duration: DurationVariant,
+    requestedLevel?: RoutineLevel,
+  ): Promise<ProductResult<PlanPresentation>>;
+  startRoutine(
+    decisionId: PlanPresentation['decisionId'],
+  ): Promise<ProductResult<RoutinePresentation>>;
+  refreshRoutine(
+    sessionId: RoutinePresentation['sessionId'],
+  ): Promise<ProductResult<RoutinePresentation>>;
+  pauseRoutine(
+    sessionId: RoutinePresentation['sessionId'],
+  ): Promise<ProductResult<RoutinePresentation>>;
+  resumeRoutine(
+    sessionId: RoutinePresentation['sessionId'],
+  ): Promise<ProductResult<RoutinePresentation>>;
+  advanceRoutine(
+    sessionId: RoutinePresentation['sessionId'],
+  ): Promise<ProductResult<RoutinePresentation>>;
   resetHistory(): Promise<ProductResult<void>>;
   deleteAllData(): Promise<ProductResult<void>>;
 }
@@ -101,11 +123,18 @@ const invalidState = Object.freeze({
 });
 
 export class KineoProductService implements KineoProductServing {
+  private readonly routineModule: KineoRoutineModule;
+
   constructor(
     private readonly store: KineoPersistence,
     private readonly clock: ProductClock,
     private readonly runtime: ProductRuntime,
-  ) {}
+  ) {
+    this.routineModule = new KineoRoutineModule(store, {
+      nowMilliseconds: () => clock.nowMilliseconds(),
+      nextIdentifier: () => runtime.nextIdentifier(),
+    });
+  }
 
   async loadStartState(): Promise<ProductResult<ProductStartState>> {
     const profile = await this.store.loadProfileState();
@@ -120,7 +149,10 @@ export class KineoProductService implements KineoProductServing {
     const routine = await this.store.loadNonterminalRoutine();
     if (!routine.ok) return persistenceFailure(routine.error);
     if (routine.value !== undefined) {
-      return { ok: true, value: { kind: 'unfinishedRoutine', session: routine.value } };
+      const restored = await this.routineModule.restoreInterrupted(routine.value);
+      return restored.ok
+        ? { ok: true, value: { kind: 'unfinishedRoutine', routine: restored.value } }
+        : restored;
     }
     const attention = await this.store.loadAttentionStates();
     if (!attention.ok) return persistenceFailure(attention.error);
@@ -415,6 +447,44 @@ export class KineoProductService implements KineoProductServing {
     return plan.ok
       ? { ok: true, value: { kind: 'plan', plan: plan.value } }
       : plan;
+  }
+
+  revisePlan(
+    checkInId: CheckInDraft['checkInId'],
+    duration: DurationVariant,
+    requestedLevel?: RoutineLevel,
+  ): Promise<ProductResult<PlanPresentation>> {
+    return this.preparePlan(checkInId, duration, requestedLevel);
+  }
+
+  startRoutine(
+    decisionId: PlanPresentation['decisionId'],
+  ): Promise<ProductResult<RoutinePresentation>> {
+    return this.routineModule.start(decisionId);
+  }
+
+  refreshRoutine(
+    sessionId: RoutinePresentation['sessionId'],
+  ): Promise<ProductResult<RoutinePresentation>> {
+    return this.routineModule.refresh(sessionId);
+  }
+
+  pauseRoutine(
+    sessionId: RoutinePresentation['sessionId'],
+  ): Promise<ProductResult<RoutinePresentation>> {
+    return this.routineModule.pause(sessionId);
+  }
+
+  resumeRoutine(
+    sessionId: RoutinePresentation['sessionId'],
+  ): Promise<ProductResult<RoutinePresentation>> {
+    return this.routineModule.resume(sessionId);
+  }
+
+  advanceRoutine(
+    sessionId: RoutinePresentation['sessionId'],
+  ): Promise<ProductResult<RoutinePresentation>> {
+    return this.routineModule.advance(sessionId);
   }
 
   async resetHistory(): Promise<ProductResult<void>> {

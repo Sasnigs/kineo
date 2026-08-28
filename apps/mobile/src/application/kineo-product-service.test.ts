@@ -17,6 +17,9 @@ const restoredPrimaryEntryId = '00000000-0000-0000-0000-000000000104';
 const restoredSecondaryEntryId = '00000000-0000-0000-0000-000000000105';
 const secondRestoredPrimaryEntryId = '00000000-0000-0000-0000-000000000106';
 const secondRestoredSecondaryEntryId = '00000000-0000-0000-0000-000000000107';
+const firstGeneratedIdentifier = 101;
+const lastGeneratedIdentifier = 199;
+const uuidSuffixLength = 12;
 const localDay = '2025-06-15';
 
 async function makeService() {
@@ -37,15 +40,11 @@ async function makeService() {
       { nowMilliseconds: () => timestamp },
       {
         nextIdentifier: (() => {
-          const identifiers = [
-            checkInId,
-            primaryEntryId,
-            secondaryEntryId,
-            restoredPrimaryEntryId,
-            restoredSecondaryEntryId,
-            secondRestoredPrimaryEntryId,
-            secondRestoredSecondaryEntryId,
-          ];
+          const identifiers = Array.from(
+            { length: lastGeneratedIdentifier - firstGeneratedIdentifier + 1 },
+            (_, index) =>
+              `00000000-0000-0000-0000-${String(firstGeneratedIdentifier + index).padStart(uuidSuffixLength, '0')}`,
+          );
           return () => {
             const identifier = identifiers.shift();
             if (identifier === undefined) throw new Error('Identifier fixture exhausted.');
@@ -257,6 +256,63 @@ describe('Kineo product service check-in', () => {
     await expect(service.beginCheckIn()).resolves.toEqual({
       ok: false,
       error: { code: 'invalidState' },
+    });
+    await database.closeAsync();
+  });
+
+  it('starts, restores, and completes the persisted routine', async () => {
+    const { database, service } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const draft = await service.beginCheckIn();
+    if (!draft.ok) throw new Error('Check-in fixture did not start.');
+    const checkedIn = await service.submitCheckIn(draft.value, {
+      area: 'neck',
+      changeReport: 'similar',
+      movementComfort: 'okay',
+    });
+    if (!checkedIn.ok || checkedIn.value.kind !== 'plan') {
+      throw new Error('Plan fixture was not created.');
+    }
+
+    let routine = await service.startRoutine(checkedIn.value.plan.decisionId);
+    expect(routine).toMatchObject({
+      ok: true,
+      value: {
+        primaryArea: 'neck',
+        includedAreas: ['neck'],
+        status: 'inProgress',
+        currentStepIndex: 0,
+        contentAvailable: true,
+      },
+    });
+    if (!routine.ok) throw new Error('Routine fixture did not start.');
+    await expect(service.startRoutine(checkedIn.value.plan.decisionId)).resolves.toEqual(routine);
+    const restored = await service.loadStartState();
+    expect(restored).toMatchObject({
+      ok: true,
+      value: { kind: 'unfinishedRoutine', routine: { status: 'paused' } },
+    });
+    if (!restored.ok || restored.value.kind !== 'unfinishedRoutine') {
+      throw new Error('Routine fixture did not restore.');
+    }
+    routine = await service.resumeRoutine(restored.value.routine.sessionId);
+    const maximumExpectedStepCount = 20;
+    let advances = 0;
+    while (routine.ok && routine.value.status === 'inProgress') {
+      routine = await service.advanceRoutine(routine.value.sessionId);
+      advances += 1;
+      if (advances > maximumExpectedStepCount) {
+        throw new Error('Routine did not reach a terminal state.');
+      }
+    }
+    expect(routine).toMatchObject({ ok: true, value: { status: 'completed' } });
+    await expect(service.loadStartState()).resolves.toEqual({
+      ok: true,
+      value: { kind: 'today', primaryArea: 'neck' },
     });
     await database.closeAsync();
   });

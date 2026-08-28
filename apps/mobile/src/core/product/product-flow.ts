@@ -1,4 +1,8 @@
-import type { RoutineSession } from '../persistence/routine-persistence-domain';
+import type {
+  PresentedAlternative,
+  PresentedRoutineItem,
+  RoutineSessionId,
+} from '../content/routine-session-snapshot';
 import type {
   BodyArea,
   ChangeReport,
@@ -8,6 +12,7 @@ import type {
   DurationVariant,
   MovementComfort,
   RoutineLevel,
+  RoutineStatus,
   SelectionDecisionId,
 } from '../domain/selection-domain';
 import type { PersistenceError } from '../persistence/persistence-contract';
@@ -54,6 +59,22 @@ export type CheckInResult =
     }>
   | Readonly<{ kind: 'plan'; plan: PlanPresentation }>;
 
+export type RoutinePresentation = Readonly<{
+  sessionId: RoutineSessionId;
+  primaryArea: BodyArea;
+  includedAreas: readonly BodyArea[];
+  selectedLevel: RoutineLevel;
+  deliveredLevel: RoutineLevel;
+  duration: DurationVariant;
+  status: RoutineStatus;
+  currentStepIndex: number;
+  totalStepCount: number;
+  currentItem?: PresentedRoutineItem;
+  selectedAlternative?: PresentedAlternative;
+  stepElapsedMilliseconds: number;
+  contentAvailable: boolean;
+}>;
+
 export type OnboardingProgress =
   | Readonly<{ step: 'welcome' }>
   | Readonly<{ step: 'primaryArea' }>
@@ -74,7 +95,7 @@ export type ProductStartState =
     }>
   | Readonly<{ kind: 'unfinishedCheckIn'; draft: CheckInDraft }>
   | Readonly<{ kind: 'unfinishedPlan'; plan: PlanPresentation }>
-  | Readonly<{ kind: 'unfinishedRoutine'; session: RoutineSession }>
+  | Readonly<{ kind: 'unfinishedRoutine'; routine: RoutinePresentation }>
   | Readonly<{ kind: 'today'; primaryArea: BodyArea }>;
 
 export type ProductFlowError =

@@ -12,11 +12,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { KineoProductServing } from '@/application/kineo-product-service';
 import {
   bodyAreas,
+  requiresConditionalSafetyAnswer,
   type BodyArea,
+  type ChangeReport,
+  type MovementComfort,
 } from '@/core/domain/selection-domain';
 import type {
+  AreaCheckInAnswers,
+  CheckInDraft,
+  PlanPresentation,
   ProductFlowError,
   ProductStartState,
+  RoutinePresentation,
 } from '@/core/product/product-flow';
 import {
   colors,
@@ -31,7 +38,18 @@ type LocalScreen =
   | Readonly<{ kind: 'error'; error: ProductFlowError }>
   | Readonly<{ kind: 'start'; state: ProductStartState }>
   | Readonly<{ kind: 'ageConfirmation' }>
-  | Readonly<{ kind: 'ageUnavailable' }>;
+  | Readonly<{ kind: 'ageUnavailable' }>
+  | Readonly<{
+      kind: 'checkIn';
+      draft: CheckInDraft;
+      currentArea: BodyArea;
+      answers: Readonly<Partial<Record<BodyArea, AreaCheckInAnswers>>>;
+      stage: 'change' | 'comfort' | 'safety';
+      changeReport?: ChangeReport;
+      movementComfort?: MovementComfort;
+    }>
+  | Readonly<{ kind: 'plan'; plan: PlanPresentation }>
+  | Readonly<{ kind: 'routine'; routine: RoutinePresentation }>;
 
 type KineoProductAppProps = Readonly<{
   service: KineoProductServing;
@@ -112,6 +130,230 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
     screen.kind === 'start' && screen.state.kind === 'onboarding'
       ? screen.state.progress
       : undefined;
+
+  const startCheckIn = useCallback(async () => {
+    const result = await submit(() => service.beginCheckIn());
+    if (!result?.ok) return;
+    setScreen({
+      kind: 'checkIn',
+      draft: result.value,
+      currentArea: result.value.primaryArea,
+      answers: {},
+      stage: 'change',
+    });
+  }, [service, submit]);
+
+  const submitCompletedAnswers = useCallback(async (
+    draft: CheckInDraft,
+    answers: Readonly<Partial<Record<BodyArea, AreaCheckInAnswers>>>,
+  ) => {
+    const primary = answers[draft.primaryArea];
+    if (primary === undefined) return;
+    const secondary = draft.secondaryArea === undefined
+      ? undefined
+      : answers[draft.secondaryArea];
+    const result = await submit(() => service.submitCheckIn(draft, primary, secondary));
+    if (!result?.ok) return;
+    setScreen(result.value.kind === 'plan'
+      ? { kind: 'plan', plan: result.value.plan }
+      : {
+          kind: 'start',
+          state: {
+            kind: 'attentionRequired',
+            area: result.value.area,
+            expectedAttentionUpdatedAtMilliseconds:
+              result.value.expectedAttentionUpdatedAtMilliseconds,
+          },
+        });
+  }, [service, submit]);
+
+  const activeCheckIn = screen.kind === 'checkIn'
+    ? screen
+    : screen.kind === 'start' && screen.state.kind === 'unfinishedCheckIn'
+      ? {
+          kind: 'checkIn' as const,
+          draft: screen.state.draft,
+          currentArea: screen.state.draft.primaryArea,
+          answers: {},
+          stage: 'change' as const,
+        }
+      : undefined;
+
+  if (activeCheckIn !== undefined) {
+    const areaName = areaLabels[activeCheckIn.currentArea];
+    const continueWithAnswer = (
+      answer: AreaCheckInAnswers,
+    ) => {
+      const answers = { ...activeCheckIn.answers, [answer.area]: answer };
+      if (
+        activeCheckIn.currentArea === activeCheckIn.draft.primaryArea &&
+        activeCheckIn.draft.secondaryArea !== undefined
+      ) {
+        setScreen({
+          kind: 'checkIn',
+          draft: activeCheckIn.draft,
+          currentArea: activeCheckIn.draft.secondaryArea,
+          answers,
+          stage: 'change',
+        });
+        return;
+      }
+      void submitCompletedAnswers(activeCheckIn.draft, answers);
+    };
+    if (activeCheckIn.stage === 'change') {
+      return (
+        <Shell>
+          <ProgressLabel current={1} total={2} />
+          <PageHeader eyebrow={areaName.toUpperCase()} title="Compared with your usual pattern…" />
+          <Text style={styles.supporting}>Choose the closest answer for right now.</Text>
+          <ChoiceButton label="Better" onPress={() => setScreen({ ...activeCheckIn, stage: 'comfort', changeReport: 'better' })} />
+          <ChoiceButton label="Similar" onPress={() => setScreen({ ...activeCheckIn, stage: 'comfort', changeReport: 'similar' })} />
+          <ChoiceButton label="Worse" onPress={() => setScreen({ ...activeCheckIn, stage: 'comfort', changeReport: 'worse' })} />
+          {activeCheckIn.currentArea === activeCheckIn.draft.secondaryArea ? (
+            <SecondaryButton
+              label="Skip this area today"
+              onPress={() => void submitCompletedAnswers(activeCheckIn.draft, activeCheckIn.answers)}
+            />
+          ) : null}
+        </Shell>
+      );
+    }
+    if (activeCheckIn.stage === 'comfort') {
+      const selectComfort = (movementComfort: MovementComfort) => {
+        const changeReport = activeCheckIn.changeReport;
+        if (changeReport === undefined) return;
+        if (requiresConditionalSafetyAnswer({ changeReport, movementComfort })) {
+          setScreen({ ...activeCheckIn, stage: 'safety', movementComfort });
+          return;
+        }
+        continueWithAnswer({ area: activeCheckIn.currentArea, changeReport, movementComfort });
+      };
+      return (
+        <Shell>
+          <ProgressLabel current={2} total={2} />
+          <PageHeader eyebrow={areaName.toUpperCase()} title="How comfortable does movement feel?" />
+          <ChoiceButton label="Limited" onPress={() => selectComfort('limited')} />
+          <ChoiceButton label="Okay" onPress={() => selectComfort('okay')} />
+          <ChoiceButton label="Good" onPress={() => selectComfort('good')} />
+        </Shell>
+      );
+    }
+    const answerSafety = (conditionalSafetyAnswer: 'no' | 'yes' | 'notSure') => {
+      if (activeCheckIn.changeReport === undefined || activeCheckIn.movementComfort === undefined) return;
+      continueWithAnswer({
+        area: activeCheckIn.currentArea,
+        changeReport: activeCheckIn.changeReport,
+        movementComfort: activeCheckIn.movementComfort,
+        conditionalSafetyAnswer,
+      });
+    };
+    return (
+      <Shell>
+        <PageHeader eyebrow="ONE SAFETY CHECK" title="Is this new, unusual, or concerning for you?" />
+        <Text style={styles.supporting}>Your answer may pause Kineo routines so you can decide what support you need.</Text>
+        <ChoiceButton label="No" onPress={() => answerSafety('no')} />
+        <ChoiceButton label="Yes" onPress={() => answerSafety('yes')} />
+        <ChoiceButton label="Not sure" onPress={() => answerSafety('notSure')} />
+      </Shell>
+    );
+  }
+
+  const activeRoutine = screen.kind === 'routine'
+    ? screen.routine
+    : screen.kind === 'start' && screen.state.kind === 'unfinishedRoutine'
+      ? screen.state.routine
+      : undefined;
+  if (activeRoutine !== undefined) {
+    const updateRoutine = async (
+      operation: () => Promise<
+        | Readonly<{ ok: true; value: RoutinePresentation }>
+        | Readonly<{ ok: false; error: ProductFlowError }>
+      >,
+    ) => {
+      const result = await submit(operation);
+      if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
+    };
+    if (activeRoutine.status === 'paused') {
+      return (
+        <Shell>
+          <PageHeader eyebrow="ROUTINE PAUSED" title="Your place is saved." />
+          <Text style={styles.supporting}>Resume when you’re ready. Kineo won’t infer progress while paused.</Text>
+          <PrimaryButton
+            label="Resume routine"
+            disabled={isSubmitting}
+            onPress={() => void updateRoutine(() => service.resumeRoutine(activeRoutine.sessionId))}
+          />
+        </Shell>
+      );
+    }
+    if (activeRoutine.status === 'inProgress' && activeRoutine.currentItem !== undefined) {
+      const item = activeRoutine.currentItem;
+      const instruction = item.kind === 'movement'
+        ? item.localizedInstruction
+        : 'Take this brief transition before continuing.';
+      const safetyCue = item.kind === 'movement' ? item.localizedSafetyCue : undefined;
+      return (
+        <Shell>
+          <View style={styles.routineProgressRow}>
+            <Text style={styles.eyebrow}>STEP {activeRoutine.currentStepIndex + displayIndexOffset} OF {activeRoutine.totalStepCount}</Text>
+            <Text style={styles.areaBadgeText}>{areaLabels[item.sourceArea]}</Text>
+          </View>
+          <View style={styles.mediaPlaceholder} accessibilityLabel={item.kind === 'movement' ? item.accessibleDescription : 'Routine transition'}>
+            <Text style={styles.mediaPlaceholderText}>MOVEMENT PREVIEW</Text>
+          </View>
+          <PageHeader eyebrow={activeRoutine.deliveredLevel.toUpperCase()} title={item.localizedTitle} />
+          <Text style={styles.supporting}>{instruction}</Text>
+          {safetyCue === undefined ? null : <Text style={styles.safetyCue}>{safetyCue}</Text>}
+          <PrimaryButton
+            label="Continue"
+            disabled={isSubmitting}
+            onPress={() => void updateRoutine(() => service.advanceRoutine(activeRoutine.sessionId))}
+          />
+          <SecondaryButton
+            label="Pause"
+            disabled={isSubmitting}
+            onPress={() => void updateRoutine(() => service.pauseRoutine(activeRoutine.sessionId))}
+          />
+        </Shell>
+      );
+    }
+    return (
+      <Shell>
+        <PageHeader eyebrow="ROUTINE COMPLETE" title="You showed up for yourself." />
+        <Text style={styles.supporting}>Your routine is saved. A response is optional.</Text>
+        <PrimaryButton label="Finish" onPress={() => void load()} />
+      </Shell>
+    );
+  }
+
+  const activePlan = screen.kind === 'plan'
+    ? screen.plan
+    : screen.kind === 'start' && screen.state.kind === 'unfinishedPlan'
+      ? screen.state.plan
+      : undefined;
+  if (activePlan !== undefined) {
+    return (
+      <Shell>
+        <PageHeader eyebrow="READY WHEN YOU ARE" title="Your plan for today" />
+        <View style={styles.planHero}>
+          <Text style={styles.planLevel}>{levelLabel(activePlan.deliveredLevel)}</Text>
+          <Text style={styles.planMeta}>
+            {durationLabel(activePlan.duration)} · {activePlan.itemCount} steps · {Math.round(activePlan.nominalSeconds / secondsPerMinute)} min
+          </Text>
+        </View>
+        <Text style={styles.supporting}>{planExplanation(activePlan)}</Text>
+        <PrimaryButton
+          label="Begin routine"
+          disabled={isSubmitting}
+          onPress={() => void (async () => {
+            const result = await submit(() => service.startRoutine(activePlan.decisionId));
+            if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
+          })()}
+        />
+        <SecondaryButton label="Back to Today" onPress={() => void load()} />
+      </Shell>
+    );
+  }
 
   if (screen.kind === 'loading') {
     return (
@@ -313,7 +555,7 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
         <Text style={styles.todayCardEyebrow}>YOUR NEXT ROUTINE</Text>
         <Text style={styles.todayCardTitle}>Start with a quick check-in.</Text>
         <Text style={styles.todayCardBody}>Three focused answers. No long daily questionnaire.</Text>
-        <PrimaryButton label="Check in" onPress={() => undefined} />
+        <PrimaryButton label="Check in" disabled={isSubmitting} onPress={() => void startCheckIn()} />
       </View>
       <View style={styles.testSection}>
         <Text style={styles.testLabel}>TESTING</Text>
@@ -441,6 +683,34 @@ function SecondaryButton({ label, onPress, disabled = false, danger = false }: R
   );
 }
 
+function ChoiceButton({ label, onPress }: Readonly<{ label: string; onPress: () => void }>) {
+  return (
+    <Pressable accessibilityLabel={label} accessibilityRole="button" onPress={onPress} style={styles.choiceButton}>
+      <Text style={styles.choiceButtonText}>{label}</Text>
+      <Text accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.choiceArrow}>›</Text>
+    </Pressable>
+  );
+}
+
+const secondsPerMinute = 60;
+const displayIndexOffset = 1;
+
+function levelLabel(level: PlanPresentation['deliveredLevel']): string {
+  return level[0].toUpperCase() + level.slice(1);
+}
+
+function durationLabel(duration: PlanPresentation['duration']): string {
+  return duration === 'quick' ? 'Quick' : 'Standard';
+}
+
+function planExplanation(plan: PlanPresentation): string {
+  return plan.recommendedLevel === 'gentle'
+    ? 'A gentler routine matches what you shared today.'
+    : plan.recommendedLevel === 'active'
+      ? 'Your recent check-ins support the Active option.'
+      : 'A balanced routine matches what you shared today.';
+}
+
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.canvas },
   page: { flexGrow: 1, paddingHorizontal: spacing.screenHorizontal, paddingVertical: spacing.screenVertical },
@@ -465,6 +735,9 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.45 },
   buttonPressed: { opacity: 0.72 },
   optionList: { gap: spacing.compact },
+  choiceButton: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.option, borderWidth: layout.borderWidth, flexDirection: 'row', justifyContent: 'space-between', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.roomy, paddingVertical: spacing.controlVertical },
+  choiceButtonText: { color: colors.ink, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
+  choiceArrow: { color: colors.accentDark, fontSize: typography.titleSize },
   option: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.option, borderWidth: layout.borderWidth, flexDirection: 'row', justifyContent: 'space-between', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.standard, paddingVertical: spacing.controlVertical },
   optionSelected: { backgroundColor: colors.accentSoft, borderColor: colors.accentDark },
   optionText: { color: colors.ink, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
@@ -479,6 +752,13 @@ const styles = StyleSheet.create({
   areaBadge: { backgroundColor: colors.accentSoft, borderRadius: radius.status, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
   areaBadgeText: { color: colors.accentDark, fontSize: typography.detailSize, fontWeight: typography.strongWeight },
   todayCard: { backgroundColor: colors.surface, borderRadius: radius.card, gap: spacing.standard, padding: spacing.roomy },
+  planHero: { backgroundColor: colors.accentSoft, borderRadius: radius.card, gap: spacing.compact, padding: spacing.roomy },
+  planLevel: { color: colors.accentDark, fontSize: typography.titleSize, fontWeight: typography.displayWeight },
+  planMeta: { color: colors.secondaryInk, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight },
+  routineProgressRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  mediaPlaceholder: { alignItems: 'center', aspectRatio: 1.35, backgroundColor: colors.accentSoft, borderRadius: radius.card, justifyContent: 'center' },
+  mediaPlaceholderText: { color: colors.accentDark, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  safetyCue: { backgroundColor: colors.surface, borderLeftColor: colors.accent, borderLeftWidth: spacing.compact, borderRadius: radius.card, color: colors.secondaryInk, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight, padding: spacing.standard },
   todayCardEyebrow: { color: colors.secondaryInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   todayCardTitle: { color: colors.ink, fontSize: typography.titleSize, fontWeight: typography.displayWeight, lineHeight: typography.titleLineHeight },
   todayCardBody: { color: colors.secondaryInk, fontSize: typography.bodySize, lineHeight: typography.bodyLineHeight },
