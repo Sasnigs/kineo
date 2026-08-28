@@ -577,6 +577,42 @@ describe('Kineo product service check-in', () => {
     await database.closeAsync();
   });
 
+  it('discloses a user-skipped secondary area separately from content fallback', async () => {
+    const { database, service } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea('upperMidBack');
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const started = await service.beginCheckIn();
+    if (!started.ok) throw new Error('Skipped-secondary check-in did not start.');
+
+    const submitted = await service.submitCheckIn(started.value, {
+      area: 'neck',
+      changeReport: 'similar',
+      movementComfort: 'okay',
+    });
+
+    expect(submitted).toMatchObject({
+      ok: true,
+      value: {
+        kind: 'plan',
+        plan: {
+          includedAreas: ['neck'],
+          omittedSecondary: {
+            area: 'upperMidBack',
+            reason: 'secondaryUnanswered',
+          },
+          explanations: [{
+            key: 'reason.balanced_checkin',
+            parameters: { area: 'neck' },
+          }],
+        },
+      },
+    });
+    await database.closeAsync();
+  });
+
   it('persists Attention and withholds a plan after a flagged answer', async () => {
     const { database, service } = await makeService();
     await service.confirmAdultEligibility();
@@ -851,7 +887,7 @@ describe('Kineo product service check-in', () => {
     await database.closeAsync();
   });
 
-  it('does not append a pause event before rejecting nested snapshot corruption', async () => {
+  it('does not append lifecycle events before rejecting nested snapshot corruption', async () => {
     const { database, service } = await makeService();
     await service.confirmAdultEligibility();
     await service.savePrimaryArea('neck');
@@ -894,7 +930,15 @@ describe('Kineo product service check-in', () => {
       [corruptedJson, matchingChecksum, started.value.sessionId],
     );
 
-    await expect(service.loadStartState()).resolves.toEqual({
+    await expect(service.pauseRoutine(started.value.sessionId)).resolves.toEqual({
+      ok: false,
+      error: { code: 'invalidData' },
+    });
+    await expect(service.resumeRoutine(started.value.sessionId)).resolves.toEqual({
+      ok: false,
+      error: { code: 'invalidData' },
+    });
+    await expect(service.endRoutine(started.value.sessionId, 'intentional')).resolves.toEqual({
       ok: false,
       error: { code: 'invalidData' },
     });

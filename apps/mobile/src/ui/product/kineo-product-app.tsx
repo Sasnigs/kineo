@@ -6,6 +6,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -34,7 +35,6 @@ import type {
   ProductStartState,
   RoutinePresentation,
 } from '@/core/product/product-flow';
-import { Text } from '@/ui/primitives/adaptive-text';
 import {
   colors,
   layout,
@@ -386,7 +386,7 @@ export function KineoProductApp({
       return (
         <Shell>
           <ProgressLabel current={2} total={2} />
-          <PageHeader eyebrow={areaName.toUpperCase()} title="How comfortable does movement feel?" />
+          <PageHeader eyebrow={areaName.toUpperCase()} title="How does movement feel?" />
           <ChoiceButton label="Limited" onPress={() => selectComfort('limited')} />
           <ChoiceButton label="Okay" onPress={() => selectComfort('okay')} />
           <ChoiceButton label="Good" onPress={() => selectComfort('good')} />
@@ -776,12 +776,18 @@ export function KineoProductApp({
             {durationLabel(activePlan.duration)} · {activePlan.itemCount} steps · {Math.round(activePlan.nominalSeconds / secondsPerMinute)} min
           </Text>
         </View>
+        <Text style={styles.supporting}>
+          Included today: {areaListLabel(activePlan.includedAreas)}.
+        </Text>
         {planExplanationLines(activePlan).map((line) => (
           <Text key={line} style={styles.supporting}>{line}</Text>
         ))}
-        {activePlan.omittedSecondaryArea === undefined ? null : (
+        {activePlan.omittedSecondary === undefined ? null : (
           <Text style={styles.supporting}>
-            {areaLabels[activePlan.omittedSecondaryArea]} is not included because compatible prototype content is unavailable.
+            {omittedAreaExplanation(
+              activePlan.omittedSecondary.area,
+              activePlan.omittedSecondary.reason,
+            )}
           </Text>
         )}
         <View style={styles.segmentedControl} accessibilityRole="radiogroup">
@@ -1628,18 +1634,52 @@ function routineStatusLabel(status: RoutinePresentation['status']): string {
 }
 
 function planExplanationLines(plan: PlanPresentation): readonly string[] {
-  const copyByKey: Readonly<Record<string, string>> = {
-    'reason.user_gentler_override': 'You chose a gentler option for today.',
-    'reason.reported_worse': 'You reported feeling worse than your usual pattern.',
-    'reason.movement_limited': 'Movement felt limited today.',
-    'reason.better_good_active': 'You reported feeling better with good movement comfort.',
-    'reason.balanced_checkin': 'Your check-in supports a Balanced option today.',
-    'reason.active_locked': 'Active remains unavailable until enough qualifying history is recorded.',
-    'reason.secondary_more_conservative': 'The more cautious area set today’s level.',
-  };
-  return plan.explanationKeys.map(
-    (key) => copyByKey[key] ?? 'Your saved check-in determined this plan.',
-  );
+  return plan.explanations.map(({ key, parameters }) => {
+    const area = bodyAreas.find((candidate) => candidate === parameters.area);
+    const areaLabel = area === undefined ? undefined : areaLabels[area];
+    switch (key) {
+      case 'reason.user_gentler_override':
+        return 'You chose a gentler option for today.';
+      case 'reason.reported_worse':
+        return areaLabel === undefined
+          ? 'You reported feeling worse than your usual pattern.'
+          : `You reported ${areaLabel.toLowerCase()} felt worse than your usual pattern.`;
+      case 'reason.movement_limited':
+        return areaLabel === undefined
+          ? 'Movement felt limited today.'
+          : `Movement felt limited around ${areaLabel.toLowerCase()} today.`;
+      case 'reason.better_good_active':
+        return areaLabel === undefined
+          ? 'You reported feeling better with good movement comfort.'
+          : `${areaLabel} felt better with good movement comfort.`;
+      case 'reason.balanced_checkin':
+        return areaLabel === undefined
+          ? 'Your check-in supports a Balanced option today.'
+          : `Your ${areaLabel.toLowerCase()} check-in supports a Balanced option today.`;
+      case 'reason.active_locked':
+        return 'Active remains unavailable until enough qualifying history is recorded.';
+      case 'reason.secondary_more_conservative':
+        return areaLabel === undefined
+          ? 'The more cautious area set today’s level.'
+          : `${areaLabel} set today’s more cautious level.`;
+      default:
+        return 'Your saved check-in determined this plan.';
+    }
+  });
+}
+
+function areaListLabel(areas: readonly BodyArea[]): string {
+  return areas.map((area) => areaLabels[area]).join(' and ');
+}
+
+function omittedAreaExplanation(
+  area: BodyArea,
+  reason: NonNullable<PlanPresentation['omittedSecondary']>['reason'],
+): string {
+  if (reason === 'secondaryUnanswered') {
+    return `${areaLabels[area]} was skipped for today’s check-in and is not included.`;
+  }
+  return `${areaLabels[area]} is not included because compatible prototype content is unavailable.`;
 }
 
 function routineTimerText(

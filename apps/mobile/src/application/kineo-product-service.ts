@@ -1244,6 +1244,13 @@ export class KineoProductService implements KineoProductServing {
       const appended = await this.store.appendSelectionDecision(decision.value);
       if (!appended.ok) return persistenceFailure(appended.error);
     }
+    const omittedSecondaryArea =
+      composition.routine.omittedArea ?? selected.plan.omittedAreas[0]?.area;
+    const omittedSecondaryReason =
+      composition.routine.omissionReason ?? selected.plan.omittedAreas[0]?.reason;
+    if ((omittedSecondaryArea === undefined) !== (omittedSecondaryReason === undefined)) {
+      return { ok: false, error: { code: 'invalidData' } };
+    }
     return {
       ok: true,
       value: {
@@ -1251,14 +1258,15 @@ export class KineoProductService implements KineoProductServing {
         checkInId,
         primaryArea: checkIn.primaryArea,
         includedAreas: composition.routine.includedAreas,
-        omittedSecondaryArea:
-          composition.routine.omittedArea ?? selected.plan.omittedAreas[0]?.area,
+        omittedSecondary: omittedSecondaryArea === undefined || omittedSecondaryReason === undefined
+          ? undefined
+          : { area: omittedSecondaryArea, reason: omittedSecondaryReason },
         recommendedLevel: selected.plan.recommendedLevel,
         gentlerLevel: nextGentlerLevel(selected.plan.recommendedLevel),
         selectedLevel: selected.plan.selectedLevel,
         deliveredLevel: composition.routine.deliveredLevel,
         duration,
-        explanationKeys: selected.plan.explanations.map(({ key }) => key),
+        explanations: selected.plan.explanations,
         itemCount: composition.routine.orderedItems.length,
         nominalSeconds: composition.routine.nominalSeconds,
         pauseTodayAvailable: selected.plan.pauseTodayAvailable,

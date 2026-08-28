@@ -12,6 +12,7 @@ import type {
   ConditionalSafetyAnswer,
   DurationVariant,
   MovementComfort,
+  OmissionReason,
   RoutineLevel,
   RoutineStatus,
   SelectionDecisionId,
@@ -47,13 +48,19 @@ export type PlanPresentation = Readonly<{
   checkInId: CheckInId;
   primaryArea: BodyArea;
   includedAreas: readonly BodyArea[];
-  omittedSecondaryArea?: BodyArea;
+  omittedSecondary?: Readonly<{
+    area: BodyArea;
+    reason: OmissionReason;
+  }>;
   recommendedLevel: RoutineLevel;
   gentlerLevel?: RoutineLevel;
   selectedLevel: RoutineLevel;
   deliveredLevel: RoutineLevel;
   duration: DurationVariant;
-  explanationKeys: readonly string[];
+  explanations: readonly Readonly<{
+    key: string;
+    parameters: Readonly<Record<string, string>>;
+  }>[];
   itemCount: number;
   nominalSeconds: number;
   pauseTodayAvailable: boolean;

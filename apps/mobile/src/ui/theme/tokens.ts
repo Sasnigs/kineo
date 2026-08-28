@@ -35,11 +35,10 @@ export const radius = {
 } as const;
 
 export const typography = {
-  maximumFontSizeMultiplier: 2,
   eyebrowSize: 13,
   eyebrowTracking: 1.6,
-  titleSize: 38,
-  titleLineHeight: 44,
+  titleSize: 28,
+  titleLineHeight: 35,
   bodySize: 17,
   bodyLineHeight: 25,
   detailSize: 15,

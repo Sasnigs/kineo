@@ -403,6 +403,8 @@ export class KineoRoutineModule {
     alternativeId?: string,
     localReason?: RoutineEventReason,
   ): Promise<ProductResult<RoutineSession>> {
+    const snapshot = this.decodeSnapshot(session);
+    if (!snapshot.ok) return snapshot;
     const events = await this.store.loadRoutineEvents(session.id);
     if (!events.ok) return failure({ code: 'persistence', cause: events.error });
     const eventId = parseRoutineEventId(this.environment.nextIdentifier());

@@ -1,7 +1,6 @@
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Text } from '@/ui/primitives/adaptive-text';
 import { colors, radius, spacing, typography } from '@/ui/theme/tokens';
 
 type MigrationFoundationScreenProps = Readonly<{

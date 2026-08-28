@@ -122,7 +122,10 @@ class OnboardingService implements KineoProductServing {
           selectedLevel: 'balanced' as const,
           deliveredLevel: 'balanced' as const,
           duration: 'standard' as const,
-          explanationKeys: ['reason.balanced_checkin'],
+          explanations: [{
+            key: 'reason.balanced_checkin',
+            parameters: { area: 'neck' },
+          }],
           itemCount: 7,
           nominalSeconds: 600,
           pauseTodayAvailable: false,
@@ -311,7 +314,30 @@ class OmittedSecondaryPlanService extends OnboardingService {
         kind: 'plan',
         plan: {
           ...result.value.plan,
-          omittedSecondaryArea: 'upperMidBack',
+          omittedSecondary: {
+            area: 'upperMidBack',
+            reason: 'contentUnavailable',
+          },
+        },
+      },
+    };
+  }
+}
+
+class SkippedSecondaryPlanService extends OnboardingService {
+  async submitCheckIn(): Promise<ProductResult<CheckInResult>> {
+    const result = await super.submitCheckIn();
+    if (!result.ok || result.value.kind !== 'plan') return result;
+    return {
+      ok: true,
+      value: {
+        kind: 'plan',
+        plan: {
+          ...result.value.plan,
+          omittedSecondary: {
+            area: 'upperMidBack',
+            reason: 'secondaryUnanswered',
+          },
         },
       },
     };
@@ -381,11 +407,12 @@ describe('Kineo product app', () => {
     await fireEvent.press(view.getByRole('button', { name: 'Check in' }));
     await view.findByText('Compared with your usual pattern…');
     await fireEvent.press(view.getByRole('button', { name: 'Similar' }));
-    await view.findByText('How comfortable does movement feel?');
+    await view.findByText('How does movement feel?');
     await fireEvent.press(view.getByRole('button', { name: 'Okay' }));
     await view.findByText('Your plan for today');
     expect(view.getByText('Balanced')).toBeTruthy();
-    expect(view.getByText('Your check-in supports a Balanced option today.')).toBeTruthy();
+    expect(view.getByText('Included today: Neck.')).toBeTruthy();
+    expect(view.getByText('Your neck check-in supports a Balanced option today.')).toBeTruthy();
     await fireEvent.press(view.getByRole('button', { name: 'Begin routine' }));
     await view.findByText('Prototype movement 1');
     expect(view.getByRole('button', { name: 'Continue' })).toBeTruthy();
@@ -457,6 +484,25 @@ describe('Kineo product app', () => {
     await fireEvent.press(await view.findByRole('button', { name: 'Similar' }));
     await fireEvent.press(await view.findByRole('button', { name: 'Okay' }));
     expect(await view.findByText(/Upper & mid back is not included/)).toBeTruthy();
+  });
+
+  it('states when the user skipped a secondary area', async () => {
+    const service = new SkippedSecondaryPlanService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const view = await render(
+      <KineoProductApp service={service} onStoreRestartRequired={() => undefined} />,
+    );
+
+    await fireEvent.press(await view.findByRole('button', { name: 'Check in' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Similar' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Okay' }));
+    expect(await view.findByText(
+      'Upper & mid back was skipped for today’s check-in and is not included.',
+    )).toBeTruthy();
   });
 
   it('shows private area history without implying causation', async () => {
