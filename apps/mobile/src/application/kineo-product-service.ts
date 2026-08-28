@@ -15,6 +15,17 @@ export type ProductClock = Readonly<{
 
 export const prototypeSafetyBoundaryVersion = 'prototype-safety-v1';
 
+export interface KineoProductServing {
+  loadStartState(): Promise<ProductResult<ProductStartState>>;
+  confirmAdultEligibility(): Promise<ProductResult<void>>;
+  savePrimaryArea(area: BodyArea): Promise<ProductResult<void>>;
+  saveSecondaryArea(area?: BodyArea): Promise<ProductResult<void>>;
+  acknowledgeSafetyBoundary(): Promise<ProductResult<void>>;
+  completeOnboarding(): Promise<ProductResult<BodyArea>>;
+  resetHistory(): Promise<ProductResult<void>>;
+  deleteAllData(): Promise<ProductResult<void>>;
+}
+
 function persistenceFailure<Value>(
   cause: PersistenceError,
 ): ProductResult<Value> {
@@ -26,7 +37,7 @@ const invalidState = Object.freeze({
   error: Object.freeze({ code: 'invalidState' as const }),
 });
 
-export class KineoProductService {
+export class KineoProductService implements KineoProductServing {
   constructor(
     private readonly store: KineoPersistence,
     private readonly clock: ProductClock,
