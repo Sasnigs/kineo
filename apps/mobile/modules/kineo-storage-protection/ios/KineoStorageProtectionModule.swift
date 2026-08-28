@@ -56,18 +56,15 @@ public class KineoStorageProtectionModule: Module {
         throw storageException("Protected data is unavailable.")
       }
       let directory = try privateDirectoryURL().standardizedFileURL
-      let databaseURL = localFileURL(from: databasePath)
-      let candidateURLs = [
-        databaseURL,
-        localFileURL(from: databasePath + "-wal"),
-        localFileURL(from: databasePath + "-shm")
-      ]
+      let candidateURLs = KineoStoragePathPolicy.databaseFileURLs(from: databasePath)
+      guard let databaseURL = candidateURLs.first else {
+        throw storageException("The Kineo database path is invalid.")
+      }
       guard FileManager.default.fileExists(atPath: databaseURL.path) else {
         throw storageException("The Kineo database does not exist.")
       }
       return try candidateURLs.compactMap { candidate in
-        let prefix = directory.path + "/"
-        guard candidate.path == directory.path || candidate.path.hasPrefix(prefix) else {
+        guard KineoStoragePathPolicy.contains(candidate, within: directory) else {
           throw storageException("A path escaped Kineo's private directory.")
         }
         guard FileManager.default.fileExists(atPath: candidate.path) else {
@@ -125,13 +122,6 @@ public class KineoStorageProtectionModule: Module {
       appropriateFor: nil,
       create: true
     ).appendingPathComponent(privateDirectoryName, isDirectory: true)
-  }
-
-  private func localFileURL(from value: String) -> URL {
-    if let url = URL(string: value), url.isFileURL {
-      return url.standardizedFileURL
-    }
-    return URL(fileURLWithPath: value).standardizedFileURL
   }
 
   private func applicationSupportURL() throws -> URL {
