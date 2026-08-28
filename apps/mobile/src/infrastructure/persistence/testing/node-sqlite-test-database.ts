@@ -7,6 +7,7 @@ import type {
 } from '../../../core/persistence/persistence-contract';
 
 export class NodeSqliteTestDatabase implements SqliteDatabase {
+  readonly databasePath = ':memory:';
   private readonly database = new DatabaseSync(':memory:');
   private failureSqlFragment?: string;
 

@@ -49,6 +49,9 @@ class KineoExpoSqliteDatabase
   extends ExpoSqliteExecutor
   implements SqliteDatabase
 {
+  get databasePath(): string {
+    return this.database.databasePath;
+  }
   async withExclusiveTransactionAsync(
     task: (transaction: SqliteExecutor) => Promise<void>,
   ): Promise<void> {

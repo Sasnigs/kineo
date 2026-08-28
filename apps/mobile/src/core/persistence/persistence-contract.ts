@@ -49,6 +49,7 @@ export interface SqliteExecutor {
 }
 
 export interface SqliteDatabase extends SqliteExecutor {
+  readonly databasePath: string;
   withExclusiveTransactionAsync(
     task: (transaction: SqliteExecutor) => Promise<void>,
   ): Promise<void>;
