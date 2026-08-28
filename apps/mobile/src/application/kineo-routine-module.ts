@@ -172,12 +172,22 @@ export class KineoRoutineModule {
 
   async pause(sessionId: RoutineSessionId): Promise<ProductResult<RoutinePresentation>> {
     const session = await this.requiredSession(sessionId);
-    return session.ok ? this.transition(session.value, 'paused', 'paused') : session;
+    if (!session.ok) return session;
+    if (session.value.status === 'paused' || this.isTerminal(session.value.status)) {
+      return this.presentation(session.value);
+    }
+    return session.value.status === 'inProgress'
+      ? this.transition(session.value, 'paused', 'paused')
+      : invalidState();
   }
 
   async resume(sessionId: RoutineSessionId): Promise<ProductResult<RoutinePresentation>> {
     const session = await this.requiredSession(sessionId);
-    return session.ok ? this.transition(session.value, 'resumed', 'inProgress') : session;
+    if (!session.ok) return session;
+    if (session.value.status === 'inProgress') return this.presentation(session.value);
+    return session.value.status === 'paused'
+      ? this.transition(session.value, 'resumed', 'inProgress')
+      : invalidState();
   }
 
   async advance(

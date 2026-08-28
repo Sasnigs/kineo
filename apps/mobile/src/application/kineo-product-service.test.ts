@@ -37,6 +37,7 @@ const failedRoutineEventInsertFragment = 'INSERT INTO routine_events';
 const failedReminderWriteFragment = 'INSERT INTO reminder_settings';
 const invalidActiveSeconds = -1;
 const expectedStartedEventCount = 1;
+const expectedLifecycleEventCountAfterPauseAndResume = 3;
 const morningReminderWindow = Object.freeze({
   startMinutes: 8 * 60,
   endMinutes: 9 * 60,
@@ -846,6 +847,15 @@ describe('Kineo product service check-in', () => {
       ok: true,
       value: { stepElapsedMilliseconds: firstElapsedIncrementMilliseconds },
     });
+    await expect(service.pauseRoutine(started.value.sessionId)).resolves.toEqual(paused);
+    const resumed = await service.resumeRoutine(started.value.sessionId);
+    expect(resumed).toMatchObject({ ok: true, value: { status: 'inProgress' } });
+    await expect(service.resumeRoutine(started.value.sessionId)).resolves.toEqual(resumed);
+    const eventCount = await database.getFirstAsync<{ count: number }>(
+      'SELECT count(*) AS count FROM routine_events WHERE routine_session_id = ?',
+      [started.value.sessionId],
+    );
+    expect(eventCount?.count).toBe(expectedLifecycleEventCountAfterPauseAndResume);
     await database.closeAsync();
   });
 
