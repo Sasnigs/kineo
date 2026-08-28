@@ -3,7 +3,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, radius, spacing, typography } from '@/ui/theme/tokens';
 
-export function MigrationFoundationScreen() {
+type MigrationFoundationScreenProps = Readonly<{
+  bundledContentAssetCount: number;
+}>;
+
+export function MigrationFoundationScreen({
+  bundledContentAssetCount,
+}: MigrationFoundationScreenProps) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.content}>
@@ -18,12 +24,13 @@ export function MigrationFoundationScreen() {
         <View accessibilityLabel="Migration status" style={styles.card}>
           <View style={styles.statusRow}>
             <View style={styles.statusDot} />
-            <Text style={styles.status}>FIRST RULE VERIFIED</Text>
+            <Text style={styles.status}>CONTENT CORE VERIFIED</Text>
           </View>
-          <Text style={styles.cardTitle}>Area-level selection</Text>
+          <Text style={styles.cardTitle}>Deterministic routines</Text>
           <Text style={styles.cardBody}>
-            Neck, upper and mid back, and lower back now share the frozen Swift
-            decision matrix in the Expo core.
+            The verified selection and content engines now include a signed
+            prototype catalog with {bundledContentAssetCount} bundled media
+            asset.
           </Text>
         </View>
 
