@@ -73,6 +73,9 @@ const safetyBoundaryVersion = 'prototype-safety-v1';
 const timeZoneId = 'America/Chicago';
 const calendarId = 'gregorian';
 const failedSafetyInsertFragment = 'INSERT INTO safety_events';
+const failedDecisionAreaInsertFragment = 'INSERT INTO decision_area_inputs';
+const failedRoutineUpdateFragment = 'UPDATE routine_sessions SET';
+const failedAreaFeedbackInsertFragment = 'INSERT INTO area_feedback';
 
 function required<Value>(result: { ok: true; value: Value } | { ok: false }): Value {
   if (!result.ok) {
@@ -432,6 +435,15 @@ describe('Kineo SQLite store', () => {
     await store.saveCheckInDraft(draft);
     await store.completeCheckIn(completed, []);
 
+    database.failNextStatementContaining(failedDecisionAreaInsertFragment);
+    await expect(store.appendSelectionDecision(decision)).resolves.toEqual({
+      ok: false,
+      error: { code: 'writeFailed' },
+    });
+    const rolledBackCount = await database.getFirstAsync<{ count: number }>(
+      'SELECT count(*) AS count FROM selection_decisions',
+    );
+    expect(rolledBackCount?.count).toBe(0);
     await expect(store.appendSelectionDecision(decision)).resolves.toEqual({
       ok: true,
       value: undefined,
@@ -477,6 +489,16 @@ describe('Kineo SQLite store', () => {
       stepElapsedMilliseconds: 0,
       updatedAtMilliseconds: safetyAtMilliseconds + 1,
     };
+    database.failNextStatementContaining(failedRoutineUpdateFragment);
+    await expect(store.recordRoutineEvent(started, checkpoint)).resolves.toEqual({
+      ok: false,
+      error: { code: 'writeFailed' },
+    });
+    await expect(store.loadRoutineSession(session.id)).resolves.toEqual({
+      ok: true,
+      value: session,
+    });
+    await expect(store.loadRoutineEvents(session.id)).resolves.toEqual({ ok: true, value: [] });
     await expect(store.recordRoutineEvent(started, checkpoint)).resolves.toEqual({ ok: true, value: undefined });
     await expect(store.recordRoutineEvent(started, checkpoint)).resolves.toEqual({ ok: true, value: undefined });
     const restored = await store.loadNonterminalRoutine();
@@ -555,6 +577,15 @@ describe('Kineo SQLite store', () => {
       submittedAtMilliseconds: safetyAtMilliseconds + 3,
       dayContext: completed.dayContext,
     }));
+    database.failNextStatementContaining(failedAreaFeedbackInsertFragment);
+    await expect(store.submitFeedback(feedback)).resolves.toEqual({
+      ok: false,
+      error: { code: 'writeFailed' },
+    });
+    const rolledBackFeedbackCount = await database.getFirstAsync<{ count: number }>(
+      'SELECT count(*) AS count FROM feedback_submissions',
+    );
+    expect(rolledBackFeedbackCount?.count).toBe(0);
     await expect(store.submitFeedback(feedback)).resolves.toEqual({ ok: true, value: undefined });
     await expect(store.submitFeedback(feedback)).resolves.toEqual({ ok: true, value: undefined });
     const feedbackCount = await database.getFirstAsync<{ count: number }>(
