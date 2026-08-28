@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | E1 core locally verified; CI pending |
+| Status | E2 content locally verified; CI pending |
 | Target | Expo SDK 57, React Native, strict TypeScript, iOS 17 minimum |
 | Source | Existing product behavior and TD-00 through TD-08 |
 | Last reviewed | August 27, 2026 |
@@ -58,6 +58,8 @@ Parity expectations come from product decision tables, stable shared fixtures, a
 | E6 Cutover | Exact Expo archive qualification and removal plan for Swift | Full P0/P1 parity evidence passes; owner-visible cutover recorded |
 
 E1 is delivered in three reviewable slices: domain and Attention safety, Active history eligibility, then the complete plan selector. Each slice must keep Swift and Expo green before the next begins.
+
+E2 is delivered in three slices: catalog contracts, the signed prototype catalog and validator, then composition, immutable snapshots, revision auditing, bundled assets, and shared Swift/Expo fingerprint parity.
 
 ## 5. E0 acceptance
 
