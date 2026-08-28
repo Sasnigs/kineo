@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 
-import parityFixture from '../../../../../Packages/KineoModules/Tests/KineoCoreTests/Fixtures/active-history-v1.json';
-import configurationFixture from '../../../../../Packages/KineoModules/Tests/KineoCoreTests/Fixtures/active-unlock-configuration-v1.json';
+import parityFixture from '../../testing/parity-fixtures/active-history-v1.json';
+import configurationFixture from '../../testing/parity-fixtures/active-unlock-configuration-v1.json';
 import {
   areaResponses,
   bodyAreas,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import parityFixture from '../../../../../Packages/KineoModules/Tests/KineoCoreTests/Fixtures/plan-selection-v1.json';
+import parityFixture from '../../testing/parity-fixtures/plan-selection-v1.json';
 import {
   bodyAreas,
   changeReports,

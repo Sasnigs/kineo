@@ -1,0 +1,37 @@
+[
+  {
+    "name": "single_active",
+    "request": { "primaryArea": "neck", "primary": { "changeReport": "better", "movementComfort": "good" }, "unlockedAreas": ["neck"], "safetyAttentionAreas": [], "duration": "standard" },
+    "expected": { "kind": "selected", "recommendedLevel": "active", "requestedOverride": null, "selectedLevel": "active", "overrideDisposition": "none", "duration": "standard", "includedAreaDecisions": [{ "area": "neck", "role": "primary", "checkInEntryId": "00000000-0000-0000-0000-000000000003", "entryRevision": 1, "baseLevel": "active", "activeUnlocked": true }], "omittedAreas": [], "compositionRequest": { "primaryArea": "neck", "secondaryArea": null, "selectedLevel": "active", "duration": "standard", "rulesVersion": "selection-v1.0.0-prototype", "catalogVersion": "catalog-v1" }, "explanations": [{ "key": "reason.better_good_active", "parameters": { "area": "neck" } }], "notices": [], "pauseTodayAvailable": false }
+  },
+  {
+    "name": "gentler_override",
+    "request": { "primaryArea": "neck", "primary": { "changeReport": "better", "movementComfort": "good" }, "unlockedAreas": ["neck"], "safetyAttentionAreas": [], "requestedOverride": "gentle", "duration": "quick" },
+    "expected": { "kind": "selected", "recommendedLevel": "active", "requestedOverride": "gentle", "selectedLevel": "gentle", "overrideDisposition": "acceptedGentler", "duration": "quick", "includedAreaDecisions": [{ "area": "neck", "role": "primary", "checkInEntryId": "00000000-0000-0000-0000-000000000003", "entryRevision": 1, "baseLevel": "active", "activeUnlocked": true }], "omittedAreas": [], "compositionRequest": { "primaryArea": "neck", "secondaryArea": null, "selectedLevel": "gentle", "duration": "quick", "rulesVersion": "selection-v1.0.0-prototype", "catalogVersion": "catalog-v1" }, "explanations": [{ "key": "reason.user_gentler_override", "parameters": { "level": "gentle" } }, { "key": "reason.better_good_active", "parameters": { "area": "neck" } }], "notices": [], "pauseTodayAvailable": false }
+  },
+  {
+    "name": "secondary_more_conservative",
+    "request": { "primaryArea": "neck", "primary": { "changeReport": "similar", "movementComfort": "good" }, "secondaryArea": "upperMidBack", "secondaryParticipation": "include", "secondary": { "changeReport": "worse", "movementComfort": "good", "conditionalSafetyAnswer": "no" }, "unlockedAreas": [], "safetyAttentionAreas": [], "duration": "standard" },
+    "expected": { "kind": "selected", "recommendedLevel": "gentle", "requestedOverride": null, "selectedLevel": "gentle", "overrideDisposition": "none", "duration": "standard", "includedAreaDecisions": [{ "area": "neck", "role": "primary", "checkInEntryId": "00000000-0000-0000-0000-000000000003", "entryRevision": 1, "baseLevel": "balanced", "activeUnlocked": false }, { "area": "upperMidBack", "role": "secondary", "checkInEntryId": "00000000-0000-0000-0000-000000000004", "entryRevision": 1, "baseLevel": "gentle", "activeUnlocked": false }], "omittedAreas": [], "compositionRequest": { "primaryArea": "neck", "secondaryArea": "upperMidBack", "selectedLevel": "gentle", "duration": "standard", "rulesVersion": "selection-v1.0.0-prototype", "catalogVersion": "catalog-v1" }, "explanations": [{ "key": "reason.reported_worse", "parameters": { "area": "upperMidBack" } }, { "key": "reason.secondary_more_conservative", "parameters": { "area": "upperMidBack" } }], "notices": [], "pauseTodayAvailable": true }
+  },
+  {
+    "name": "secondary_skipped",
+    "request": { "primaryArea": "neck", "primary": { "changeReport": "similar", "movementComfort": "good" }, "secondaryArea": "upperMidBack", "secondaryParticipation": "skipForSession", "unlockedAreas": [], "safetyAttentionAreas": [], "duration": "standard" },
+    "expected": { "kind": "selected", "recommendedLevel": "balanced", "requestedOverride": null, "selectedLevel": "balanced", "overrideDisposition": "none", "duration": "standard", "includedAreaDecisions": [{ "area": "neck", "role": "primary", "checkInEntryId": "00000000-0000-0000-0000-000000000003", "entryRevision": 1, "baseLevel": "balanced", "activeUnlocked": false }], "omittedAreas": [{ "area": "upperMidBack", "reason": "secondaryUnanswered" }], "compositionRequest": { "primaryArea": "neck", "secondaryArea": null, "selectedLevel": "balanced", "duration": "standard", "rulesVersion": "selection-v1.0.0-prototype", "catalogVersion": "catalog-v1" }, "explanations": [{ "key": "reason.balanced_checkin", "parameters": { "area": "neck" } }], "notices": [{ "key": "notice.secondary_skipped", "area": "upperMidBack" }], "pauseTodayAvailable": false }
+  },
+  {
+    "name": "primary_safety_pending",
+    "request": { "primaryArea": "neck", "primary": { "changeReport": "worse", "movementComfort": "good" }, "unlockedAreas": [], "safetyAttentionAreas": [], "duration": "standard" },
+    "expected": { "kind": "noPlan", "reason": "needs_primary_safety_answer", "affectedAreas": ["neck"], "safetyTransitions": [] }
+  },
+  {
+    "name": "two_new_attention_transitions",
+    "request": { "primaryArea": "neck", "primary": { "changeReport": "worse", "movementComfort": "good", "conditionalSafetyAnswer": "yes" }, "secondaryArea": "upperMidBack", "secondaryParticipation": "include", "secondary": { "changeReport": "similar", "movementComfort": "limited", "conditionalSafetyAnswer": "notSure" }, "unlockedAreas": [], "safetyAttentionAreas": [], "requestedOverride": "active", "duration": "standard" },
+    "expected": { "kind": "noPlan", "reason": "attention_required", "affectedAreas": ["neck", "upperMidBack"], "safetyTransitions": [{ "area": "neck", "sourceCheckInEntryId": "00000000-0000-0000-0000-000000000003", "answer": "yes" }, { "area": "upperMidBack", "sourceCheckInEntryId": "00000000-0000-0000-0000-000000000004", "answer": "notSure" }] }
+  },
+  {
+    "name": "configured_before_nonconfigured_attention",
+    "request": { "primaryArea": "lowerBack", "primary": { "changeReport": "similar", "movementComfort": "good" }, "secondaryArea": "neck", "secondaryParticipation": "include", "secondary": { "changeReport": "similar", "movementComfort": "good" }, "unlockedAreas": [], "safetyAttentionAreas": ["neck", "upperMidBack", "lowerBack"], "duration": "standard" },
+    "expected": { "kind": "noPlan", "reason": "attention_required", "affectedAreas": ["lowerBack", "neck", "upperMidBack"], "safetyTransitions": [] }
+  }
+]

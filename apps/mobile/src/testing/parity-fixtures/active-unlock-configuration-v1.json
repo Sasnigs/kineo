@@ -1,0 +1,5 @@
+{
+  "qualifyingOutcomeCountRequired": 2,
+  "qualifyingLevels": ["gentle", "balanced"],
+  "qualifyingResponses": ["better", "same"]
+}

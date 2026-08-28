@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import levelCaseFixture from '../../../../../Packages/KineoModules/Tests/KineoCoreTests/Fixtures/area-level-selection-v1.json';
+import levelCaseFixture from '../../testing/parity-fixtures/area-level-selection-v1.json';
 
 import {
   changeReports,

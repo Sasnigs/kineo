@@ -1,0 +1,165 @@
+[
+  {
+    "name": "completed gentle better qualifies",
+    "history": {
+      "area": "neck",
+      "qualifyingOutcomeCount": 0
+    },
+    "outcome": {
+      "area": "neck",
+      "routineStatus": "completed",
+      "deliveredLevel": "gentle",
+      "response": "better",
+      "wasIncludedInDeliveredRoutine": true
+    },
+    "expectedHistory": {
+      "area": "neck",
+      "qualifyingOutcomeCount": 1,
+      "mostRecentRecordedResponse": "better"
+    }
+  },
+  {
+    "name": "completed balanced same qualifies",
+    "history": {
+      "area": "upperMidBack",
+      "qualifyingOutcomeCount": 1,
+      "mostRecentRecordedResponse": "better"
+    },
+    "outcome": {
+      "area": "upperMidBack",
+      "routineStatus": "completed",
+      "deliveredLevel": "balanced",
+      "response": "same",
+      "wasIncludedInDeliveredRoutine": true
+    },
+    "expectedHistory": {
+      "area": "upperMidBack",
+      "qualifyingOutcomeCount": 2,
+      "mostRecentRecordedResponse": "same"
+    }
+  },
+  {
+    "name": "active completion does not qualify",
+    "history": {
+      "area": "lowerBack",
+      "qualifyingOutcomeCount": 1,
+      "mostRecentRecordedResponse": "same"
+    },
+    "outcome": {
+      "area": "lowerBack",
+      "routineStatus": "completed",
+      "deliveredLevel": "active",
+      "response": "better",
+      "wasIncludedInDeliveredRoutine": true
+    },
+    "expectedHistory": {
+      "area": "lowerBack",
+      "qualifyingOutcomeCount": 1,
+      "mostRecentRecordedResponse": "better"
+    }
+  },
+  {
+    "name": "incomplete routine updates explicit response without qualifying",
+    "history": {
+      "area": "neck",
+      "qualifyingOutcomeCount": 1,
+      "mostRecentRecordedResponse": "better"
+    },
+    "outcome": {
+      "area": "neck",
+      "routineStatus": "stopped",
+      "deliveredLevel": "gentle",
+      "response": "same",
+      "wasIncludedInDeliveredRoutine": true
+    },
+    "expectedHistory": {
+      "area": "neck",
+      "qualifyingOutcomeCount": 1,
+      "mostRecentRecordedResponse": "same"
+    }
+  },
+  {
+    "name": "worse resets after an abandoned routine",
+    "history": {
+      "area": "upperMidBack",
+      "qualifyingOutcomeCount": 2,
+      "mostRecentRecordedResponse": "better"
+    },
+    "outcome": {
+      "area": "upperMidBack",
+      "routineStatus": "abandoned",
+      "deliveredLevel": "active",
+      "response": "worse",
+      "wasIncludedInDeliveredRoutine": true
+    },
+    "expectedHistory": {
+      "area": "upperMidBack",
+      "qualifyingOutcomeCount": 0,
+      "mostRecentRecordedResponse": "worse"
+    }
+  },
+  {
+    "name": "skipped feedback preserves history",
+    "history": {
+      "area": "lowerBack",
+      "qualifyingOutcomeCount": 1,
+      "mostRecentRecordedResponse": "same"
+    },
+    "outcome": {
+      "area": "lowerBack",
+      "routineStatus": "completed",
+      "deliveredLevel": "gentle",
+      "wasIncludedInDeliveredRoutine": true
+    },
+    "expectedHistory": {
+      "area": "lowerBack",
+      "qualifyingOutcomeCount": 1,
+      "mostRecentRecordedResponse": "same"
+    }
+  },
+  {
+    "name": "another area cannot change history",
+    "history": {
+      "area": "neck",
+      "qualifyingOutcomeCount": 0
+    },
+    "outcome": {
+      "area": "lowerBack",
+      "routineStatus": "completed",
+      "deliveredLevel": "gentle",
+      "response": "better",
+      "wasIncludedInDeliveredRoutine": true
+    },
+    "expectedError": "areaMismatch"
+  },
+  {
+    "name": "an omitted area cannot change history",
+    "history": {
+      "area": "neck",
+      "qualifyingOutcomeCount": 0
+    },
+    "outcome": {
+      "area": "neck",
+      "routineStatus": "completed",
+      "deliveredLevel": "gentle",
+      "response": "better",
+      "wasIncludedInDeliveredRoutine": false
+    },
+    "expectedError": "areaNotIncluded"
+  },
+  {
+    "name": "a nonterminal routine cannot change history",
+    "history": {
+      "area": "neck",
+      "qualifyingOutcomeCount": 0
+    },
+    "outcome": {
+      "area": "neck",
+      "routineStatus": "inProgress",
+      "deliveredLevel": "gentle",
+      "response": "better",
+      "wasIncludedInDeliveredRoutine": true
+    },
+    "expectedError": "nonterminalRoutine"
+  }
+]
