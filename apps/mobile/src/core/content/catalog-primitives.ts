@@ -79,16 +79,31 @@ export type CatalogValidationError =
   | Readonly<{ code: 'invalidMetadata'; field: string }>
   | Readonly<{ code: 'invalidAlternative'; field: string }>
   | Readonly<{ code: 'invalidSequenceItem'; field: string }>
-  | Readonly<{ code: 'invalidArtifact'; field: string }>;
+  | Readonly<{ code: 'invalidArtifact'; field: string }>
+  | Readonly<{ code: 'unsupportedSchemaVersion'; schemaVersion: number }>
+  | Readonly<{ code: 'ineligibleCatalog'; channel: BuildChannel }>
+  | Readonly<{ code: 'manifestFingerprintMismatch' }>
+  | Readonly<{ code: 'duplicateRecordId'; id: CatalogId }>
+  | Readonly<{ code: 'duplicateVariant'; key: string }>
+  | Readonly<{ code: 'missingDurationPolicy'; variant: DurationVariant }>
+  | Readonly<{ code: 'ineligibleRecord'; id: CatalogId }>
+  | Readonly<{ code: 'missingReference'; id: CatalogId }>
+  | Readonly<{ code: 'missingLocalization'; key: string }>
+  | Readonly<{ code: 'missingAsset'; path: string }>
+  | Readonly<{ code: 'assetFingerprintMismatch'; path: string }>
+  | Readonly<{ code: 'invalidMedia'; assetId: string }>
+  | Readonly<{ code: 'alternativeCycle'; id: CatalogId }>
+  | Readonly<{ code: 'incompatibleContent'; id: CatalogId }>;
 
 const firstRevision = 1;
 const semanticVersionComponentCount = 3;
 const zeroVersionComponent = '0';
 const englishUnitedStatesLocale = 'en-US';
 const minimumPositiveValue = 1;
+export const sha256DigestHexLength = 64;
 const catalogIdPattern =
   /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
-const sha256DigestPattern = /^[0-9a-f]{64}$/;
+const lowercaseHexPattern = /^[0-9a-f]+$/;
 
 function isPositiveSafeInteger(candidate: number): boolean {
   return Number.isSafeInteger(candidate) && candidate >= minimumPositiveValue;
@@ -151,7 +166,10 @@ export function parseContentRevision(
 export function parseSha256Digest(
   candidate: string,
 ): Result<Sha256Digest, CatalogValidationError> {
-  if (!sha256DigestPattern.test(candidate)) {
+  if (
+    candidate.length !== sha256DigestHexLength ||
+    !lowercaseHexPattern.test(candidate)
+  ) {
     return {
       ok: false,
       error: { code: 'invalidArtifact', field: 'sha256' },

@@ -10,6 +10,7 @@ import {
   parseContentRevision,
   parseSha256Digest,
   prototypeCatalogDurations,
+  sha256DigestHexLength,
 } from './catalog-primitives';
 
 function value<Value>(result: { ok: true; value: Value } | { ok: false }): Value {
@@ -68,9 +69,11 @@ describe('Catalog primitives', () => {
   });
 
   it('accepts only lowercase SHA-256 digests', () => {
-    expect(parseSha256Digest('a'.repeat(64)).ok).toBe(true);
-    expect(parseSha256Digest('A'.repeat(64)).ok).toBe(false);
-    expect(parseSha256Digest('a'.repeat(63)).ok).toBe(false);
+    expect(parseSha256Digest('a'.repeat(sha256DigestHexLength)).ok).toBe(true);
+    expect(parseSha256Digest('A'.repeat(sha256DigestHexLength)).ok).toBe(false);
+    expect(
+      parseSha256Digest('a'.repeat(sha256DigestHexLength - 1)).ok,
+    ).toBe(false);
   });
 
   it('requires positive ordered duration bounds', () => {
