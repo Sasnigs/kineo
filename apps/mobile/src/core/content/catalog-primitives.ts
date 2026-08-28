@@ -93,7 +93,8 @@ export type CatalogValidationError =
   | Readonly<{ code: 'assetFingerprintMismatch'; path: string }>
   | Readonly<{ code: 'invalidMedia'; assetId: string }>
   | Readonly<{ code: 'alternativeCycle'; id: CatalogId }>
-  | Readonly<{ code: 'incompatibleContent'; id: CatalogId }>;
+  | Readonly<{ code: 'incompatibleContent'; id: CatalogId }>
+  | Readonly<{ code: 'invalidCompositionRequest'; field: string }>;
 
 const firstRevision = 1;
 const semanticVersionComponentCount = 3;

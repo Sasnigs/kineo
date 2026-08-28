@@ -54,7 +54,7 @@ export const prototypeCatalogCounts = Object.freeze({
 export const prototypeCatalogAsset = Object.freeze({
   assetId: 'kineo.prototype.media.placeholder.v1',
   kind: 'illustration' as const,
-  localBundlePath: 'assets/content/prototype-placeholder.svg',
+  localBundlePath: 'PrototypeContent/prototype-placeholder.svg',
   sha256: '3c6b37676f85280ba9deaa34ee755dcac4bc0df937440c3883788b0cdd6b368e',
 });
 
@@ -104,6 +104,8 @@ const prototypeCopy = Object.freeze({
   safetyCue: 'Prototype safety cue placeholder.',
   mediaAccessibilityKey: 'prototype.media.accessibility-description',
   mediaAccessibility: 'Non-instructional prototype media placeholder.',
+  transitionTitleKey: 'routine.transition.title',
+  restTitleKey: 'routine.rest.title',
 });
 
 type MovementKind = 'base' | 'alternative';
@@ -607,6 +609,8 @@ export function prototypeCatalogLocalizedStrings(): Readonly<
     [prototypeCopy.mediaAccessibilityKey]: prototypeCopy.mediaAccessibility,
     [prototypeCopy.instructionKey]: prototypeCopy.instruction,
     [prototypeCopy.safetyCueKey]: prototypeCopy.safetyCue,
+    [prototypeCopy.transitionTitleKey]: prototypeCopy.contentLabel,
+    [prototypeCopy.restTitleKey]: prototypeCopy.contentLabel,
   };
   for (const area of bodyAreas) {
     for (const ordinal of baseMovementOrdinals) {

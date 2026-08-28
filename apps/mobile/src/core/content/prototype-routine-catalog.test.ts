@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
+import parityFixture from '../../../../../Packages/KineoModules/Tests/KineoCoreTests/Fixtures/catalog-composition-parity-v1.json';
 import { bodyAreas, durationVariants, routineLevels } from '../domain/selection-domain';
 import type { SequenceItem } from './catalog-content';
 import {
@@ -23,6 +24,9 @@ function itemSeconds(item: SequenceItem): number {
 describe('Prototype routine catalog', () => {
   it('has exact cardinalities and globally unique record identifiers', () => {
     const catalog = makePrototypeRoutineCatalog();
+    expect(catalog.manifestFingerprint).toBe(
+      parityFixture.catalogManifestFingerprint,
+    );
     const recordIds = [
       ...catalog.movements,
       ...catalog.fragments,

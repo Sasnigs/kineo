@@ -238,10 +238,16 @@ function manifestPayload(catalog: UnsignedRoutineCatalog): object {
   };
 }
 
-function normalizedCanonical(value: unknown): unknown {
+function normalizedCanonical(
+  value: unknown,
+  sortingStringArrays: boolean,
+): unknown {
   if (Array.isArray(value)) {
-    const normalized = value.map(normalizedCanonical);
-    return normalized.every((item) => typeof item === 'string')
+    const normalized = value.map((item) =>
+      normalizedCanonical(item, sortingStringArrays),
+    );
+    return sortingStringArrays &&
+      normalized.every((item) => typeof item === 'string')
       ? [...normalized].sort()
       : normalized;
   }
@@ -250,14 +256,23 @@ function normalizedCanonical(value: unknown): unknown {
       Object.entries(value)
         .filter(([, entry]) => entry !== undefined)
         .sort(([left], [right]) => lexicalOrder(left, right))
-        .map(([key, entry]) => [key, normalizedCanonical(entry)]),
+        .map(([key, entry]) => [
+          key,
+          normalizedCanonical(entry, sortingStringArrays),
+        ]),
     );
   }
   return value;
 }
 
-function fingerprint(payload: object): Sha256Digest {
-  const canonical = JSON.stringify(normalizedCanonical(payload));
+export function makeCanonicalFingerprint(
+  payload: object,
+  sortingStringArrays: boolean,
+): Sha256Digest {
+  // Match the verified Swift reference's JSONSerialization canonical bytes.
+  const canonical = JSON.stringify(
+    normalizedCanonical(payload, sortingStringArrays),
+  ).replaceAll('/', '\\/');
   const digest = bytesToHex(sha256(utf8ToBytes(canonical)));
   const parsed = parseSha256Digest(digest);
   if (!parsed.ok) {
@@ -269,7 +284,7 @@ function fingerprint(payload: object): Sha256Digest {
 export function computeManifestFingerprint(
   catalog: Omit<RoutineCatalog, 'manifestFingerprint'> | RoutineCatalog,
 ): Sha256Digest {
-  return fingerprint(manifestPayload(catalog));
+  return makeCanonicalFingerprint(manifestPayload(catalog), true);
 }
 
 export function createSignedCatalog(
@@ -313,7 +328,10 @@ export function createSignedCatalog(
     ok: true,
     value: Object.freeze({
       ...unsigned,
-      manifestFingerprint: fingerprint(manifestPayload(unsigned)),
+      manifestFingerprint: makeCanonicalFingerprint(
+        manifestPayload(unsigned),
+        true,
+      ),
     }),
   };
 }
