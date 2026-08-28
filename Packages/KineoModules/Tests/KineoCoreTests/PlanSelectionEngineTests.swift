@@ -1,11 +1,94 @@
+import Foundation
 import KineoCore
 import Testing
 
 @Suite("Plan selection engine")
 struct PlanSelectionEngineTests {
+    private struct PlanSelectionParityCase: Decodable {
+        let name: String
+        let request: PlanSelectionParityRequest
+        let expected: PlanSelectionParityExpected
+    }
+
+    private struct PlanSelectionParityRequest: Decodable {
+        let primaryArea: BodyArea
+        let primary: PlanSelectionParityCheckIn
+        let secondaryArea: BodyArea?
+        let secondaryParticipation: String?
+        let secondary: PlanSelectionParityCheckIn?
+        let unlockedAreas: [BodyArea]
+        let safetyAttentionAreas: [BodyArea]
+        let requestedOverride: RoutineLevel?
+        let duration: DurationVariant
+    }
+
+    private struct PlanSelectionParityCheckIn: Decodable {
+        let changeReport: ChangeReport
+        let movementComfort: MovementComfort
+        let conditionalSafetyAnswer: ConditionalSafetyAnswer?
+    }
+
+    private struct PlanSelectionParityExpected: Decodable {
+        let kind: String
+        let reason: String?
+        let affectedAreas: [BodyArea]?
+        let safetyTransitions: [PlanSelectionParityTransition]?
+        let recommendedLevel: RoutineLevel?
+        let requestedOverride: RoutineLevel?
+        let selectedLevel: RoutineLevel?
+        let overrideDisposition: String?
+        let duration: DurationVariant?
+        let includedAreaDecisions: [PlanSelectionParityAreaDecision]?
+        let omittedAreas: [PlanSelectionParityOmittedArea]?
+        let compositionRequest: PlanSelectionParityCompositionRequest?
+        let explanations: [PlanSelectionParityExplanation]?
+        let notices: [PlanSelectionParityNotice]?
+        let pauseTodayAvailable: Bool?
+    }
+
+    private struct PlanSelectionParityTransition: Decodable, Equatable {
+        let area: BodyArea
+        let sourceCheckInEntryId: String
+        let answer: ConditionalSafetyAnswer
+    }
+
+    private struct PlanSelectionParityAreaDecision: Decodable, Equatable {
+        let area: BodyArea
+        let role: AreaRole
+        let checkInEntryId: String
+        let entryRevision: Int
+        let baseLevel: RoutineLevel
+        let activeUnlocked: Bool
+    }
+
+    private struct PlanSelectionParityOmittedArea: Decodable, Equatable {
+        let area: BodyArea
+        let reason: OmissionReason
+    }
+
+    private struct PlanSelectionParityCompositionRequest: Decodable, Equatable {
+        let primaryArea: BodyArea
+        let secondaryArea: BodyArea?
+        let selectedLevel: RoutineLevel
+        let duration: DurationVariant
+        let rulesVersion: String
+        let catalogVersion: String
+    }
+
+    private struct PlanSelectionParityExplanation: Decodable, Equatable {
+        let key: String
+        let parameters: [String: String]
+    }
+
+    private struct PlanSelectionParityNotice: Decodable, Equatable {
+        let key: String
+        let area: BodyArea?
+    }
+
     private enum FixtureError: Error {
         case expectedSelection
         case expectedNoPlan
+        case invalidParityValue
     }
 
     private enum InvalidInputCase: CaseIterable, Sendable {
@@ -41,6 +124,128 @@ struct PlanSelectionEngineTests {
 
     private static let catalogVersion = "catalog-v1"
     private static let validRevision = 1
+
+    @Test("Swift matches the shared plan-selection parity fixture")
+    private func sharedPlanSelectionParity() throws {
+        let fixtureURL = try #require(
+            Bundle.module.url(
+                forResource: "plan-selection-v1",
+                withExtension: "json"
+            )
+        )
+        let fixture = try JSONDecoder().decode(
+            [PlanSelectionParityCase].self,
+            from: Data(contentsOf: fixtureURL)
+        )
+
+        for testCase in fixture {
+            var checkIns: [BodyArea: SelectionAreaCheckIn] = [
+                testCase.request.primaryArea: try parityCheckIn(
+                    testCase.request.primary,
+                    area: testCase.request.primaryArea,
+                    role: .primary
+                )
+            ]
+            if let secondaryArea = testCase.request.secondaryArea,
+               let secondary = testCase.request.secondary {
+                checkIns[secondaryArea] = try parityCheckIn(
+                    secondary,
+                    area: secondaryArea,
+                    role: .secondary
+                )
+            }
+            var histories: [BodyArea: ActiveHistoryState] = [:]
+            for area in testCase.request.unlockedAreas {
+                histories.merge(
+                    try history(area: area, unlocked: true),
+                    uniquingKeysWith: { current, _ in current }
+                )
+            }
+            let attention: [BodyArea: SafetyStatus] = Dictionary(
+                uniqueKeysWithValues: testCase.request.safetyAttentionAreas.map {
+                    ($0, SafetyStatus.attentionRequired)
+                }
+            )
+            let result = engine().select(
+                try request(
+                    primaryArea: testCase.request.primaryArea,
+                    secondaryArea: testCase.request.secondaryArea,
+                    secondaryParticipation: try secondaryParticipation(
+                        from: testCase.request.secondaryParticipation
+                    ),
+                    primaryCheckIn: checkIns[testCase.request.primaryArea],
+                    secondaryCheckIn: testCase.request.secondaryArea.flatMap { checkIns[$0] },
+                    safetyByArea: normalSafety(updating: attention),
+                    historyByArea: histories,
+                    requestedOverride: testCase.request.requestedOverride,
+                    duration: testCase.request.duration
+                )
+            )
+
+            if testCase.expected.kind == "noPlan" {
+                let outcome = try noPlan(from: result)
+                #expect(outcome.reason.rawValue == testCase.expected.reason)
+                #expect(outcome.affectedAreas == testCase.expected.affectedAreas)
+                #expect(
+                    outcome.transitions.map {
+                        PlanSelectionParityTransition(
+                            area: $0.area,
+                            sourceCheckInEntryId: $0.sourceCheckInEntryID.rawValue,
+                            answer: $0.answer
+                        )
+                    } == testCase.expected.safetyTransitions
+                )
+            } else {
+                let plan = try selectedPlan(from: result)
+                #expect(plan.recommendedLevel == testCase.expected.recommendedLevel)
+                #expect(plan.requestedOverride == testCase.expected.requestedOverride)
+                #expect(plan.selectedLevel == testCase.expected.selectedLevel)
+                #expect(plan.overrideDisposition.rawValue == testCase.expected.overrideDisposition)
+                #expect(plan.duration == testCase.expected.duration)
+                #expect(
+                    plan.includedAreaDecisions.map {
+                        PlanSelectionParityAreaDecision(
+                            area: $0.area,
+                            role: $0.role,
+                            checkInEntryId: $0.checkInEntryID.rawValue,
+                            entryRevision: $0.entryRevision,
+                            baseLevel: $0.baseLevel,
+                            activeUnlocked: $0.activeUnlocked
+                        )
+                    } == testCase.expected.includedAreaDecisions
+                )
+                #expect(
+                    plan.omittedAreas.map {
+                        PlanSelectionParityOmittedArea(area: $0.area, reason: $0.reason)
+                    } == testCase.expected.omittedAreas
+                )
+                #expect(
+                    PlanSelectionParityCompositionRequest(
+                        primaryArea: plan.compositionRequest.primaryArea,
+                        secondaryArea: plan.compositionRequest.secondaryArea,
+                        selectedLevel: plan.compositionRequest.selectedLevel,
+                        duration: plan.compositionRequest.duration,
+                        rulesVersion: plan.compositionRequest.rulesVersion,
+                        catalogVersion: plan.compositionRequest.catalogVersion.rawValue
+                    ) == testCase.expected.compositionRequest
+                )
+                #expect(
+                    plan.explanations.map {
+                        PlanSelectionParityExplanation(
+                            key: $0.key.rawValue,
+                            parameters: $0.parameters
+                        )
+                    } == testCase.expected.explanations
+                )
+                #expect(
+                    plan.notices.map {
+                        PlanSelectionParityNotice(key: $0.key.rawValue, area: $0.area)
+                    } == testCase.expected.notices
+                )
+                #expect(plan.pauseTodayAvailable == testCase.expected.pauseTodayAvailable)
+            }
+        }
+    }
 
     @Test("All single-area mappings are stable across area, unlock state, and duration")
     private func exhaustiveSingleAreaMapping() throws {
@@ -678,6 +883,35 @@ struct PlanSelectionEngineTests {
             movementComfort: comfort,
             conditionalSafetyAnswer: safetyAnswer
         )
+    }
+
+    private func parityCheckIn(
+        _ fixture: PlanSelectionParityCheckIn,
+        area: BodyArea,
+        role: AreaRole
+    ) throws -> SelectionAreaCheckIn {
+        try checkIn(
+            area: area,
+            change: fixture.changeReport,
+            comfort: fixture.movementComfort,
+            safetyAnswer: fixture.conditionalSafetyAnswer,
+            role: role
+        )
+    }
+
+    private func secondaryParticipation(
+        from rawValue: String?
+    ) throws -> SecondaryParticipation? {
+        switch rawValue {
+        case nil:
+            nil
+        case "include":
+            .include
+        case "skipForSession":
+            .skipForSession
+        default:
+            throw FixtureError.invalidParityValue
+        }
     }
 
     private func normalSafety(

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Authorized; E0 locally verified with CI pending |
+| Status | E1 core locally verified; CI pending |
 | Target | Expo SDK 57, React Native, strict TypeScript, iOS 17 minimum |
 | Source | Existing product behavior and TD-00 through TD-08 |
 | Last reviewed | August 27, 2026 |

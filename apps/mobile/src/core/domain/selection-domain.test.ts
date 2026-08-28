@@ -3,7 +3,9 @@ import { describe, expect, it } from '@jest/globals';
 import {
   parseCheckInId,
   parseCheckInEntryId,
+  parseSelectionDecisionId,
   requiresConditionalSafetyAnswer,
+  routineLevelRanks,
 } from './selection-domain';
 
 describe('selection domain boundaries', () => {
@@ -30,6 +32,14 @@ describe('selection domain boundaries', () => {
       ok: true,
       value: canonicalId,
     });
+    expect(parseSelectionDecisionId(canonicalId)).toEqual({
+      ok: true,
+      value: canonicalId,
+    });
+    expect(parseSelectionDecisionId('not-a-uuid')).toEqual({
+      ok: false,
+      error: 'invalidIdentifier',
+    });
   });
 
   it('requires a conditional answer for Worse or Limited', () => {
@@ -51,5 +61,14 @@ describe('selection domain boundaries', () => {
         movementComfort: 'okay',
       }),
     ).toBe(false);
+  });
+
+  it('uses explicit conservative level ranks', () => {
+    expect(routineLevelRanks.gentle).toBeLessThan(
+      routineLevelRanks.balanced,
+    );
+    expect(routineLevelRanks.balanced).toBeLessThan(
+      routineLevelRanks.active,
+    );
   });
 });
