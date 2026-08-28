@@ -174,10 +174,14 @@ export class KineoRoutineModule {
     return session.ok ? this.transition(session.value, 'resumed', 'inProgress') : session;
   }
 
-  async advance(sessionId: RoutineSessionId): Promise<ProductResult<RoutinePresentation>> {
+  async advance(
+    sessionId: RoutineSessionId,
+    expectedStepIndex: number,
+  ): Promise<ProductResult<RoutinePresentation>> {
     const session = await this.requiredSession(sessionId);
     if (!session.ok) return session;
     if (session.value.status !== 'inProgress') return invalidState();
+    if (session.value.currentStepIndex !== expectedStepIndex) return invalidState();
     const snapshot = this.decodeSnapshot(session.value);
     if (!snapshot.ok) return snapshot;
     if (
@@ -201,12 +205,14 @@ export class KineoRoutineModule {
 
   async skip(
     sessionId: RoutineSessionId,
+    expectedStepIndex: number,
     reason?: RoutineEventReason,
   ): Promise<ProductResult<RoutinePresentation>> {
     const session = await this.requiredSession(sessionId);
     if (!session.ok) return session;
     if (this.isTerminal(session.value.status)) return this.presentation(session.value);
     if (session.value.status !== 'inProgress') return invalidState();
+    if (session.value.currentStepIndex !== expectedStepIndex) return invalidState();
     const snapshot = this.decodeSnapshot(session.value);
     if (!snapshot.ok) return snapshot;
     const item = snapshot.value.items[session.value.currentStepIndex];
@@ -230,6 +236,7 @@ export class KineoRoutineModule {
 
   async selectAlternative(
     sessionId: RoutineSessionId,
+    expectedStepIndex: number,
     movementId: NonNullable<RoutinePresentation['currentItem']>['availableAlternatives'][number]['movementId'],
   ): Promise<ProductResult<RoutinePresentation>> {
     let session = await this.requiredSession(sessionId);
@@ -237,6 +244,7 @@ export class KineoRoutineModule {
     if (session.value.status !== 'inProgress' && session.value.status !== 'paused') {
       return invalidState();
     }
+    if (session.value.currentStepIndex !== expectedStepIndex) return invalidState();
     const snapshot = this.decodeSnapshot(session.value);
     if (!snapshot.ok) return snapshot;
     const item = snapshot.value.items[session.value.currentStepIndex];

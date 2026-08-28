@@ -325,4 +325,26 @@ describe('Kineo product app', () => {
     await fireEvent.press(view.getByRole('tab', { name: 'Profile' }));
     await waitFor(() => expect(view.getByRole('header', { name: 'Profile' })).toBeTruthy());
   });
+
+  it('requires confirmation before resetting profile history', async () => {
+    const service = new OnboardingService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const reset = jest.spyOn(service, 'resetHistory');
+    const view = await render(
+      <KineoProductApp service={service} onDeleted={() => undefined} />,
+    );
+
+    await view.findByText('How are you moving?');
+    await fireEvent.press(view.getByRole('tab', { name: 'Profile' }));
+    await view.findByRole('header', { name: 'Profile' });
+    await fireEvent.press(view.getByRole('button', { name: 'Reset History' }));
+    expect(reset).not.toHaveBeenCalled();
+    await view.findByRole('header', { name: 'Reset history?' });
+    await fireEvent.press(view.getByRole('button', { name: 'Reset history' }));
+    await waitFor(() => expect(reset).toHaveBeenCalledTimes(1));
+  });
 });

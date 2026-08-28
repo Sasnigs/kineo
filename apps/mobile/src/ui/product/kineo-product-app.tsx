@@ -65,6 +65,8 @@ type LocalScreen =
   | Readonly<{ kind: 'progress'; progress: ProgressPresentation }>
   | Readonly<{ kind: 'profile'; profile: ProfilePresentation }>
   | Readonly<{ kind: 'profileAreas'; profile: ProfilePresentation }>
+  | Readonly<{ kind: 'confirmReset'; profile: ProfilePresentation }>
+  | Readonly<{ kind: 'confirmDelete'; profile: ProfilePresentation }>
   | Readonly<{
       kind: 'feedback';
       routine: RoutinePresentation;
@@ -256,18 +258,17 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
       await load();
       return;
     }
-    const result = tab === 'progress'
-      ? await service.loadProgress()
-      : await service.loadProfile();
-    if (!result.ok) {
-      setScreen({ kind: 'error', error: result.error });
+    if (tab === 'progress') {
+      const result = await service.loadProgress();
+      setScreen(result.ok
+        ? { kind: 'progress', progress: result.value }
+        : { kind: 'error', error: result.error });
       return;
     }
-    if (tab === 'progress') {
-      setScreen({ kind: 'progress', progress: result.value as ProgressPresentation });
-    } else {
-      setScreen({ kind: 'profile', profile: result.value as ProfilePresentation });
-    }
+    const result = await service.loadProfile();
+    setScreen(result.ok
+      ? { kind: 'profile', profile: result.value }
+      : { kind: 'error', error: result.error });
   }, [load, service]);
 
   const activeCheckIn = screen.kind === 'checkIn'
@@ -391,13 +392,17 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
             label="Try an alternative"
             onPress={() => void update(() => service.selectRoutineAlternative(
               routine.sessionId,
+              routine.currentStepIndex,
               movement.availableAlternatives[0].movementId,
             ))}
           />
         )}
         <ChoiceButton
           label="Skip this step"
-          onPress={() => void update(() => service.skipRoutineStep(routine.sessionId))}
+          onPress={() => void update(() => service.skipRoutineStep(
+            routine.sessionId,
+            routine.currentStepIndex,
+          ))}
         />
         <ChoiceButton
           label="End routine"
@@ -518,7 +523,10 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
           <PrimaryButton
             label="Continue"
             disabled={isSubmitting}
-            onPress={() => void updateRoutine(() => service.advanceRoutine(activeRoutine.sessionId))}
+            onPress={() => void updateRoutine(() => service.advanceRoutine(
+              activeRoutine.sessionId,
+              activeRoutine.currentStepIndex,
+            ))}
           />
           <SecondaryButton
             label="Pause"
@@ -630,7 +638,6 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
             if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
           })()}
         />
-        <SecondaryButton label="Back to Today" onPress={() => void load()} />
         {activePlan.pauseTodayAvailable ? (
           <SecondaryButton
             label="Pause Today"
@@ -643,6 +650,7 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
             })()}
           />
         ) : null}
+        <NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />
       </Shell>
     );
   }
@@ -710,6 +718,63 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
     );
   }
 
+  if (screen.kind === 'confirmReset') {
+    return (
+      <Shell>
+        <PageHeader eyebrow="PRIVACY & DATA" title="Reset history?" />
+        <Text style={styles.supporting}>
+          This removes check-ins, plans, routines, feedback, and Progress history.
+        </Text>
+        <View style={styles.safetyCard}>
+          <Text style={styles.cardTitle}>Safety exception</Text>
+          <Text style={styles.cardBody}>
+            Any current Attention Required area remains so Reset cannot bypass it. Your areas and reminder preference also remain.
+          </Text>
+        </View>
+        <SecondaryButton
+          danger
+          disabled={isSubmitting}
+          label="Reset history"
+          onPress={() => void (async () => {
+            const result = await submit(() => service.resetHistory());
+            if (result?.ok) setScreen({ kind: 'profile', profile: screen.profile });
+          })()}
+        />
+        <SecondaryButton
+          label="Cancel"
+          onPress={() => setScreen({ kind: 'profile', profile: screen.profile })}
+        />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'confirmDelete') {
+    return (
+      <Shell>
+        <PageHeader eyebrow="PRIVACY & DATA" title="Delete all Kineo data?" />
+        <Text style={styles.supporting}>
+          This removes your profile, all local history, current Attention Required areas, and Kineo reminders. It cannot be undone.
+        </Text>
+        <Text style={styles.cardBody}>
+          It does not change iPhone notification permission history or data and diagnostics held independently by Apple.
+        </Text>
+        <SecondaryButton
+          danger
+          disabled={isSubmitting}
+          label="Delete all data"
+          onPress={() => void (async () => {
+            const result = await submit(() => service.deleteAllData());
+            if (result?.ok) onDeleted();
+          })()}
+        />
+        <SecondaryButton
+          label="Cancel"
+          onPress={() => setScreen({ kind: 'profile', profile: screen.profile })}
+        />
+      </Shell>
+    );
+  }
+
   if (screen.kind === 'profile') {
     const profile = screen.profile.profile;
     const reminder = screen.profile.reminderSettings;
@@ -769,14 +834,24 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
         <View style={styles.historyCard}>
           <Text style={styles.cardTitle}>Privacy & data</Text>
           <Text style={styles.cardBody}>Your Kineo history stays on this device. Reset keeps your profile and any current Attention gate.</Text>
-          <SecondaryButton label="Reset History" onPress={() => void (async () => {
-            const result = await submit(() => service.resetHistory());
-            if (result?.ok) await openTab('profile');
-          })()} />
-          <SecondaryButton danger label="Delete All Data" onPress={() => void (async () => {
-            const result = await submit(() => service.deleteAllData());
-            if (result?.ok) onDeleted();
-          })()} />
+          <SecondaryButton
+            label="Reset History"
+            onPress={() => setScreen({ kind: 'confirmReset', profile: screen.profile })}
+          />
+          <SecondaryButton
+            danger
+            label="Delete All Data"
+            onPress={() => setScreen({ kind: 'confirmDelete', profile: screen.profile })}
+          />
+        </View>
+        <View style={styles.historyCard}>
+          <Text style={styles.cardTitle}>Safety and support</Text>
+          <Text style={styles.cardBody}>
+            Kineo provides movement planning for general wellness. It does not diagnose or treat a condition.
+          </Text>
+          <Text style={styles.cardBody}>
+            This build uses prototype exercise media and is not ready for public release.
+          </Text>
         </View>
         <NavigationBar active="profile" onSelect={(tab) => void openTab(tab)} />
       </Shell>
@@ -957,16 +1032,7 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
           label="Review now"
           onPress={() => setScreen({ kind: 'attentionReturn', prompt: attentionPrompt })}
         />
-      </Shell>
-    );
-  }
-
-  if (screen.kind === 'start' && screen.state.kind === 'unfinishedRoutine') {
-    return (
-      <Shell>
-        <PageHeader eyebrow="ROUTINE SAVED" title="Pick up where you left off." />
-        <Text style={styles.supporting}>Your last completed step is safely stored.</Text>
-        <PrimaryButton label="Resume routine" onPress={() => undefined} />
+        <NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />
       </Shell>
     );
   }

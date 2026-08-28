@@ -554,10 +554,22 @@ describe('Kineo product service check-in', () => {
       throw new Error('Routine fixture did not restore.');
     }
     routine = await service.resumeRoutine(restored.value.routine.sessionId);
+    if (!routine.ok || routine.value.status !== 'inProgress') {
+      throw new Error('Routine fixture did not resume.');
+    }
+    const staleStepIndex = routine.value.currentStepIndex;
+    routine = await service.advanceRoutine(routine.value.sessionId, staleStepIndex);
+    if (!routine.ok) throw new Error('Routine fixture did not advance.');
+    await expect(
+      service.advanceRoutine(routine.value.sessionId, staleStepIndex),
+    ).resolves.toEqual({ ok: false, error: { code: 'invalidState' } });
     const maximumExpectedStepCount = 20;
     let advances = 0;
     while (routine.ok && routine.value.status === 'inProgress') {
-      routine = await service.advanceRoutine(routine.value.sessionId);
+      routine = await service.advanceRoutine(
+        routine.value.sessionId,
+        routine.value.currentStepIndex,
+      );
       advances += 1;
       if (advances > maximumExpectedStepCount) {
         throw new Error('Routine did not reach a terminal state.');
@@ -638,6 +650,7 @@ describe('Kineo product service check-in', () => {
 
     routine = await service.selectRoutineAlternative(
       routine.value.sessionId,
+      routine.value.currentStepIndex,
       alternative.movementId,
     );
     expect(routine).toMatchObject({
@@ -656,7 +669,11 @@ describe('Kineo product service check-in', () => {
     });
     routine = await service.resumeRoutine(routine.value.sessionId);
     if (!routine.ok) throw new Error('Routine did not resume.');
-    routine = await service.skipRoutineStep(routine.value.sessionId, 'unclear');
+    routine = await service.skipRoutineStep(
+      routine.value.sessionId,
+      routine.value.currentStepIndex,
+      'unclear',
+    );
     expect(routine).toMatchObject({
       ok: true,
       value: { status: 'inProgress', currentStepIndex: 1 },
@@ -701,7 +718,10 @@ describe('Kineo product service check-in', () => {
       const maximumExpectedStepCount = 20;
       let advances = 0;
       while (routine.ok && routine.value.status === 'inProgress') {
-        routine = await service.advanceRoutine(routine.value.sessionId);
+        routine = await service.advanceRoutine(
+          routine.value.sessionId,
+          routine.value.currentStepIndex,
+        );
         advances += 1;
         if (advances > maximumExpectedStepCount) {
           throw new Error('Qualifying routine did not complete.');

@@ -140,13 +140,16 @@ export interface KineoProductServing {
   ): Promise<ProductResult<RoutinePresentation>>;
   advanceRoutine(
     sessionId: RoutinePresentation['sessionId'],
+    expectedStepIndex: number,
   ): Promise<ProductResult<RoutinePresentation>>;
   skipRoutineStep(
     sessionId: RoutinePresentation['sessionId'],
+    expectedStepIndex: number,
     reason?: RoutineEventReason,
   ): Promise<ProductResult<RoutinePresentation>>;
   selectRoutineAlternative(
     sessionId: RoutinePresentation['sessionId'],
+    expectedStepIndex: number,
     movementId: NonNullable<RoutinePresentation['currentItem']>['availableAlternatives'][number]['movementId'],
   ): Promise<ProductResult<RoutinePresentation>>;
   endRoutine(
@@ -611,22 +614,25 @@ export class KineoProductService implements KineoProductServing {
 
   advanceRoutine(
     sessionId: RoutinePresentation['sessionId'],
+    expectedStepIndex: number,
   ): Promise<ProductResult<RoutinePresentation>> {
-    return this.routineModule.advance(sessionId);
+    return this.routineModule.advance(sessionId, expectedStepIndex);
   }
 
   skipRoutineStep(
     sessionId: RoutinePresentation['sessionId'],
+    expectedStepIndex: number,
     reason?: RoutineEventReason,
   ): Promise<ProductResult<RoutinePresentation>> {
-    return this.routineModule.skip(sessionId, reason);
+    return this.routineModule.skip(sessionId, expectedStepIndex, reason);
   }
 
   selectRoutineAlternative(
     sessionId: RoutinePresentation['sessionId'],
+    expectedStepIndex: number,
     movementId: NonNullable<RoutinePresentation['currentItem']>['availableAlternatives'][number]['movementId'],
   ): Promise<ProductResult<RoutinePresentation>> {
-    return this.routineModule.selectAlternative(sessionId, movementId);
+    return this.routineModule.selectAlternative(sessionId, expectedStepIndex, movementId);
   }
 
   endRoutine(
