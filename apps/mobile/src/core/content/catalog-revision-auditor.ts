@@ -19,7 +19,8 @@ export type CatalogRevisionAuditError =
       id: CatalogId;
       revision: ContentRevision;
     }>
-  | Readonly<{ code: 'duplicateRecordId'; id: CatalogId }>;
+  | Readonly<{ code: 'duplicateRecordId'; id: CatalogId }>
+  | Readonly<{ code: 'fingerprintFailed' }>;
 
 type CatalogRecord = Readonly<{ metadata: ContentMetadata }>;
 type RecordSnapshot = Readonly<{
@@ -45,9 +46,13 @@ function recordSnapshots(
         error: { code: 'duplicateRecordId', id: record.metadata.id },
       };
     }
+    const fingerprint = makeCanonicalFingerprint(record, true);
+    if (!fingerprint.ok) {
+      return { ok: false, error: { code: 'fingerprintFailed' } };
+    }
     snapshots.set(record.metadata.id, {
       revision: record.metadata.revision,
-      fingerprint: makeCanonicalFingerprint(record, true),
+      fingerprint: fingerprint.value,
     });
   }
   return { ok: true, value: snapshots };

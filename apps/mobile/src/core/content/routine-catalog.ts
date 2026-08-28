@@ -268,23 +268,78 @@ function normalizedCanonical(
 export function makeCanonicalFingerprint(
   payload: object,
   sortingStringArrays: boolean,
-): Sha256Digest {
+): Result<Sha256Digest, CatalogValidationError> {
   // Match the verified Swift reference's JSONSerialization canonical bytes.
-  const canonical = JSON.stringify(
-    normalizedCanonical(payload, sortingStringArrays),
-  ).replaceAll('/', '\\/');
-  const digest = bytesToHex(sha256(utf8ToBytes(canonical)));
-  const parsed = parseSha256Digest(digest);
-  if (!parsed.ok) {
-    throw new Error('SHA-256 returned a malformed digest.');
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(
+      normalizedCanonical(payload, sortingStringArrays),
+    );
+  } catch {
+    return {
+      ok: false,
+      error: { code: 'invalidArtifact', field: 'canonicalFingerprintPayload' },
+    };
   }
-  return parsed.value;
+  if (serialized === undefined) {
+    return {
+      ok: false,
+      error: { code: 'invalidArtifact', field: 'canonicalFingerprintPayload' },
+    };
+  }
+  const canonical = serialized.replaceAll('/', '\\/');
+  const digest = bytesToHex(sha256(utf8ToBytes(canonical)));
+  return parseSha256Digest(digest);
 }
 
 export function computeManifestFingerprint(
   catalog: Omit<RoutineCatalog, 'manifestFingerprint'> | RoutineCatalog,
-): Sha256Digest {
+): Result<Sha256Digest, CatalogValidationError> {
   return makeCanonicalFingerprint(manifestPayload(catalog), true);
+}
+
+function deepFreezeCopy<Value>(
+  value: Value,
+  ancestors = new WeakSet<object>(),
+): Result<Value, CatalogValidationError> {
+  if (value === null || typeof value !== 'object') {
+    return { ok: true, value };
+  }
+  if (ancestors.has(value)) {
+    return {
+      ok: false,
+      error: { code: 'invalidArtifact', field: 'cyclicCatalogContent' },
+    };
+  }
+  ancestors.add(value);
+  if (Array.isArray(value)) {
+    const copy: unknown[] = [];
+    for (const item of value) {
+      const cloned = deepFreezeCopy(item, ancestors);
+      if (!cloned.ok) {
+        return cloned as Result<Value, CatalogValidationError>;
+      }
+      copy.push(cloned.value);
+    }
+    ancestors.delete(value);
+    return {
+      ok: true,
+      value: Object.freeze(copy) as Value,
+    };
+  }
+  const copy: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const cloned = deepFreezeCopy(entry, ancestors);
+    if (!cloned.ok) {
+      return cloned as Result<Value, CatalogValidationError>;
+    }
+    copy[key] = cloned.value;
+  }
+  ancestors.delete(value);
+  return {
+    ok: true,
+    value: Object.freeze(copy) as Value,
+  };
 }
 
 export function createSignedCatalog(
@@ -313,25 +368,26 @@ export function createSignedCatalog(
     };
   }
 
-  const unsigned = {
+  const copied = deepFreezeCopy({
     ...input,
     schemaVersion,
-    buildEligibility: Object.freeze([...new Set(input.buildEligibility)]),
-    durationPolicies: Object.freeze([...input.durationPolicies]),
-    movements: Object.freeze([...input.movements]),
-    fragments: Object.freeze([...input.fragments]),
-    primaryTemplates: Object.freeze([...input.primaryTemplates]),
-    secondaryModules: Object.freeze([...input.secondaryModules]),
-    compatibilityRules: Object.freeze([...input.compatibilityRules]),
-  };
+    buildEligibility: [...new Set(input.buildEligibility)],
+  });
+  if (!copied.ok) {
+    return copied;
+  }
+  const fingerprint = makeCanonicalFingerprint(
+    manifestPayload(copied.value),
+    true,
+  );
+  if (!fingerprint.ok) {
+    return fingerprint;
+  }
   return {
     ok: true,
     value: Object.freeze({
-      ...unsigned,
-      manifestFingerprint: makeCanonicalFingerprint(
-        manifestPayload(unsigned),
-        true,
-      ),
+      ...copied.value,
+      manifestFingerprint: fingerprint.value,
     }),
   };
 }

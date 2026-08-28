@@ -45,6 +45,7 @@ const firstCompositionIdValue = '00000000-0000-0000-0000-000000000002';
 const secondCompositionIdValue = '00000000-0000-0000-0000-000000000003';
 const budgetOverflowSeconds = 1;
 const unapprovedEquipment = 'prototype-band';
+const representativeFallbackLevels = ['gentle', 'active'] as const;
 
 function required<Value>(result: { ok: true; value: Value } | { ok: false }): Value {
   if (!result.ok) {
@@ -96,6 +97,18 @@ function composed(
     throw new Error(`Expected a routine, received ${result.reason}.`);
   }
   return result.routine;
+}
+
+function compositionResult(
+  catalog: RoutineCatalog,
+  compositionRequest: CatalogCompositionRequest,
+) {
+  return composeRoutine(
+    compositionRequest,
+    catalog,
+    resources(),
+    required(parseCompositionId(firstCompositionIdValue)),
+  );
 }
 
 function resign(
@@ -422,5 +435,238 @@ describe('Routine composer', () => {
       status: 'primary_only',
       omissionReason: 'catalogIncompatible',
     });
+  });
+
+  it('covers every fallback mutation across both durations and representative levels', () => {
+    for (const duration of durationVariants) {
+      for (const level of representativeFallbackLevels) {
+        const catalog = makePrototypeRoutineCatalog();
+        const compositionRequest = request(
+          catalog,
+          'neck',
+          'lowerBack',
+          level,
+          duration,
+        );
+        const primary = catalog.primaryTemplates.find(
+          (candidate) =>
+            candidate.area === 'neck' &&
+            candidate.level === level &&
+            candidate.duration === duration,
+        );
+        const module = catalog.secondaryModules.find(
+          (candidate) =>
+            candidate.area === 'lowerBack' &&
+            candidate.level === level &&
+            candidate.duration === duration,
+        );
+        const rule = catalog.compatibilityRules.find(
+          (candidate) =>
+            candidate.primaryArea === 'neck' &&
+            candidate.secondaryArea === 'lowerBack' &&
+            candidate.level === level &&
+            candidate.duration === duration,
+        );
+        if (
+          primary === undefined ||
+          module === undefined ||
+          module.items[0]?.kind !== 'movement' ||
+          rule === undefined
+        ) {
+          throw new Error('Prototype fallback matrix fixtures are missing.');
+        }
+
+        const withoutModule = resign(catalog, {
+          secondaryModules: catalog.secondaryModules.filter(
+            (candidate) => candidate.metadata.id !== module.metadata.id,
+          ),
+        });
+        expect(compositionResult(withoutModule, compositionRequest)).toMatchObject({
+          kind: 'composed',
+          routine: {
+            status: 'primary_only',
+            omissionReason: 'contentUnavailable',
+          },
+        });
+
+        const withoutRule = resign(catalog, {
+          compatibilityRules: catalog.compatibilityRules.filter(
+            (candidate) => candidate.metadata.id !== rule.metadata.id,
+          ),
+        });
+        expect(compositionResult(withoutRule, compositionRequest)).toMatchObject({
+          kind: 'composed',
+          routine: {
+            status: 'primary_only',
+            omissionReason: 'catalogIncompatible',
+          },
+        });
+
+        for (const incompatibleRule of [
+          { ...rule, allowed: false },
+          { ...rule, transitionOrderReviewed: false },
+        ]) {
+          const incompatible = resign(catalog, {
+            compatibilityRules: catalog.compatibilityRules.map((candidate) =>
+              candidate.metadata.id === rule.metadata.id
+                ? incompatibleRule
+                : candidate,
+            ),
+          });
+          expect(
+            compositionResult(incompatible, compositionRequest),
+          ).toMatchObject({
+            kind: 'composed',
+            routine: {
+              status: 'primary_only',
+              omissionReason: 'catalogIncompatible',
+            },
+          });
+        }
+
+        const overBudgetSeconds = module.nominalSeconds + budgetOverflowSeconds;
+        const overBudget = resign(catalog, {
+          secondaryModules: catalog.secondaryModules.map((candidate) =>
+            candidate.metadata.id === module.metadata.id
+              ? {
+                  ...module,
+                  nominalSeconds: overBudgetSeconds,
+                  items: [
+                    {
+                      ...module.items[0],
+                      dose: required(
+                        createDose({
+                          kind: 'timed',
+                          activeSeconds: overBudgetSeconds,
+                          estimatedSeconds: overBudgetSeconds,
+                        }),
+                      ),
+                    },
+                  ],
+                }
+              : candidate,
+          ),
+        });
+        expect(compositionResult(overBudget, compositionRequest)).toMatchObject({
+          kind: 'composed',
+          routine: {
+            status: 'primary_only',
+            omissionReason: 'catalogIncompatible',
+          },
+        });
+
+        const withUnapprovedEquipment = resign(catalog, {
+          secondaryModules: catalog.secondaryModules.map((candidate) =>
+            candidate.metadata.id === module.metadata.id
+              ? { ...module, equipment: [unapprovedEquipment] }
+              : candidate,
+          ),
+        });
+        expect(
+          compositionResult(withUnapprovedEquipment, compositionRequest),
+        ).toMatchObject({
+          kind: 'composed',
+          routine: {
+            status: 'primary_only',
+            omissionReason: 'catalogIncompatible',
+          },
+        });
+
+        const withoutExactPrimary = resign(catalog, {
+          primaryTemplates: catalog.primaryTemplates.filter(
+            (candidate) => candidate.metadata.id !== primary.metadata.id,
+          ),
+        });
+        const exactPrimaryResult = compositionResult(
+          withoutExactPrimary,
+          compositionRequest,
+        );
+        if (level === 'gentle') {
+          expect(exactPrimaryResult).toEqual({
+            kind: 'unavailable',
+            reason: 'no_approved_primary_content',
+          });
+        } else {
+          expect(exactPrimaryResult).toMatchObject({
+            kind: 'composed',
+            routine: {
+              status: 'gentler_fallback',
+              deliveredLevel: 'balanced',
+            },
+          });
+        }
+
+        const withoutAnyCandidateLevel = resign(catalog, {
+          primaryTemplates: catalog.primaryTemplates.filter(
+            (candidate) =>
+              candidate.area !== 'neck' ||
+              candidate.duration !== duration ||
+              (level === 'gentle' && candidate.level !== 'gentle'),
+          ),
+        });
+        expect(
+          compositionResult(withoutAnyCandidateLevel, compositionRequest),
+        ).toEqual({
+          kind: 'unavailable',
+          reason: 'no_approved_primary_content',
+        });
+
+        const withoutRequestedDuration = resign(catalog, {
+          primaryTemplates: catalog.primaryTemplates.filter(
+            (candidate) =>
+              candidate.area !== 'neck' || candidate.duration !== duration,
+          ),
+        });
+        expect(
+          compositionResult(withoutRequestedDuration, compositionRequest),
+        ).toEqual({
+          kind: 'unavailable',
+          reason: 'no_approved_primary_content',
+        });
+
+        const withoutRequestedArea = resign(catalog, {
+          primaryTemplates: catalog.primaryTemplates.filter(
+            (candidate) => candidate.area !== 'neck',
+          ),
+        });
+        expect(
+          compositionResult(withoutRequestedArea, compositionRequest),
+        ).toEqual({
+          kind: 'unavailable',
+          reason: 'no_approved_primary_content',
+        });
+
+        const duplicateMetadata = required(
+          createContentMetadata({
+            ...primary.metadata,
+            id: required(
+              parseCatalogId(
+                `kineo.primary.duplicate.${level}.${duration}.v1`,
+              ),
+            ),
+          }),
+        );
+        const withDuplicatePrimary = resign(catalog, {
+          primaryTemplates: [
+            ...catalog.primaryTemplates,
+            { ...primary, metadata: duplicateMetadata },
+          ],
+        });
+        expect(
+          compositionResult(withDuplicatePrimary, compositionRequest),
+        ).toEqual({ kind: 'unavailable', reason: 'invalid_catalog' });
+
+        const publicRequest = required(
+          createCatalogCompositionRequest({
+            ...compositionRequest,
+            buildChannel: 'public_release',
+          }),
+        );
+        expect(compositionResult(catalog, publicRequest)).toEqual({
+          kind: 'unavailable',
+          reason: 'invalid_catalog',
+        });
+      }
+    }
   });
 });

@@ -479,7 +479,7 @@ export type CompositionFingerprintInput = Omit<
 
 export function computeCompositionFingerprint(
   input: CompositionFingerprintInput | ComposedRoutine,
-): Sha256Digest {
+): Result<Sha256Digest, CatalogValidationError> {
   return makeCanonicalFingerprint(
     {
       catalogVersion: input.catalogVersion,
@@ -596,12 +596,16 @@ function makeRoutine(
     minimumPathSeconds: range.value.minimumPathSeconds,
     maximumPathSeconds: range.value.maximumPathSeconds,
   });
+  const fingerprint = computeCompositionFingerprint(valueWithoutFingerprint);
+  if (!fingerprint.ok) {
+    return fingerprint;
+  }
   return {
     ok: true,
     value: Object.freeze({
       compositionId,
       ...valueWithoutFingerprint,
-      fingerprint: computeCompositionFingerprint(valueWithoutFingerprint),
+      fingerprint: fingerprint.value,
     }),
   };
 }

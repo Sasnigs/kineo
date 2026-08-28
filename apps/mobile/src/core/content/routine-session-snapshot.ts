@@ -10,12 +10,14 @@ import type {
   CatalogId,
   CatalogValidationError,
   CatalogVersion,
+  BuildChannel,
   ContentRevision,
   ContentRole,
   Dose,
   Sha256Digest,
 } from './catalog-primitives';
 import type { CatalogValidationResources } from './catalog-validator';
+import { validateCatalog } from './catalog-validator';
 import {
   computeCompositionFingerprint,
   type CompositionId,
@@ -95,6 +97,7 @@ export type RoutineSessionSnapshotInput = Readonly<{
   composition: ComposedRoutine;
   catalog: RoutineCatalog;
   resources: CatalogValidationResources;
+  buildChannel: BuildChannel;
   rulesVersion: string;
   notices: readonly string[];
   explanationKeys: readonly string[];
@@ -383,6 +386,14 @@ function hasNonEmptyParameterEntries(
 export function buildRoutineSessionSnapshot(
   input: RoutineSessionSnapshotInput,
 ): Result<RoutineSessionSnapshot, CatalogValidationError> {
+  const catalogValidation = validateCatalog(
+    input.catalog,
+    input.buildChannel,
+    input.resources,
+  );
+  if (!catalogValidation.ok) {
+    return catalogValidation;
+  }
   if (input.composition.catalogVersion !== input.catalog.catalogVersion) {
     return {
       ok: false,
@@ -396,9 +407,12 @@ export function buildRoutineSessionSnapshot(
   if (referenceFailure !== undefined) {
     return { ok: false, error: referenceFailure };
   }
+  const compositionFingerprint = computeCompositionFingerprint(
+    input.composition,
+  );
   if (
-    computeCompositionFingerprint(input.composition) !==
-    input.composition.fingerprint
+    !compositionFingerprint.ok ||
+    compositionFingerprint.value !== input.composition.fingerprint
   ) {
     return {
       ok: false,

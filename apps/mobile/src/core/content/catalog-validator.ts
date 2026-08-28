@@ -279,7 +279,11 @@ function validateEnvelope(
   if (!catalog.buildEligibility.includes(channel)) {
     return { code: 'ineligibleCatalog', channel };
   }
-  if (computeManifestFingerprint(catalog) !== catalog.manifestFingerprint) {
+  const fingerprint = computeManifestFingerprint(catalog);
+  if (!fingerprint.ok) {
+    return fingerprint.error;
+  }
+  if (fingerprint.value !== catalog.manifestFingerprint) {
     return { code: 'manifestFingerprintMismatch' };
   }
   if (channel === 'public_release') {

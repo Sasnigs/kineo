@@ -2,7 +2,11 @@ import { describe, expect, it } from '@jest/globals';
 
 import { parseSelectionDecisionId } from '../domain/selection-domain';
 import { prototypeSelectionRulesVersion } from '../selection/plan-selector';
-import { parseCatalogId } from './catalog-primitives';
+import {
+  parseCatalogId,
+  parseSha256Digest,
+  sha256DigestHexLength,
+} from './catalog-primitives';
 import {
   makePrototypeRoutineCatalog,
   prototypeCatalogAssetDigests,
@@ -76,6 +80,7 @@ function snapshotInput(secondaryArea: 'lowerBack' | undefined) {
     composition: composition(secondaryArea),
     catalog,
     resources: resources(),
+    buildChannel: 'internal_prototype',
     rulesVersion: prototypeSelectionRulesVersion,
     notices: [notice],
     explanationKeys: [explanationKey],
@@ -160,6 +165,26 @@ describe('Routine session snapshot', () => {
     ).toEqual({
       ok: false,
       error: { code: 'invalidArtifact', field: 'routineSessionSnapshot' },
+    });
+  });
+
+  it('rejects a catalog whose signed content no longer validates', () => {
+    const input = snapshotInput(undefined);
+    const invalidFingerprint = required(
+      parseSha256Digest('0'.repeat(sha256DigestHexLength)),
+    );
+
+    expect(
+      buildRoutineSessionSnapshot({
+        ...input,
+        catalog: {
+          ...input.catalog,
+          manifestFingerprint: invalidFingerprint,
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: { code: 'manifestFingerprintMismatch' },
     });
   });
 

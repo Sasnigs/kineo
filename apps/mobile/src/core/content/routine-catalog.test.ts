@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
+import type { BodyArea } from '../domain/selection-domain';
 import type { MovementDefinition } from './catalog-content';
 import {
   createContentMetadata,
@@ -14,6 +15,7 @@ import {
 import {
   computeManifestFingerprint,
   createSignedCatalog,
+  makeCanonicalFingerprint,
 } from './routine-catalog';
 
 const createdAtMilliseconds = 1_750_000_000_000;
@@ -96,7 +98,7 @@ describe('Routine catalog manifest', () => {
     );
 
     expect(forward.manifestFingerprint).toBe(reversed.manifestFingerprint);
-    expect(computeManifestFingerprint(forward)).toBe(
+    expect(required(computeManifestFingerprint(forward))).toBe(
       forward.manifestFingerprint,
     );
   });
@@ -147,6 +149,46 @@ describe('Routine catalog manifest', () => {
     ).toEqual({
       ok: false,
       error: { code: 'invalidArtifact', field: 'schemaVersion' },
+    });
+  });
+
+  it('copies and deeply freezes caller-owned catalog content before signing', () => {
+    const supportedAreas: BodyArea[] = ['neck'];
+    const callerMovement = movement(
+      'kineo.prototype.movement.neck.caller-owned.v1',
+    );
+    const catalog = required(
+      createSignedCatalog({
+        catalogVersion: required(parseCatalogVersion('1.0.0')),
+        createdAtMilliseconds,
+        buildEligibility: ['internal_prototype'],
+        durationPolicies: [quickPolicy, standardPolicy],
+        movements: [{ ...callerMovement, supportedAreas }],
+        fragments: [],
+        primaryTemplates: [],
+        secondaryModules: [],
+        compatibilityRules: [],
+      }),
+    );
+
+    supportedAreas[0] = 'upperMidBack';
+
+    expect(catalog.movements[0]?.supportedAreas).toEqual(['neck']);
+    expect(Object.isFrozen(catalog.movements[0])).toBe(true);
+    expect(Object.isFrozen(catalog.movements[0]?.metadata)).toBe(true);
+    expect(Object.isFrozen(catalog.movements[0]?.supportedAreas)).toBe(true);
+  });
+
+  it('returns a typed failure for cyclic fingerprint payloads', () => {
+    const cyclic: { self?: object } = {};
+    cyclic.self = cyclic;
+
+    expect(makeCanonicalFingerprint(cyclic, true)).toEqual({
+      ok: false,
+      error: {
+        code: 'invalidArtifact',
+        field: 'canonicalFingerprintPayload',
+      },
     });
   });
 });
