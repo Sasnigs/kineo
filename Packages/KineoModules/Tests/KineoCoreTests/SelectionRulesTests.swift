@@ -16,6 +16,40 @@ struct SelectionRulesTests {
         let movementComfort: MovementComfort
     }
 
+    private struct ActiveHistoryFixtureCase: Decodable {
+        let history: ActiveHistoryFixtureState
+        let outcome: ActiveHistoryFixtureOutcome
+        let expectedHistory: ActiveHistoryFixtureState?
+        let expectedError: ActiveHistoryFixtureError?
+    }
+
+    private struct ActiveUnlockConfigurationFixture: Decodable {
+        let qualifyingOutcomeCountRequired: Int
+        let qualifyingLevels: [RoutineLevel]
+        let qualifyingResponses: [AreaResponse]
+    }
+
+    private struct ActiveHistoryFixtureState: Decodable {
+        let area: BodyArea
+        let qualifyingOutcomeCount: Int
+        let mostRecentRecordedResponse: AreaResponse?
+    }
+
+    private struct ActiveHistoryFixtureOutcome: Decodable {
+        let area: BodyArea
+        let routineStatus: RoutineStatus
+        let deliveredLevel: RoutineLevel
+        let response: AreaResponse?
+        let wasIncludedInDeliveredRoutine: Bool
+    }
+
+    private enum ActiveHistoryFixtureError: String, Decodable {
+        case areaMismatch
+        case areaNotIncluded
+        case nonterminalRoutine
+        case qualifyingCountOverflow
+    }
+
     @Test("Base mapping matches the shared parity fixture")
     private func baseMapping() throws {
         let fixtureURL = try #require(
@@ -64,6 +98,66 @@ struct SelectionRulesTests {
                     activeUnlocked: true
                 ) == testCase.unlockedLevel
             )
+        }
+    }
+
+    @Test("Swift matches the shared Active-history parity fixture")
+    private func activeHistoryParity() throws {
+        let configurationURL = try #require(
+            Bundle.module.url(
+                forResource: "active-unlock-configuration-v1",
+                withExtension: "json"
+            )
+        )
+        let configurationData = try Data(contentsOf: configurationURL)
+        let configurationFixture = try JSONDecoder().decode(
+            ActiveUnlockConfigurationFixture.self,
+            from: configurationData
+        )
+        #expect(
+            ActiveUnlockConfiguration.prototype.qualifyingOutcomeCountRequired ==
+                configurationFixture.qualifyingOutcomeCountRequired
+        )
+        #expect(
+            ActiveUnlockConfiguration.prototype.qualifyingLevels ==
+                Set(configurationFixture.qualifyingLevels)
+        )
+        #expect(
+            ActiveUnlockConfiguration.prototype.qualifyingResponses ==
+                Set(configurationFixture.qualifyingResponses)
+        )
+
+        let fixtureURL = try #require(
+            Bundle.module.url(
+                forResource: "active-history-v1",
+                withExtension: "json"
+            )
+        )
+        let fixtureData = try Data(contentsOf: fixtureURL)
+        let fixture = try JSONDecoder().decode(
+            [ActiveHistoryFixtureCase].self,
+            from: fixtureData
+        )
+        let historyReducer = ActiveHistoryReducer(configuration: .prototype)
+
+        for testCase in fixture {
+            let history = try historyState(from: testCase.history)
+            let outcome = RoutineAreaOutcome(
+                area: testCase.outcome.area,
+                routineStatus: testCase.outcome.routineStatus,
+                deliveredLevel: testCase.outcome.deliveredLevel,
+                response: testCase.outcome.response,
+                wasIncludedInDeliveredRoutine: testCase.outcome.wasIncludedInDeliveredRoutine
+            )
+            let expectedHistory = try testCase.expectedHistory.map(historyState)
+            do {
+                let result = try historyReducer.reducing(history, with: outcome)
+                #expect(testCase.expectedError == nil)
+                #expect(result == expectedHistory)
+            } catch {
+                #expect(testCase.expectedHistory == nil)
+                #expect(activeHistoryFixtureError(from: error) == testCase.expectedError)
+            }
         }
     }
 
@@ -252,6 +346,31 @@ struct SelectionRulesTests {
 
     private func reducer() throws -> ActiveHistoryReducer {
         ActiveHistoryReducer(configuration: try ActiveUnlockConfiguration())
+    }
+
+    private func historyState(
+        from fixture: ActiveHistoryFixtureState
+    ) throws -> ActiveHistoryState {
+        try ActiveHistoryState(
+            area: fixture.area,
+            qualifyingOutcomeCount: fixture.qualifyingOutcomeCount,
+            mostRecentRecordedResponse: fixture.mostRecentRecordedResponse
+        )
+    }
+
+    private func activeHistoryFixtureError(
+        from error: ActiveHistoryReductionError
+    ) -> ActiveHistoryFixtureError {
+        switch error {
+        case .areaMismatch:
+            .areaMismatch
+        case .areaNotIncluded:
+            .areaNotIncluded
+        case .nonterminalRoutine:
+            .nonterminalRoutine
+        case .qualifyingCountOverflow:
+            .qualifyingCountOverflow
+        }
     }
 
     private func state(

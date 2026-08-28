@@ -22,6 +22,27 @@ export type SafetyStatus = (typeof safetyStatuses)[number];
 export const routineLevels = ['gentle', 'balanced', 'active'] as const;
 export type RoutineLevel = (typeof routineLevels)[number];
 
+export const areaResponses = ['better', 'same', 'worse'] as const;
+export type AreaResponse = (typeof areaResponses)[number];
+
+export const routineStatuses = [
+  'prepared',
+  'inProgress',
+  'paused',
+  'completed',
+  'stopped',
+  'safetyStopped',
+  'abandoned',
+] as const;
+export type RoutineStatus = (typeof routineStatuses)[number];
+
+export const terminalRoutineStatuses = [
+  'completed',
+  'stopped',
+  'safetyStopped',
+  'abandoned',
+] as const satisfies readonly RoutineStatus[];
+
 declare const checkInEntryIdBrand: unique symbol;
 export type CheckInEntryId = string & {
   readonly [checkInEntryIdBrand]: 'CheckInEntryId';
