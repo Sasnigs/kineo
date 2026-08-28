@@ -57,6 +57,10 @@ export class ProtectedKineoStore implements KineoPersistence {
     return this.read(() => this.base.loadCheckIn(id));
   }
 
+  loadLatestCheckInDraft(kind: CheckIn['kind']): Promise<PersistenceResult<CheckIn | undefined>> {
+    return this.read(() => this.base.loadLatestCheckInDraft(kind));
+  }
+
   saveCheckInDraft(checkIn: CheckIn): Promise<PersistenceResult<void>> {
     return this.write(() => this.base.saveCheckInDraft(checkIn));
   }
@@ -71,6 +75,10 @@ export class ProtectedKineoStore implements KineoPersistence {
 
   loadLatestSelectionDecision(checkInId: CheckInId): Promise<PersistenceResult<SelectionDecision | undefined>> {
     return this.read(() => this.base.loadLatestSelectionDecision(checkInId));
+  }
+
+  loadLatestUnconsumedSelectionDecision(): Promise<PersistenceResult<SelectionDecision | undefined>> {
+    return this.read(() => this.base.loadLatestUnconsumedSelectionDecision());
   }
 
   recordPauseToday(event: PauseTodayEvent): Promise<PersistenceResult<void>> {

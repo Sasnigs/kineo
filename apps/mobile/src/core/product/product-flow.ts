@@ -1,6 +1,58 @@
 import type { RoutineSession } from '../persistence/routine-persistence-domain';
-import type { BodyArea } from '../domain/selection-domain';
+import type {
+  BodyArea,
+  ChangeReport,
+  CheckInEntryId,
+  CheckInId,
+  ConditionalSafetyAnswer,
+  DurationVariant,
+  MovementComfort,
+  RoutineLevel,
+  SelectionDecisionId,
+} from '../domain/selection-domain';
 import type { PersistenceError } from '../persistence/persistence-contract';
+import type { LocalDayContext } from '../persistence/persistence-domain';
+
+export type CheckInDraft = Readonly<{
+  checkInId: CheckInId;
+  primaryEntryId: CheckInEntryId;
+  primaryArea: BodyArea;
+  secondaryEntryId?: CheckInEntryId;
+  secondaryArea?: BodyArea;
+  startedAtMilliseconds: number;
+  dayContext: LocalDayContext;
+}>;
+
+export type AreaCheckInAnswers = Readonly<{
+  area: BodyArea;
+  changeReport: ChangeReport;
+  movementComfort: MovementComfort;
+  conditionalSafetyAnswer?: ConditionalSafetyAnswer;
+}>;
+
+export type PlanPresentation = Readonly<{
+  decisionId: SelectionDecisionId;
+  checkInId: CheckInId;
+  primaryArea: BodyArea;
+  includedAreas: readonly BodyArea[];
+  omittedSecondaryArea?: BodyArea;
+  recommendedLevel: RoutineLevel;
+  selectedLevel: RoutineLevel;
+  deliveredLevel: RoutineLevel;
+  duration: DurationVariant;
+  explanationKeys: readonly string[];
+  itemCount: number;
+  nominalSeconds: number;
+  pauseTodayAvailable: boolean;
+}>;
+
+export type CheckInResult =
+  | Readonly<{
+      kind: 'attentionRequired';
+      area: BodyArea;
+      expectedAttentionUpdatedAtMilliseconds: number;
+    }>
+  | Readonly<{ kind: 'plan'; plan: PlanPresentation }>;
 
 export type OnboardingProgress =
   | Readonly<{ step: 'welcome' }>
@@ -20,12 +72,16 @@ export type ProductStartState =
       area: BodyArea;
       expectedAttentionUpdatedAtMilliseconds: number;
     }>
+  | Readonly<{ kind: 'unfinishedCheckIn'; draft: CheckInDraft }>
+  | Readonly<{ kind: 'unfinishedPlan'; plan: PlanPresentation }>
   | Readonly<{ kind: 'unfinishedRoutine'; session: RoutineSession }>
   | Readonly<{ kind: 'today'; primaryArea: BodyArea }>;
 
 export type ProductFlowError =
   | Readonly<{ code: 'invalidState' }>
   | Readonly<{ code: 'invalidData' }>
+  | Readonly<{ code: 'contentUnavailable' }>
+  | Readonly<{ code: 'attentionRequired'; areas: readonly BodyArea[] }>
   | Readonly<{ code: 'persistence'; cause: PersistenceError }>;
 
 export type ProductResult<Value> =

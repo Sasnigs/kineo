@@ -48,6 +48,8 @@ function errorMessage(error: ProductFlowError): string {
   if (error.code === 'invalidState' || error.code === 'invalidData') {
     return "Kineo couldn't continue from that state. Try again.";
   }
+  if (error.code === 'contentUnavailable') return 'No approved prototype routine is available for this plan.';
+  if (error.code === 'attentionRequired') return 'Attention Required is active. Review it before another routine.';
   switch (error.cause.code) {
     case 'protectedDataUnavailable':
       return 'Unlock this iPhone, then try again.';

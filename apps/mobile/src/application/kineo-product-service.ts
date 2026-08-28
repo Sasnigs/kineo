@@ -1,19 +1,76 @@
-import type { BodyArea } from '../core/domain/selection-domain';
+import {
+  bodyAreas,
+  parseCheckInEntryId,
+  parseCheckInId,
+  parseSelectionDecisionId,
+  type DurationVariant,
+  type RoutineLevel,
+  type SelectionDecisionId,
+  type BodyArea,
+} from '../core/domain/selection-domain';
+import {
+  parseCompositionId,
+  composeRoutine,
+  type ComposedRoutine,
+} from '../core/content/routine-composer';
+import {
+  makePrototypeRoutineCatalog,
+  prototypeCatalogAssetDigests,
+  prototypeCatalogLocalizedStrings,
+} from '../core/content/prototype-routine-catalog';
+import {
+  createSelectionDecision,
+  type SelectionDecision,
+} from '../core/persistence/decision-persistence-domain';
 import type { PersistenceError } from '../core/persistence/persistence-contract';
 import {
   createProfileState,
+  createSafetyEvent,
+  createSafetyMutation,
   defaultWeeklyGoalDays,
+  parseLocalDay,
+  parseSafetyEventId,
+  type CheckIn,
+  type LocalDayContext,
   type ProfileState,
   type UserProfile,
 } from '../core/persistence/persistence-domain';
-import type { ProductResult, ProductStartState } from '../core/product/product-flow';
+import {
+  createActiveHistoryState,
+  type ActiveHistoryState,
+} from '../core/selection/active-history';
+import {
+  prototypeSelectionRulesVersion,
+  selectPlan,
+  type SelectedPlan,
+} from '../core/selection/plan-selector';
+import type {
+  CheckInDraft,
+  AreaCheckInAnswers,
+  CheckInResult,
+  PlanPresentation,
+  ProductResult,
+  ProductStartState,
+} from '../core/product/product-flow';
 import type { KineoPersistence } from '../infrastructure/persistence/protected-kineo-store';
 
 export type ProductClock = Readonly<{
   nowMilliseconds(): number;
 }>;
 
+export type ProductRuntime = Readonly<{
+  nextIdentifier(): string;
+  localDayContext(): Readonly<{
+    localDay: string;
+    timeZoneId: string;
+    calendarId: string;
+  }>;
+}>;
+
 export const prototypeSafetyBoundaryVersion = 'prototype-safety-v1';
+const firstEntryRevision = 1;
+const firstDecisionRevision = 1;
+const noExistingRevision = 0;
 
 export interface KineoProductServing {
   loadStartState(): Promise<ProductResult<ProductStartState>>;
@@ -22,6 +79,12 @@ export interface KineoProductServing {
   saveSecondaryArea(area?: BodyArea): Promise<ProductResult<void>>;
   acknowledgeSafetyBoundary(): Promise<ProductResult<void>>;
   completeOnboarding(): Promise<ProductResult<BodyArea>>;
+  beginCheckIn(): Promise<ProductResult<CheckInDraft>>;
+  submitCheckIn(
+    draft: CheckInDraft,
+    primary: AreaCheckInAnswers,
+    secondary?: AreaCheckInAnswers,
+  ): Promise<ProductResult<CheckInResult>>;
   resetHistory(): Promise<ProductResult<void>>;
   deleteAllData(): Promise<ProductResult<void>>;
 }
@@ -41,6 +104,7 @@ export class KineoProductService implements KineoProductServing {
   constructor(
     private readonly store: KineoPersistence,
     private readonly clock: ProductClock,
+    private readonly runtime: ProductRuntime,
   ) {}
 
   async loadStartState(): Promise<ProductResult<ProductStartState>> {
@@ -61,9 +125,8 @@ export class KineoProductService implements KineoProductServing {
     const attention = await this.store.loadAttentionStates();
     if (!attention.ok) return persistenceFailure(attention.error);
     const firstAttention = attention.value[0];
-    return firstAttention === undefined
-      ? { ok: true, value: { kind: 'today', primaryArea } }
-      : {
+    if (firstAttention !== undefined) {
+      return {
           ok: true,
           value: {
             kind: 'attentionRequired',
@@ -72,6 +135,32 @@ export class KineoProductService implements KineoProductServing {
               firstAttention.updatedAtMilliseconds,
           },
         };
+    }
+    const draft = await this.store.loadLatestCheckInDraft('normal');
+    if (!draft.ok) return persistenceFailure(draft.error);
+    if (
+      draft.value !== undefined &&
+      draft.value.primaryArea === primaryArea &&
+      draft.value.secondaryArea === profile.value?.profile.secondaryArea
+    ) {
+      const restored = this.checkInDraft(draft.value);
+      return restored === undefined
+        ? { ok: false, error: { code: 'invalidData' } }
+        : { ok: true, value: { kind: 'unfinishedCheckIn', draft: restored } };
+    }
+    const decision = await this.store.loadLatestUnconsumedSelectionDecision();
+    if (!decision.ok) return persistenceFailure(decision.error);
+    if (decision.value !== undefined) {
+      const plan = await this.preparePlan(
+        decision.value.checkInId,
+        decision.value.duration,
+        decision.value.requestedOverride,
+      );
+      return plan.ok
+        ? { ok: true, value: { kind: 'unfinishedPlan', plan: plan.value } }
+        : plan;
+    }
+    return { ok: true, value: { kind: 'today', primaryArea } };
   }
 
   async confirmAdultEligibility(): Promise<ProductResult<void>> {
@@ -163,6 +252,171 @@ export class KineoProductService implements KineoProductServing {
       : { ok: true, value: completedArea };
   }
 
+  async beginCheckIn(): Promise<ProductResult<CheckInDraft>> {
+    const attention = await this.store.loadAttentionStates();
+    if (!attention.ok) return persistenceFailure(attention.error);
+    if (attention.value.length > 0) return invalidState;
+
+    const profile = await this.store.loadProfileState();
+    if (!profile.ok) return persistenceFailure(profile.error);
+    const userProfile = profile.value?.profile;
+    if (
+      userProfile?.onboardingCompletedAtMilliseconds === undefined ||
+      userProfile.primaryArea === undefined
+    ) {
+      return invalidState;
+    }
+    const existing = await this.store.loadLatestCheckInDraft('normal');
+    if (!existing.ok) return persistenceFailure(existing.error);
+    if (
+      existing.value !== undefined &&
+      existing.value.primaryArea === userProfile.primaryArea &&
+      existing.value.secondaryArea === userProfile.secondaryArea
+    ) {
+      const restored = this.checkInDraft(existing.value);
+      return restored === undefined
+        ? { ok: false, error: { code: 'invalidData' } }
+        : { ok: true, value: restored };
+    }
+
+    const checkInId = parseCheckInId(this.runtime.nextIdentifier());
+    const primaryEntryId = parseCheckInEntryId(this.runtime.nextIdentifier());
+    const secondaryEntryId =
+      userProfile.secondaryArea === undefined
+        ? undefined
+        : parseCheckInEntryId(this.runtime.nextIdentifier());
+    const day = this.runtime.localDayContext();
+    const localDay = parseLocalDay(day.localDay);
+    if (
+      !checkInId.ok ||
+      !primaryEntryId.ok ||
+      (secondaryEntryId !== undefined && !secondaryEntryId.ok) ||
+      !localDay.ok ||
+      day.timeZoneId.trim().length === 0 ||
+      day.calendarId.trim().length === 0
+    ) {
+      return { ok: false, error: { code: 'invalidData' } };
+    }
+    const timestamp = this.clock.nowMilliseconds();
+    const dayContext: LocalDayContext = {
+      localDay: localDay.value,
+      timeZoneId: day.timeZoneId,
+      calendarId: day.calendarId,
+    };
+    const draft: CheckInDraft = {
+      checkInId: checkInId.value,
+      primaryEntryId: primaryEntryId.value,
+      primaryArea: userProfile.primaryArea,
+      secondaryEntryId: secondaryEntryId?.value,
+      secondaryArea: userProfile.secondaryArea,
+      startedAtMilliseconds: timestamp,
+      dayContext,
+    };
+    const saved = await this.store.saveCheckInDraft({
+      id: draft.checkInId,
+      status: 'draft',
+      kind: 'normal',
+      primaryArea: draft.primaryArea,
+      secondaryArea: draft.secondaryArea,
+      startedAtMilliseconds: draft.startedAtMilliseconds,
+      dayContext: draft.dayContext,
+      entries: [],
+    });
+    return saved.ok ? { ok: true, value: draft } : persistenceFailure(saved.error);
+  }
+
+  async submitCheckIn(
+    draft: CheckInDraft,
+    primary: AreaCheckInAnswers,
+    secondary?: AreaCheckInAnswers,
+  ): Promise<ProductResult<CheckInResult>> {
+    if (
+      primary.area !== draft.primaryArea ||
+      (secondary !== undefined && secondary.area !== draft.secondaryArea) ||
+      (secondary !== undefined && draft.secondaryEntryId === undefined)
+    ) {
+      return invalidState;
+    }
+    const entries = [
+      {
+        id: draft.primaryEntryId,
+        area: draft.primaryArea,
+        role: 'primary' as const,
+        changeReport: primary.changeReport,
+        movementComfort: primary.movementComfort,
+        conditionalSafetyAnswer: primary.conditionalSafetyAnswer,
+        submittedAtMilliseconds: draft.startedAtMilliseconds,
+      },
+      ...(secondary === undefined || draft.secondaryEntryId === undefined
+        ? []
+        : [{
+            id: draft.secondaryEntryId,
+            area: secondary.area,
+            role: 'secondary' as const,
+            changeReport: secondary.changeReport,
+            movementComfort: secondary.movementComfort,
+            conditionalSafetyAnswer: secondary.conditionalSafetyAnswer,
+            submittedAtMilliseconds: draft.startedAtMilliseconds,
+          }]),
+    ];
+    const completed: CheckIn = {
+      id: draft.checkInId,
+      status: 'completed',
+      kind: 'normal',
+      primaryArea: draft.primaryArea,
+      secondaryArea: secondary?.area,
+      startedAtMilliseconds: draft.startedAtMilliseconds,
+      completedAtMilliseconds: draft.startedAtMilliseconds,
+      dayContext: draft.dayContext,
+      entries,
+    };
+    const mutations = [];
+    for (const entry of entries) {
+      if (
+        entry.conditionalSafetyAnswer !== 'yes' &&
+        entry.conditionalSafetyAnswer !== 'notSure'
+      ) continue;
+      const eventId = parseSafetyEventId(this.runtime.nextIdentifier());
+      if (!eventId.ok) return { ok: false, error: { code: 'invalidData' } };
+      const event = createSafetyEvent({
+        id: eventId.value,
+        area: entry.area,
+        kind: 'attentionEntered',
+        sourceCheckInEntryId: entry.id,
+        occurredAtMilliseconds: draft.startedAtMilliseconds,
+        dayContext: draft.dayContext,
+      });
+      if (!event.ok) return { ok: false, error: { code: 'invalidData' } };
+      const mutation = createSafetyMutation({
+        event: event.value,
+        statusAfter: 'attentionRequired',
+      });
+      if (!mutation.ok) return { ok: false, error: { code: 'invalidData' } };
+      mutations.push(mutation.value);
+    }
+    const saved = await this.store.completeCheckIn(completed, mutations);
+    if (!saved.ok) return persistenceFailure(saved.error);
+    if (mutations.length > 0) {
+      const attention = await this.store.loadAttentionStates();
+      if (!attention.ok) return persistenceFailure(attention.error);
+      const first = attention.value[0];
+      return first === undefined
+        ? { ok: false, error: { code: 'invalidData' } }
+        : {
+            ok: true,
+            value: {
+              kind: 'attentionRequired',
+              area: first.area,
+              expectedAttentionUpdatedAtMilliseconds: first.updatedAtMilliseconds,
+            },
+          };
+    }
+    const plan = await this.preparePlan(draft.checkInId, 'standard');
+    return plan.ok
+      ? { ok: true, value: { kind: 'plan', plan: plan.value } }
+      : plan;
+  }
+
   async resetHistory(): Promise<ProductResult<void>> {
     const result = await this.store.resetHistory();
     return result.ok ? result : persistenceFailure(result.error);
@@ -192,6 +446,243 @@ export class KineoProductService implements KineoProductServing {
       return { step: 'firstCheckIn', primaryArea: profile.primaryArea };
     }
     return undefined;
+  }
+
+  private checkInDraft(checkIn: CheckIn): CheckInDraft | undefined {
+    if (checkIn.status !== 'draft' || checkIn.kind !== 'normal') return undefined;
+    const primaryEntryId = parseCheckInEntryId(this.runtime.nextIdentifier());
+    const secondaryEntryId =
+      checkIn.secondaryArea === undefined
+        ? undefined
+        : parseCheckInEntryId(this.runtime.nextIdentifier());
+    if (!primaryEntryId.ok || (secondaryEntryId !== undefined && !secondaryEntryId.ok)) {
+      return undefined;
+    }
+    return {
+      checkInId: checkIn.id,
+      primaryEntryId: primaryEntryId.value,
+      primaryArea: checkIn.primaryArea,
+      secondaryEntryId: secondaryEntryId?.value,
+      secondaryArea: checkIn.secondaryArea,
+      startedAtMilliseconds: checkIn.startedAtMilliseconds,
+      dayContext: checkIn.dayContext,
+    };
+  }
+
+  private async preparePlan(
+    checkInId: CheckInDraft['checkInId'],
+    duration: DurationVariant,
+    requestedOverride?: RoutineLevel,
+  ): Promise<ProductResult<PlanPresentation>> {
+    const attention = await this.store.loadAttentionStates();
+    if (!attention.ok) return persistenceFailure(attention.error);
+    if (attention.value.length > 0) {
+      return {
+        ok: false,
+        error: { code: 'attentionRequired', areas: attention.value.map(({ area }) => area) },
+      };
+    }
+    const [checkInResult, profileResult, existingResult] = await Promise.all([
+      this.store.loadCheckIn(checkInId),
+      this.store.loadProfileState(),
+      this.store.loadLatestSelectionDecision(checkInId),
+    ]);
+    if (!checkInResult.ok) return persistenceFailure(checkInResult.error);
+    if (!profileResult.ok) return persistenceFailure(profileResult.error);
+    if (!existingResult.ok) return persistenceFailure(existingResult.error);
+    const checkIn = checkInResult.value;
+    const profile = profileResult.value?.profile;
+    const primaryEntry = checkIn?.entries.find(({ area }) => area === checkIn.primaryArea);
+    if (
+      checkIn?.status !== 'completed' ||
+      profile?.primaryArea === undefined ||
+      primaryEntry === undefined
+    ) return invalidState;
+
+    const existing =
+      existingResult.value?.duration === duration &&
+      existingResult.value.requestedOverride === requestedOverride
+        ? existingResult.value
+        : undefined;
+    const decisionId = existing === undefined
+      ? parseSelectionDecisionId(this.runtime.nextIdentifier())
+      : { ok: true as const, value: existing.id };
+    if (!decisionId.ok) return { ok: false, error: { code: 'invalidData' } };
+
+    const historyByArea: Partial<Record<BodyArea, ActiveHistoryState>> = {};
+    for (const area of [
+      checkIn.primaryArea,
+      ...(profile.secondaryArea === undefined ? [] : [profile.secondaryArea]),
+    ]) {
+      const state = createActiveHistoryState({ area, qualifyingOutcomeCount: 0 });
+      if (!state.ok) return { ok: false, error: { code: 'invalidData' } };
+      historyByArea[area] = state.value;
+    }
+    const secondaryEntry = checkIn.secondaryArea === undefined
+      ? undefined
+      : checkIn.entries.find(({ area }) => area === checkIn.secondaryArea);
+    const checkInsByArea = {
+      [checkIn.primaryArea]: {
+        checkInEntryId: primaryEntry.id,
+        entryRevision: firstEntryRevision,
+        area: primaryEntry.area,
+        changeReport: primaryEntry.changeReport,
+        movementComfort: primaryEntry.movementComfort,
+        conditionalSafetyAnswer: primaryEntry.conditionalSafetyAnswer,
+      },
+      ...(secondaryEntry === undefined ? {} : {
+        [secondaryEntry.area]: {
+          checkInEntryId: secondaryEntry.id,
+          entryRevision: firstEntryRevision,
+          area: secondaryEntry.area,
+          changeReport: secondaryEntry.changeReport,
+          movementComfort: secondaryEntry.movementComfort,
+          conditionalSafetyAnswer: secondaryEntry.conditionalSafetyAnswer,
+        },
+      }),
+    };
+    const catalog = makePrototypeRoutineCatalog();
+    const selected = selectPlan({
+      decisionId: decisionId.value,
+      checkInId,
+      decisionRevision:
+        existing?.revision ??
+        ((existingResult.value?.revision ?? noExistingRevision) + firstDecisionRevision),
+      primaryArea: checkIn.primaryArea,
+      secondaryArea: profile.secondaryArea,
+      secondaryParticipation: profile.secondaryArea === undefined
+        ? undefined
+        : checkIn.secondaryArea === profile.secondaryArea
+          ? 'include'
+          : 'skipForSession',
+      checkInsByArea,
+      safetyByArea: Object.fromEntries(bodyAreas.map((area) => [area, { area, status: 'normal' as const }])),
+      historyByArea,
+      requestedOverride,
+      duration,
+      rulesVersion: prototypeSelectionRulesVersion,
+      catalogVersion: catalog.catalogVersion,
+    });
+    if (selected.kind !== 'selected') return invalidState;
+    const compositionId = parseCompositionId(this.runtime.nextIdentifier());
+    if (!compositionId.ok) return { ok: false, error: { code: 'invalidData' } };
+    const composition = composeRoutine(
+      {
+        decisionId: decisionId.value,
+        primaryArea: selected.plan.compositionRequest.primaryArea,
+        secondaryArea: selected.plan.compositionRequest.secondaryArea,
+        selectedLevel: selected.plan.selectedLevel,
+        duration,
+        catalogVersion: catalog.catalogVersion,
+        buildChannel: 'internal_prototype',
+      },
+      catalog,
+      {
+        localizedStrings: prototypeCatalogLocalizedStrings(),
+        assetDigestsByPath: prototypeCatalogAssetDigests(),
+      },
+      compositionId.value,
+    );
+    if (composition.kind !== 'composed') {
+      return { ok: false, error: { code: 'contentUnavailable' } };
+    }
+    if (
+      existing !== undefined &&
+      existing.compositionFingerprint !== composition.routine.fingerprint
+    ) return { ok: false, error: { code: 'invalidData' } };
+    if (existing === undefined) {
+      const decision = this.makeDecision(
+        checkInId,
+        decisionId.value,
+        existingResult.value?.revision === undefined
+          ? firstDecisionRevision
+          : existingResult.value.revision + firstDecisionRevision,
+        selected.plan,
+        composition.routine,
+        historyByArea,
+      );
+      if (!decision.ok) return decision;
+      const appended = await this.store.appendSelectionDecision(decision.value);
+      if (!appended.ok) return persistenceFailure(appended.error);
+    }
+    return {
+      ok: true,
+      value: {
+        decisionId: decisionId.value,
+        checkInId,
+        primaryArea: checkIn.primaryArea,
+        includedAreas: composition.routine.includedAreas,
+        omittedSecondaryArea:
+          composition.routine.omittedArea ?? selected.plan.omittedAreas[0]?.area,
+        recommendedLevel: selected.plan.recommendedLevel,
+        selectedLevel: selected.plan.selectedLevel,
+        deliveredLevel: composition.routine.deliveredLevel,
+        duration,
+        explanationKeys: selected.plan.explanations.map(({ key }) => key),
+        itemCount: composition.routine.orderedItems.length,
+        nominalSeconds: composition.routine.nominalSeconds,
+        pauseTodayAvailable: selected.plan.pauseTodayAvailable,
+      },
+    };
+  }
+
+  private makeDecision(
+    checkInId: CheckInDraft['checkInId'],
+    decisionId: SelectionDecisionId,
+    revision: number,
+    selected: SelectedPlan,
+    composition: ComposedRoutine,
+    historyByArea: Readonly<Partial<Record<BodyArea, ActiveHistoryState>>>,
+  ): ProductResult<SelectionDecision> {
+    const created = createSelectionDecision({
+      id: decisionId,
+      checkInId,
+      revision,
+      rulesVersion: prototypeSelectionRulesVersion,
+      catalogVersionRequested: composition.catalogVersion,
+      catalogVersionDelivered: composition.catalogVersion,
+      outcome: 'selected',
+      recommendedLevel: selected.recommendedLevel,
+      requestedOverride: selected.requestedOverride,
+      overrideDisposition: selected.overrideDisposition,
+      selectedLevel: selected.selectedLevel,
+      deliveredLevel: composition.deliveredLevel,
+      duration: selected.duration,
+      secondaryOmissionReason: composition.omissionReason ?? selected.omittedAreas[0]?.reason,
+      validationResult: composition.status === 'exact' ? 'exact' : 'fallback',
+      primaryTemplateId: composition.primaryTemplate.id,
+      primaryTemplateRevision: composition.primaryTemplate.revision,
+      secondaryModuleId: composition.secondaryModule?.id,
+      secondaryModuleRevision: composition.secondaryModule?.revision,
+      compatibilityRuleId: composition.compatibilityRule?.id,
+      compositionFingerprint: composition.fingerprint,
+      createdAtMilliseconds: this.clock.nowMilliseconds(),
+      areaInputs: selected.includedAreaDecisions.map((area) => ({
+        area: area.area,
+        role: area.role,
+        checkInEntryId: area.checkInEntryId,
+        baseLevel: area.baseLevel,
+        activeUnlocked: area.activeUnlocked,
+        qualifyingCount: historyByArea[area.area]?.qualifyingOutcomeCount ?? 0,
+        latestResponse: historyByArea[area.area]?.mostRecentRecordedResponse,
+        included: composition.includedAreas.includes(area.area),
+      })),
+      reasons: selected.explanations.map((reason, position) => ({
+        kind: 'selection',
+        position,
+        code: reason.key,
+        parameters: reason.parameters,
+      })),
+      notices: selected.notices.map((notice, position) => ({
+        position,
+        code: notice.key,
+        area: notice.area,
+        parameters: {},
+      })),
+    });
+    return created.ok
+      ? { ok: true, value: created.value }
+      : { ok: false, error: { code: 'invalidData' } };
   }
 
   private async updateExistingProfile(

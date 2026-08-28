@@ -21,6 +21,9 @@ export interface KineoStore {
   loadProfileState(): Promise<PersistenceResult<ProfileState | undefined>>;
   saveProfileState(state: ProfileState): Promise<PersistenceResult<void>>;
   loadCheckIn(id: CheckInId): Promise<PersistenceResult<CheckIn | undefined>>;
+  loadLatestCheckInDraft(
+    kind: CheckIn['kind'],
+  ): Promise<PersistenceResult<CheckIn | undefined>>;
   saveCheckInDraft(checkIn: CheckIn): Promise<PersistenceResult<void>>;
   completeCheckIn(
     checkIn: CheckIn,
@@ -32,6 +35,9 @@ export interface KineoStore {
   loadLatestSelectionDecision(
     checkInId: CheckInId,
   ): Promise<PersistenceResult<SelectionDecision | undefined>>;
+  loadLatestUnconsumedSelectionDecision(): Promise<
+    PersistenceResult<SelectionDecision | undefined>
+  >;
   recordPauseToday(event: PauseTodayEvent): Promise<PersistenceResult<void>>;
   loadPauseToday(localDay: LocalDay): Promise<PersistenceResult<PauseTodayEvent | undefined>>;
   createRoutine(session: RoutineSession): Promise<PersistenceResult<void>>;

@@ -560,6 +560,28 @@ export class KineoSqliteStore implements KineoStore {
     }
   }
 
+  async loadLatestCheckInDraft(
+    kind: CheckIn['kind'],
+  ): Promise<PersistenceResult<CheckIn | undefined>> {
+    try {
+      const row = await this.database.getFirstAsync<{ id: string }>(
+        `SELECT id FROM check_ins
+         WHERE status = 'draft' AND purpose = ?
+         ORDER BY started_at_ms DESC, id DESC
+         LIMIT 1`,
+        [kind],
+      );
+      if (row === null) return { ok: true, value: undefined };
+      const id = parseCheckInId(row.id);
+      if (!id.ok) throw new StoreAbort({ code: 'corruptedStore' });
+      return this.loadCheckIn(id.value);
+    } catch (error) {
+      return error instanceof StoreAbort
+        ? { ok: false, error: error.persistenceError }
+        : { ok: false, error: { code: 'readFailed' } };
+    }
+  }
+
   async saveCheckInDraft(checkIn: CheckIn): Promise<PersistenceResult<void>> {
     const validated = createCheckIn(checkIn);
     if (!validated.ok || validated.value.status !== 'draft') {
@@ -908,6 +930,32 @@ export class KineoSqliteStore implements KineoStore {
       return decision === undefined
         ? { ok: false, error: { code: 'corruptedStore' } }
         : { ok: true, value: decision };
+    } catch (error) {
+      return error instanceof StoreAbort
+        ? { ok: false, error: error.persistenceError }
+        : { ok: false, error: { code: 'readFailed' } };
+    }
+  }
+
+  async loadLatestUnconsumedSelectionDecision(): Promise<
+    PersistenceResult<SelectionDecision | undefined>
+  > {
+    try {
+      const row = await this.database.getFirstAsync<{ check_in_id: string }>(
+        `SELECT decision.check_in_id
+         FROM selection_decisions AS decision
+         LEFT JOIN routine_sessions AS routine ON routine.decision_id = decision.id
+         LEFT JOIN pause_today_events AS pause ON pause.check_in_id = decision.check_in_id
+         WHERE decision.outcome = 'selected'
+           AND routine.id IS NULL
+           AND pause.id IS NULL
+         ORDER BY decision.created_at_ms DESC, decision.revision DESC, decision.id DESC
+         LIMIT 1`,
+      );
+      if (row === null) return { ok: true, value: undefined };
+      const checkInId = parseCheckInId(row.check_in_id);
+      if (!checkInId.ok) throw new StoreAbort({ code: 'corruptedStore' });
+      return this.loadLatestSelectionDecision(checkInId.value);
     } catch (error) {
       return error instanceof StoreAbort
         ? { ok: false, error: error.persistenceError }

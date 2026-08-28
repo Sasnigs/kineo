@@ -51,6 +51,14 @@ class OnboardingService implements KineoProductServing {
     return { ok: true as const, value: 'neck' as const };
   }
 
+  async beginCheckIn() {
+    return { ok: false as const, error: { code: 'invalidState' as const } };
+  }
+
+  async submitCheckIn() {
+    return { ok: false as const, error: { code: 'invalidState' as const } };
+  }
+
   async resetHistory() {
     return { ok: true as const, value: undefined };
   }
