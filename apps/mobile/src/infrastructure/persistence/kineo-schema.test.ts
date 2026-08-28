@@ -1,19 +1,14 @@
 /** @jest-environment node */
 
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { describe, expect, it } from '@jest/globals';
 
-import type {
-  SqlParameters,
-  SqliteDatabase,
-  SqliteExecutor,
-} from '../../core/persistence/persistence-contract';
 import {
   kineoSchemaVersion,
   kineoV1MigrationChecksum,
   migrateKineoDatabase,
   preflightKineoSchema,
 } from './kineo-schema';
+import { NodeSqliteTestDatabase } from './testing/node-sqlite-test-database';
 
 const appliedAtMilliseconds = 1_750_000_000_000;
 const expectedUserTableCount = 16;
@@ -21,66 +16,9 @@ const futureVersionIncrement = 1;
 const changedChecksum = '0'.repeat(kineoV1MigrationChecksum.length);
 const injectedFailureStatement = 'CREATE TABLE safety_events';
 
-class NodeSqliteDatabase implements SqliteDatabase {
-  private readonly database = new DatabaseSync(':memory:');
-
-  constructor(private readonly failWhenSqlIncludes?: string) {}
-
-  async execAsync(source: string): Promise<void> {
-    if (this.failWhenSqlIncludes !== undefined && source.includes(this.failWhenSqlIncludes)) {
-      throw new Error('Injected SQLite failure.');
-    }
-    this.database.exec(source);
-  }
-
-  async runAsync(source: string, parameters: SqlParameters = []): Promise<void> {
-    this.database
-      .prepare(source)
-      .run(...(parameters as readonly SQLInputValue[]));
-  }
-
-  async getFirstAsync<Row>(
-    source: string,
-    parameters: SqlParameters = [],
-  ): Promise<Row | null> {
-    return (
-      (this.database
-        .prepare(source)
-        .get(...(parameters as readonly SQLInputValue[])) as Row | undefined) ??
-      null
-    );
-  }
-
-  async getAllAsync<Row>(
-    source: string,
-    parameters: SqlParameters = [],
-  ): Promise<Row[]> {
-    return this.database
-      .prepare(source)
-      .all(...(parameters as readonly SQLInputValue[])) as Row[];
-  }
-
-  async withExclusiveTransactionAsync(
-    task: (transaction: SqliteExecutor) => Promise<void>,
-  ): Promise<void> {
-    this.database.exec('BEGIN IMMEDIATE');
-    try {
-      await task(this);
-      this.database.exec('COMMIT');
-    } catch (error) {
-      this.database.exec('ROLLBACK');
-      throw error;
-    }
-  }
-
-  async closeAsync(): Promise<void> {
-    this.database.close();
-  }
-}
-
 describe('Kineo SQLite schema', () => {
   it('migrates a fresh real SQLite database and reopens idempotently', async () => {
-    const database = new NodeSqliteDatabase();
+    const database = new NodeSqliteTestDatabase();
 
     await expect(
       migrateKineoDatabase(database, appliedAtMilliseconds),
@@ -105,7 +43,7 @@ describe('Kineo SQLite schema', () => {
   });
 
   it('rejects a future schema and an edited migration checksum without erasing either', async () => {
-    const future = new NodeSqliteDatabase();
+    const future = new NodeSqliteTestDatabase();
     const futureVersion = kineoSchemaVersion + futureVersionIncrement;
     await future.execAsync(`PRAGMA user_version = ${futureVersion}`);
     await expect(preflightKineoSchema(future)).resolves.toEqual({
@@ -117,7 +55,7 @@ describe('Kineo SQLite schema', () => {
       },
     });
 
-    const edited = new NodeSqliteDatabase();
+    const edited = new NodeSqliteTestDatabase();
     await migrateKineoDatabase(edited, appliedAtMilliseconds);
     await edited.runAsync(
       'UPDATE schema_migrations SET checksum = ?',
@@ -136,7 +74,7 @@ describe('Kineo SQLite schema', () => {
   });
 
   it('rolls back the entire migration when a statement fails', async () => {
-    const database = new NodeSqliteDatabase(injectedFailureStatement);
+    const database = new NodeSqliteTestDatabase(injectedFailureStatement);
 
     await expect(
       migrateKineoDatabase(database, appliedAtMilliseconds),
@@ -154,7 +92,7 @@ describe('Kineo SQLite schema', () => {
   });
 
   it('enforces structural domain constraints in SQLite', async () => {
-    const database = new NodeSqliteDatabase();
+    const database = new NodeSqliteTestDatabase();
     await migrateKineoDatabase(database, appliedAtMilliseconds);
 
     await expect(
