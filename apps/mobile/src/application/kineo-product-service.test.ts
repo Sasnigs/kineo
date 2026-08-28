@@ -21,12 +21,14 @@ const firstGeneratedIdentifier = 101;
 const lastGeneratedIdentifier = 199;
 const uuidSuffixLength = 12;
 const localDay = '2025-06-15';
+const followingLocalDay = '2025-06-16';
 
 async function makeService() {
   const database = new NodeSqliteTestDatabase();
   const migrated = await migrateKineoDatabase(database, initialTimestamp);
   if (!migrated.ok) throw new Error('Product-service migration failed.');
   let timestamp = initialTimestamp;
+  let currentLocalDay = localDay;
   const store = new ProtectedKineoStore(
     new KineoSqliteStore(database),
     async () => ({ ok: true, value: undefined }),
@@ -35,6 +37,7 @@ async function makeService() {
   );
   return {
     database,
+    store,
     service: new KineoProductService(
       store,
       { nowMilliseconds: () => timestamp },
@@ -52,7 +55,7 @@ async function makeService() {
           };
         })(),
         localDayContext: () => ({
-          localDay,
+          localDay: currentLocalDay,
           timeZoneId: 'America/Chicago',
           calendarId: 'gregorian',
         }),
@@ -60,6 +63,9 @@ async function makeService() {
     ),
     advanceClock: () => {
       timestamp = nextTimestamp;
+    },
+    setLocalDay: (value: string) => {
+      currentLocalDay = value;
     },
   };
 }
@@ -177,6 +183,26 @@ describe('Kineo product service check-in', () => {
           }
         : undefined,
     });
+    await database.closeAsync();
+  });
+
+  it('abandons a stale draft instead of restoring it on another local day', async () => {
+    const { database, service, setLocalDay, store } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const draft = await service.beginCheckIn();
+    if (!draft.ok) throw new Error('Stale check-in fixture did not start.');
+    setLocalDay(followingLocalDay);
+
+    await expect(service.loadStartState()).resolves.toEqual({
+      ok: true,
+      value: { kind: 'today', primaryArea: 'neck' },
+    });
+    const persisted = await store.loadCheckIn(draft.value.checkInId);
+    expect(persisted).toMatchObject({ ok: true, value: { status: 'abandoned' } });
     await database.closeAsync();
   });
 
@@ -454,6 +480,113 @@ describe('Kineo product service check-in', () => {
     await expect(service.submitFeedback(routine.value.sessionId, feedback)).resolves.toEqual({
       ok: true,
       value: undefined,
+    });
+    await database.closeAsync();
+  });
+
+  it('derives Progress and Active eligibility from persisted area outcomes', async () => {
+    const { database, service } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+
+    const qualifyingRoutineCount = 2;
+    for (let completedCount = 0; completedCount < qualifyingRoutineCount; completedCount += 1) {
+      const draft = await service.beginCheckIn();
+      if (!draft.ok) throw new Error('Qualifying check-in did not start.');
+      const checkedIn = await service.submitCheckIn(draft.value, {
+        area: 'neck',
+        changeReport: 'better',
+        movementComfort: 'okay',
+      });
+      if (!checkedIn.ok || checkedIn.value.kind !== 'plan') {
+        throw new Error('Qualifying plan was not created.');
+      }
+      let routine = await service.startRoutine(checkedIn.value.plan.decisionId);
+      const maximumExpectedStepCount = 20;
+      let advances = 0;
+      while (routine.ok && routine.value.status === 'inProgress') {
+        routine = await service.advanceRoutine(routine.value.sessionId);
+        advances += 1;
+        if (advances > maximumExpectedStepCount) {
+          throw new Error('Qualifying routine did not complete.');
+        }
+      }
+      if (!routine.ok) throw new Error('Qualifying routine failed.');
+      await service.submitFeedback(routine.value.sessionId, { neck: 'same' });
+    }
+
+    const progress = await service.loadProgress();
+    expect(progress).toMatchObject({ ok: true, value: { participationDayCount: 1 } });
+    const neckProgress = progress.ok
+      ? progress.value.areas.find(({ area }) => area === 'neck')
+      : undefined;
+    expect(neckProgress).toEqual({
+      area: 'neck',
+      checkInCount: qualifyingRoutineCount,
+      completedRoutineCount: qualifyingRoutineCount,
+      qualifyingOutcomeCount: qualifyingRoutineCount,
+      activeUnlocked: true,
+      responses: { better: 0, same: qualifyingRoutineCount, worse: 0 },
+    });
+
+    const activeDraft = await service.beginCheckIn();
+    if (!activeDraft.ok) throw new Error('Active check-in did not start.');
+    const activePlan = await service.submitCheckIn(activeDraft.value, {
+      area: 'neck',
+      changeReport: 'better',
+      movementComfort: 'good',
+    });
+    expect(activePlan).toMatchObject({
+      ok: true,
+      value: {
+        kind: 'plan',
+        plan: { recommendedLevel: 'active', selectedLevel: 'active' },
+      },
+    });
+    await database.closeAsync();
+  });
+
+  it('persists Pause Today and profile area changes without losing onboarding', async () => {
+    const { database, service } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const draft = await service.beginCheckIn();
+    if (!draft.ok) throw new Error('Pause Today check-in did not start.');
+    const checkedIn = await service.submitCheckIn(draft.value, {
+      area: 'neck',
+      changeReport: 'worse',
+      movementComfort: 'okay',
+      conditionalSafetyAnswer: 'no',
+    });
+    if (!checkedIn.ok || checkedIn.value.kind !== 'plan') {
+      throw new Error('Pause Today plan was not created.');
+    }
+    expect(checkedIn.value.plan.pauseTodayAvailable).toBe(true);
+    await expect(service.pauseToday(checkedIn.value.plan.checkInId)).resolves.toEqual({
+      ok: true,
+      value: 'neck',
+    });
+    await expect(service.loadStartState()).resolves.toEqual({
+      ok: true,
+      value: { kind: 'today', primaryArea: 'neck' },
+    });
+
+    const profile = await service.saveAreaPreferences('lowerBack', 'upperMidBack');
+    expect(profile).toMatchObject({
+      ok: true,
+      value: {
+        profile: {
+          primaryArea: 'lowerBack',
+          secondaryArea: 'upperMidBack',
+          onboardingCompletedAtMilliseconds: initialTimestamp,
+        },
+      },
     });
     await database.closeAsync();
   });

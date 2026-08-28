@@ -3,6 +3,7 @@ import {
   parseCheckInEntryId,
   parseCheckInId,
   parseSelectionDecisionId,
+  terminalRoutineStatuses,
   type DurationVariant,
   type AreaResponse,
   type ConditionalSafetyAnswer,
@@ -39,6 +40,8 @@ import {
 } from '../core/persistence/persistence-domain';
 import {
   createActiveHistoryState,
+  isActiveUnlocked,
+  reduceActiveHistory,
   type ActiveHistoryState,
 } from '../core/selection/active-history';
 import {
@@ -54,12 +57,18 @@ import type {
   AttentionResolution,
   CheckInResult,
   PlanPresentation,
+  ProfilePresentation,
+  ProgressPresentation,
   RoutinePresentation,
   ProductResult,
   ProductStartState,
 } from '../core/product/product-flow';
 import type { KineoPersistence } from '../infrastructure/persistence/protected-kineo-store';
-import type { RoutineEventReason } from '../core/persistence/routine-persistence-domain';
+import {
+  createPauseTodayEvent,
+  parsePauseTodayEventId,
+  type RoutineEventReason,
+} from '../core/persistence/routine-persistence-domain';
 import { KineoRoutineModule } from './kineo-routine-module';
 import { KineoAttentionModule } from './kineo-attention-module';
 
@@ -110,6 +119,9 @@ export interface KineoProductServing {
     duration: DurationVariant,
     requestedLevel?: RoutineLevel,
   ): Promise<ProductResult<PlanPresentation>>;
+  pauseToday(
+    checkInId: CheckInDraft['checkInId'],
+  ): Promise<ProductResult<BodyArea>>;
   startRoutine(
     decisionId: PlanPresentation['decisionId'],
   ): Promise<ProductResult<RoutinePresentation>>;
@@ -141,6 +153,12 @@ export interface KineoProductServing {
     sessionId: RoutinePresentation['sessionId'],
     responses: Readonly<Partial<Record<BodyArea, AreaResponse>>>,
   ): Promise<ProductResult<void>>;
+  loadProgress(): Promise<ProductResult<ProgressPresentation>>;
+  loadProfile(): Promise<ProductResult<ProfilePresentation>>;
+  saveAreaPreferences(
+    primaryArea: BodyArea,
+    secondaryArea?: BodyArea,
+  ): Promise<ProductResult<ProfilePresentation>>;
   resetHistory(): Promise<ProductResult<void>>;
   deleteAllData(): Promise<ProductResult<void>>;
 }
@@ -209,12 +227,17 @@ export class KineoProductService implements KineoProductServing {
     if (
       draft.value !== undefined &&
       draft.value.primaryArea === primaryArea &&
-      draft.value.secondaryArea === profile.value?.profile.secondaryArea
+      draft.value.secondaryArea === profile.value?.profile.secondaryArea &&
+      draft.value.dayContext.localDay === this.runtime.localDayContext().localDay
     ) {
       const restored = this.checkInDraft(draft.value);
       return restored === undefined
         ? { ok: false, error: { code: 'invalidData' } }
         : { ok: true, value: { kind: 'unfinishedCheckIn', draft: restored } };
+    }
+    if (draft.value !== undefined) {
+      const abandoned = await this.store.abandonCheckInDraft(draft.value.id);
+      if (!abandoned.ok) return persistenceFailure(abandoned.error);
     }
     const decision = await this.store.loadLatestUnconsumedSelectionDecision();
     if (!decision.ok) return persistenceFailure(decision.error);
@@ -354,17 +377,23 @@ export class KineoProductService implements KineoProductServing {
     ) {
       return invalidState;
     }
+    const day = this.runtime.localDayContext();
     const existing = await this.store.loadLatestCheckInDraft('normal');
     if (!existing.ok) return persistenceFailure(existing.error);
     if (
       existing.value !== undefined &&
       existing.value.primaryArea === userProfile.primaryArea &&
-      existing.value.secondaryArea === userProfile.secondaryArea
+      existing.value.secondaryArea === userProfile.secondaryArea &&
+      existing.value.dayContext.localDay === day.localDay
     ) {
       const restored = this.checkInDraft(existing.value);
       return restored === undefined
         ? { ok: false, error: { code: 'invalidData' } }
         : { ok: true, value: restored };
+    }
+    if (existing.value !== undefined) {
+      const abandoned = await this.store.abandonCheckInDraft(existing.value.id);
+      if (!abandoned.ok) return persistenceFailure(abandoned.error);
     }
 
     const checkInId = parseCheckInId(this.runtime.nextIdentifier());
@@ -373,7 +402,6 @@ export class KineoProductService implements KineoProductServing {
       userProfile.secondaryArea === undefined
         ? undefined
         : parseCheckInEntryId(this.runtime.nextIdentifier());
-    const day = this.runtime.localDayContext();
     const localDay = parseLocalDay(day.localDay);
     if (
       !checkInId.ok ||
@@ -517,6 +545,36 @@ export class KineoProductService implements KineoProductServing {
     return this.preparePlan(checkInId, duration, requestedLevel);
   }
 
+  async pauseToday(
+    checkInId: CheckInDraft['checkInId'],
+  ): Promise<ProductResult<BodyArea>> {
+    const checkIn = await this.store.loadCheckIn(checkInId);
+    if (!checkIn.ok) return persistenceFailure(checkIn.error);
+    if (checkIn.value?.status !== 'completed') return invalidState;
+    const existing = await this.store.loadPauseToday(checkIn.value.dayContext.localDay);
+    if (!existing.ok) return persistenceFailure(existing.error);
+    if (existing.value?.checkInId === checkInId) {
+      return { ok: true, value: checkIn.value.primaryArea };
+    }
+    if (existing.value !== undefined) return invalidState;
+    const id = parsePauseTodayEventId(this.runtime.nextIdentifier());
+    if (!id.ok) return { ok: false, error: { code: 'invalidData' } };
+    const event = createPauseTodayEvent({
+      id: id.value,
+      checkInId,
+      chosenAtMilliseconds: Math.max(
+        this.clock.nowMilliseconds(),
+        checkIn.value.completedAtMilliseconds ?? checkIn.value.startedAtMilliseconds,
+      ),
+      dayContext: checkIn.value.dayContext,
+    });
+    if (!event.ok) return { ok: false, error: { code: 'invalidData' } };
+    const saved = await this.store.recordPauseToday(event.value);
+    return saved.ok
+      ? { ok: true, value: checkIn.value.primaryArea }
+      : persistenceFailure(saved.error);
+  }
+
   startRoutine(
     decisionId: PlanPresentation['decisionId'],
   ): Promise<ProductResult<RoutinePresentation>> {
@@ -573,6 +631,90 @@ export class KineoProductService implements KineoProductServing {
     responses: Readonly<Partial<Record<BodyArea, AreaResponse>>>,
   ): Promise<ProductResult<void>> {
     return this.routineModule.submitFeedback(sessionId, responses);
+  }
+
+  async loadProgress(): Promise<ProductResult<ProgressPresentation>> {
+    const history = await this.store.loadAreaHistory();
+    if (!history.ok) return persistenceFailure(history.error);
+    const participatingStatuses = new Set(['completed', 'stopped'] as const);
+    const participationDays = new Set(
+      history.value.flatMap((record) =>
+        record.routine !== undefined && participatingStatuses.has(
+          record.routine.status as 'completed' | 'stopped',
+        )
+          ? [record.localDay]
+          : [],
+      ),
+    );
+    const areas = [];
+    for (const area of bodyAreas) {
+      const areaRecords = history.value.filter((record) => record.area === area);
+      let activeHistory = createActiveHistoryState({ area, qualifyingOutcomeCount: 0 });
+      if (!activeHistory.ok) return { ok: false, error: { code: 'invalidData' } };
+      const responses = { better: 0, same: 0, worse: 0 };
+      for (const record of areaRecords) {
+        const routine = record.routine;
+        if (routine?.response !== undefined) responses[routine.response] += 1;
+        if (
+          routine === undefined ||
+          !routine.wasIncluded ||
+          !terminalRoutineStatuses.includes(
+            routine.status as (typeof terminalRoutineStatuses)[number],
+          )
+        ) continue;
+        const reduced = reduceActiveHistory(activeHistory.value, {
+          area,
+          routineStatus: routine.status,
+          deliveredLevel: routine.deliveredLevel,
+          response: routine.response,
+          wasIncludedInDeliveredRoutine: true,
+        });
+        if (!reduced.ok) return { ok: false, error: { code: 'invalidData' } };
+        activeHistory = { ok: true, value: reduced.value };
+      }
+      areas.push({
+        area,
+        checkInCount: areaRecords.length,
+        completedRoutineCount: areaRecords.filter(
+          ({ routine }) => routine?.status === 'completed' && routine.wasIncluded,
+        ).length,
+        qualifyingOutcomeCount: activeHistory.value.qualifyingOutcomeCount,
+        activeUnlocked: isActiveUnlocked(activeHistory.value),
+        responses,
+      });
+    }
+    return {
+      ok: true,
+      value: { participationDayCount: participationDays.size, areas },
+    };
+  }
+
+  async loadProfile(): Promise<ProductResult<ProfilePresentation>> {
+    const state = await this.store.loadProfileState();
+    if (!state.ok) return persistenceFailure(state.error);
+    return state.value === undefined
+      ? invalidState
+      : {
+          ok: true,
+          value: {
+            profile: state.value.profile,
+            reminderSettings: state.value.reminderSettings,
+          },
+        };
+  }
+
+  async saveAreaPreferences(
+    primaryArea: BodyArea,
+    secondaryArea?: BodyArea,
+  ): Promise<ProductResult<ProfilePresentation>> {
+    if (primaryArea === secondaryArea) return invalidState;
+    const updated = await this.updateExistingProfile((existing, timestamp) => ({
+      ...existing,
+      primaryArea,
+      secondaryArea,
+      updatedAtMilliseconds: timestamp,
+    }));
+    return updated.ok ? this.loadProfile() : updated;
   }
 
   async resetHistory(): Promise<ProductResult<void>> {
@@ -640,14 +782,16 @@ export class KineoProductService implements KineoProductServing {
         error: { code: 'attentionRequired', areas: attention.value.map(({ area }) => area) },
       };
     }
-    const [checkInResult, profileResult, existingResult] = await Promise.all([
+    const [checkInResult, profileResult, existingResult, areaHistoryResult] = await Promise.all([
       this.store.loadCheckIn(checkInId),
       this.store.loadProfileState(),
       this.store.loadLatestSelectionDecision(checkInId),
+      this.store.loadAreaHistory(),
     ]);
     if (!checkInResult.ok) return persistenceFailure(checkInResult.error);
     if (!profileResult.ok) return persistenceFailure(profileResult.error);
     if (!existingResult.ok) return persistenceFailure(existingResult.error);
+    if (!areaHistoryResult.ok) return persistenceFailure(areaHistoryResult.error);
     const checkIn = checkInResult.value;
     const profile = profileResult.value?.profile;
     const primaryEntry = checkIn?.entries.find(({ area }) => area === checkIn.primaryArea);
@@ -674,7 +818,27 @@ export class KineoProductService implements KineoProductServing {
     ]) {
       const state = createActiveHistoryState({ area, qualifyingOutcomeCount: 0 });
       if (!state.ok) return { ok: false, error: { code: 'invalidData' } };
-      historyByArea[area] = state.value;
+      let current = state.value;
+      for (const record of areaHistoryResult.value) {
+        if (
+          record.area !== area ||
+          record.routine === undefined ||
+          !record.routine.wasIncluded ||
+          !terminalRoutineStatuses.includes(
+            record.routine.status as (typeof terminalRoutineStatuses)[number],
+          )
+        ) continue;
+        const reduced = reduceActiveHistory(current, {
+          area,
+          routineStatus: record.routine.status,
+          deliveredLevel: record.routine.deliveredLevel,
+          response: record.routine.response,
+          wasIncludedInDeliveredRoutine: true,
+        });
+        if (!reduced.ok) return { ok: false, error: { code: 'invalidData' } };
+        current = reduced.value;
+      }
+      historyByArea[area] = current;
     }
     const secondaryEntry = checkIn.secondaryArea === undefined
       ? undefined

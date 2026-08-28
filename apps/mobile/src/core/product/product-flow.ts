@@ -18,7 +18,9 @@ import type {
 import type { PersistenceError } from '../persistence/persistence-contract';
 import type {
   LocalDayContext,
+  ReminderSettings,
   SafetyEventId,
+  UserProfile,
 } from '../persistence/persistence-domain';
 
 export type CheckInDraft = Readonly<{
@@ -93,6 +95,25 @@ export type AttentionCorrectionDraft = Readonly<{
   checkIn: CheckInDraft;
   safetyEventId: SafetyEventId;
   expectedAttentionUpdatedAtMilliseconds: number;
+}>;
+
+export type AreaProgressPresentation = Readonly<{
+  area: BodyArea;
+  checkInCount: number;
+  completedRoutineCount: number;
+  qualifyingOutcomeCount: number;
+  activeUnlocked: boolean;
+  responses: Readonly<Record<'better' | 'same' | 'worse', number>>;
+}>;
+
+export type ProgressPresentation = Readonly<{
+  participationDayCount: number;
+  areas: readonly AreaProgressPresentation[];
+}>;
+
+export type ProfilePresentation = Readonly<{
+  profile: UserProfile;
+  reminderSettings?: ReminderSettings;
 }>;
 
 export type OnboardingProgress =

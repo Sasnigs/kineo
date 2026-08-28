@@ -1,7 +1,10 @@
 import type { RoutineSessionId } from '../../core/content/routine-session-snapshot';
 import type { CheckInId } from '../../core/domain/selection-domain';
 import type { SelectionDecision } from '../../core/persistence/decision-persistence-domain';
-import type { KineoStore } from '../../core/persistence/kineo-store';
+import type {
+  AreaHistoryRecord,
+  KineoStore,
+} from '../../core/persistence/kineo-store';
 import type { PersistenceResult } from '../../core/persistence/persistence-contract';
 import type {
   AttentionState,
@@ -67,6 +70,10 @@ export class ProtectedKineoStore implements KineoPersistence {
     return this.write(() => this.base.saveCheckInDraft(checkIn));
   }
 
+  abandonCheckInDraft(id: CheckInId): Promise<PersistenceResult<void>> {
+    return this.write(() => this.base.abandonCheckInDraft(id));
+  }
+
   completeCheckIn(checkIn: CheckIn, safetyMutations: readonly SafetyMutation[]): Promise<PersistenceResult<void>> {
     return this.write(() => this.base.completeCheckIn(checkIn, safetyMutations));
   }
@@ -121,6 +128,10 @@ export class ProtectedKineoStore implements KineoPersistence {
 
   hasFeedbackForRoutine(id: RoutineSessionId): Promise<PersistenceResult<boolean>> {
     return this.read(() => this.base.hasFeedbackForRoutine(id));
+  }
+
+  loadAreaHistory(): Promise<PersistenceResult<readonly AreaHistoryRecord[]>> {
+    return this.read(() => this.base.loadAreaHistory());
   }
 
   loadAttentionStates(): Promise<PersistenceResult<readonly AttentionState[]>> {

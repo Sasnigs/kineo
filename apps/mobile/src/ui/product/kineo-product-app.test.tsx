@@ -117,6 +117,10 @@ class OnboardingService implements KineoProductServing {
     return { ok: false as const, error: { code: 'invalidState' as const } };
   }
 
+  async pauseToday() {
+    return { ok: false as const, error: { code: 'invalidState' as const } };
+  }
+
   async startRoutine() {
     return {
       ok: true as const,
@@ -198,6 +202,39 @@ class OnboardingService implements KineoProductServing {
     return { ok: true as const, value: undefined };
   }
 
+  async loadProgress() {
+    return {
+      ok: true as const,
+      value: {
+        participationDayCount: 0,
+        areas: [] as const,
+      },
+    };
+  }
+
+  async loadProfile() {
+    return {
+      ok: true as const,
+      value: {
+        profile: {
+          onboardingCompletedAtMilliseconds: 1_750_000_000_000,
+          adultAcknowledged: true,
+          safetyBoundaryVersion: 'prototype-safety-v1',
+          safetyAcknowledgedAtMilliseconds: 1_750_000_000_000,
+          primaryArea: 'neck' as const,
+          weeklyGoalDays: 3,
+          telemetryChoice: 'notOffered' as const,
+          createdAtMilliseconds: 1_750_000_000_000,
+          updatedAtMilliseconds: 1_750_000_000_000,
+        },
+      },
+    };
+  }
+
+  async saveAreaPreferences() {
+    return this.loadProfile();
+  }
+
   async resetHistory() {
     return { ok: true as const, value: undefined };
   }
@@ -274,5 +311,9 @@ describe('Kineo product app', () => {
     await view.findByText('How did neck feel afterward?');
     await fireEvent.press(view.getByRole('button', { name: 'About the same' }));
     await view.findByText('How are you moving?');
+    await fireEvent.press(view.getByRole('tab', { name: 'Progress' }));
+    await view.findByText('Progress without pressure');
+    await fireEvent.press(view.getByRole('tab', { name: 'Profile' }));
+    await waitFor(() => expect(view.getByRole('header', { name: 'Profile' })).toBeTruthy());
   });
 });

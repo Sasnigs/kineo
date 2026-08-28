@@ -1,4 +1,3 @@
-import type { CheckInId } from '../domain/selection-domain';
 import type {
   AttentionState,
   CheckIn,
@@ -18,6 +17,29 @@ import type {
   RoutineSession,
 } from './routine-persistence-domain';
 import type { RoutineSessionId } from '../content/routine-session-snapshot';
+import type {
+  AreaResponse,
+  BodyArea,
+  ChangeReport,
+  CheckInId,
+  MovementComfort,
+  RoutineLevel,
+  RoutineStatus,
+} from '../domain/selection-domain';
+
+export type AreaHistoryRecord = Readonly<{
+  area: BodyArea;
+  localDay: LocalDay;
+  changeReport: ChangeReport;
+  movementComfort: MovementComfort;
+  routine?: Readonly<{
+    sessionId: RoutineSessionId;
+    status: RoutineStatus;
+    deliveredLevel: RoutineLevel;
+    wasIncluded: boolean;
+    response?: AreaResponse;
+  }>;
+}>;
 
 export interface KineoStore {
   loadProfileState(): Promise<PersistenceResult<ProfileState | undefined>>;
@@ -27,6 +49,7 @@ export interface KineoStore {
     kind: CheckIn['kind'],
   ): Promise<PersistenceResult<CheckIn | undefined>>;
   saveCheckInDraft(checkIn: CheckIn): Promise<PersistenceResult<void>>;
+  abandonCheckInDraft(id: CheckInId): Promise<PersistenceResult<void>>;
   completeCheckIn(
     checkIn: CheckIn,
     safetyMutations: readonly SafetyMutation[],
@@ -55,6 +78,7 @@ export interface KineoStore {
   hasFeedbackForRoutine(
     id: RoutineSessionId,
   ): Promise<PersistenceResult<boolean>>;
+  loadAreaHistory(): Promise<PersistenceResult<readonly AreaHistoryRecord[]>>;
   loadAttentionStates(): Promise<
     PersistenceResult<readonly AttentionState[]>
   >;

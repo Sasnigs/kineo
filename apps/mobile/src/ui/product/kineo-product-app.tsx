@@ -25,6 +25,8 @@ import type {
   AttentionResolution,
   CheckInDraft,
   PlanPresentation,
+  ProfilePresentation,
+  ProgressPresentation,
   ProductFlowError,
   ProductStartState,
   RoutinePresentation,
@@ -57,6 +59,9 @@ type LocalScreen =
   | Readonly<{ kind: 'plan'; plan: PlanPresentation }>
   | Readonly<{ kind: 'routine'; routine: RoutinePresentation }>
   | Readonly<{ kind: 'routineOptions'; routine: RoutinePresentation }>
+  | Readonly<{ kind: 'progress'; progress: ProgressPresentation }>
+  | Readonly<{ kind: 'profile'; profile: ProfilePresentation }>
+  | Readonly<{ kind: 'profileAreas'; profile: ProfilePresentation }>
   | Readonly<{
       kind: 'feedback';
       routine: RoutinePresentation;
@@ -68,6 +73,8 @@ type KineoProductAppProps = Readonly<{
   service: KineoProductServing;
   onDeleted: () => void;
 }>;
+
+type MainTab = 'today' | 'progress' | 'profile';
 
 const areaLabels: Readonly<Record<BodyArea, string>> = Object.freeze({
   neck: 'Neck',
@@ -95,6 +102,7 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
   const [screen, setScreen] = useState<LocalScreen>({ kind: 'loading' });
   const [selectedPrimaryArea, setSelectedPrimaryArea] = useState<BodyArea>();
   const [selectedSecondaryArea, setSelectedSecondaryArea] = useState<BodyArea>();
+  const [isSecondaryCleared, setIsSecondaryCleared] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const load = useCallback(async () => {
@@ -190,6 +198,25 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
           },
         });
   }, [service, submit]);
+
+  const openTab = useCallback(async (tab: MainTab) => {
+    if (tab === 'today') {
+      await load();
+      return;
+    }
+    const result = tab === 'progress'
+      ? await service.loadProgress()
+      : await service.loadProfile();
+    if (!result.ok) {
+      setScreen({ kind: 'error', error: result.error });
+      return;
+    }
+    if (tab === 'progress') {
+      setScreen({ kind: 'progress', progress: result.value as ProgressPresentation });
+    } else {
+      setScreen({ kind: 'profile', profile: result.value as ProfilePresentation });
+    }
+  }, [load, service]);
 
   const activeCheckIn = screen.kind === 'checkIn'
     ? screen
@@ -474,6 +501,20 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
       ? screen.state.plan
       : undefined;
   if (activePlan !== undefined) {
+    const revise = async (
+      duration: PlanPresentation['duration'],
+      requestedLevel?: PlanPresentation['selectedLevel'],
+    ) => {
+      const result = await submit(() =>
+        service.revisePlan(activePlan.checkInId, duration, requestedLevel),
+      );
+      if (result?.ok) setScreen({ kind: 'plan', plan: result.value });
+    };
+    const gentlerLevel = activePlan.recommendedLevel === 'active'
+      ? 'balanced' as const
+      : activePlan.recommendedLevel === 'balanced'
+        ? 'gentle' as const
+        : undefined;
     return (
       <Shell>
         <PageHeader eyebrow="READY WHEN YOU ARE" title="Your plan for today" />
@@ -484,6 +525,28 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
           </Text>
         </View>
         <Text style={styles.supporting}>{planExplanation(activePlan)}</Text>
+        <View style={styles.segmentedControl} accessibilityRole="radiogroup">
+          {(['quick', 'standard'] as const).map((duration) => (
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ checked: activePlan.duration === duration }}
+              key={duration}
+              onPress={() => void revise(duration)}
+              style={[
+                styles.segment,
+                activePlan.duration === duration && styles.segmentSelected,
+              ]}
+            >
+              <Text style={styles.segmentText}>{durationLabel(duration)}</Text>
+            </Pressable>
+          ))}
+        </View>
+        {gentlerLevel === undefined ? null : (
+          <SecondaryButton
+            label={`Choose ${levelLabel(gentlerLevel)} instead`}
+            onPress={() => void revise(activePlan.duration, gentlerLevel)}
+          />
+        )}
         <PrimaryButton
           label="Begin routine"
           disabled={isSubmitting}
@@ -493,6 +556,116 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
           })()}
         />
         <SecondaryButton label="Back to Today" onPress={() => void load()} />
+        {activePlan.pauseTodayAvailable ? (
+          <SecondaryButton
+            label="Pause Today"
+            onPress={() => void (async () => {
+              const result = await submit(() => service.pauseToday(activePlan.checkInId));
+              if (result?.ok) setScreen({
+                kind: 'start',
+                state: { kind: 'today', primaryArea: result.value },
+              });
+            })()}
+          />
+        ) : null}
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'progress') {
+    return (
+      <Shell>
+        <PageHeader eyebrow="YOUR HISTORY" title="Progress without pressure" />
+        <View style={styles.metricCard}>
+          <Text style={styles.metricValue}>{screen.progress.participationDayCount}</Text>
+          <Text style={styles.metricLabel}>days you chose a routine</Text>
+        </View>
+        {screen.progress.areas.map((area) => (
+          <View key={area.area} style={styles.historyCard}>
+            <Text style={styles.cardTitle}>{areaLabels[area.area]}</Text>
+            <Text style={styles.cardBody}>{area.checkInCount} check-ins · {area.completedRoutineCount} completed routines</Text>
+            <Text style={styles.cardBody}>
+              Responses: {area.responses.better} better · {area.responses.same} same · {area.responses.worse} worse
+            </Text>
+            <Text style={styles.cardBody}>{area.activeUnlocked ? 'Active option available' : 'Active remains locked'}</Text>
+          </View>
+        ))}
+        <NavigationBar active="progress" onSelect={(tab) => void openTab(tab)} />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'profileAreas') {
+    const primary = selectedPrimaryArea ?? screen.profile.profile.primaryArea;
+    const secondary = isSecondaryCleared
+      ? undefined
+      : selectedSecondaryArea ?? screen.profile.profile.secondaryArea;
+    return (
+      <Shell>
+        <PageHeader eyebrow="PROFILE" title="Choose your areas" />
+        <Text style={styles.cardTitle}>Primary area</Text>
+        {bodyAreas.map((area) => (
+          <ChoiceButton key={area} label={areaLabels[area]} onPress={() => {
+            setSelectedPrimaryArea(area);
+            setIsSecondaryCleared(secondary === area);
+            if (secondary === area) setSelectedSecondaryArea(undefined);
+          }} />
+        ))}
+        <Text style={styles.cardTitle}>Optional second area</Text>
+        {bodyAreas.filter((area) => area !== primary).map((area) => (
+          <ChoiceButton key={area} label={areaLabels[area]} onPress={() => {
+            setIsSecondaryCleared(false);
+            setSelectedSecondaryArea(area);
+          }} />
+        ))}
+        <SecondaryButton label="No second area" onPress={() => {
+          setIsSecondaryCleared(true);
+          setSelectedSecondaryArea(undefined);
+        }} />
+        <PrimaryButton
+          label="Save areas"
+          disabled={primary === undefined || isSubmitting}
+          onPress={() => void (async () => {
+            if (primary === undefined) return;
+            const result = await submit(() => service.saveAreaPreferences(primary, secondary));
+            if (result?.ok) setScreen({ kind: 'profile', profile: result.value });
+          })()}
+        />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'profile') {
+    const profile = screen.profile.profile;
+    return (
+      <Shell>
+        <PageHeader eyebrow="SETTINGS" title="Profile" />
+        <View style={styles.historyCard}>
+          <Text style={styles.cardTitle}>Areas</Text>
+          <Text style={styles.cardBody}>
+            {profile.primaryArea === undefined ? 'Not set' : areaLabels[profile.primaryArea]}
+            {profile.secondaryArea === undefined ? '' : ` · ${areaLabels[profile.secondaryArea]}`}
+          </Text>
+          <SecondaryButton label="Change areas" onPress={() => {
+            setSelectedPrimaryArea(profile.primaryArea);
+            setSelectedSecondaryArea(profile.secondaryArea);
+            setIsSecondaryCleared(profile.secondaryArea === undefined);
+            setScreen({ kind: 'profileAreas', profile: screen.profile });
+          }} />
+        </View>
+        <View style={styles.historyCard}>
+          <Text style={styles.cardTitle}>Privacy & data</Text>
+          <Text style={styles.cardBody}>Your Kineo history stays on this device. Reset keeps your profile and any current Attention gate.</Text>
+          <SecondaryButton label="Reset History" onPress={() => void (async () => {
+            const result = await submit(() => service.resetHistory());
+            if (result?.ok) await openTab('profile');
+          })()} />
+          <SecondaryButton danger label="Delete All Data" onPress={() => void (async () => {
+            const result = await submit(() => service.deleteAllData());
+            if (result?.ok) onDeleted();
+          })()} />
+        </View>
+        <NavigationBar active="profile" onSelect={(tab) => void openTab(tab)} />
       </Shell>
     );
   }
@@ -715,6 +888,7 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
           })()}
         />
       </View>
+      <NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />
     </Shell>
   );
 }
@@ -838,6 +1012,35 @@ function ChoiceButton({ label, onPress }: Readonly<{ label: string; onPress: () 
   );
 }
 
+function NavigationBar({
+  active,
+  onSelect,
+}: Readonly<{ active: MainTab; onSelect: (tab: MainTab) => void }>) {
+  const tabs: readonly Readonly<{ id: MainTab; label: string }>[] = [
+    { id: 'today', label: 'Today' },
+    { id: 'progress', label: 'Progress' },
+    { id: 'profile', label: 'Profile' },
+  ];
+  return (
+    <View accessibilityRole="tablist" style={styles.navigationBar}>
+      {tabs.map((tab) => (
+        <Pressable
+          accessibilityRole="tab"
+          accessibilityState={{ selected: active === tab.id }}
+          key={tab.id}
+          onPress={() => onSelect(tab.id)}
+          style={styles.navigationItem}
+        >
+          <Text style={[
+            styles.navigationText,
+            active === tab.id && styles.navigationTextSelected,
+          ]}>{tab.label}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 const secondsPerMinute = 60;
 const displayIndexOffset = 1;
 
@@ -907,6 +1110,14 @@ const styles = StyleSheet.create({
   planHero: { backgroundColor: colors.accentSoft, borderRadius: radius.card, gap: spacing.compact, padding: spacing.roomy },
   planLevel: { color: colors.accentDark, fontSize: typography.titleSize, fontWeight: typography.displayWeight },
   planMeta: { color: colors.secondaryInk, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight },
+  segmentedControl: { backgroundColor: colors.surface, borderRadius: radius.button, flexDirection: 'row', padding: spacing.compact },
+  segment: { alignItems: 'center', borderRadius: radius.button, flex: 1, minHeight: layout.controlMinimumHeight, justifyContent: 'center', paddingHorizontal: spacing.standard },
+  segmentSelected: { backgroundColor: colors.accentSoft },
+  segmentText: { color: colors.accentDark, fontSize: typography.detailSize, fontWeight: typography.strongWeight },
+  metricCard: { backgroundColor: colors.accentDark, borderRadius: radius.card, gap: spacing.compact, padding: spacing.roomy },
+  metricValue: { color: colors.inverseInk, fontSize: typography.titleSize, fontWeight: typography.displayWeight },
+  metricLabel: { color: colors.inverseInk, fontSize: typography.bodySize },
+  historyCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.compact, padding: spacing.roomy },
   routineProgressRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   mediaPlaceholder: { alignItems: 'center', aspectRatio: 1.35, backgroundColor: colors.accentSoft, borderRadius: radius.card, justifyContent: 'center' },
   mediaPlaceholderText: { color: colors.accentDark, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
@@ -916,4 +1127,8 @@ const styles = StyleSheet.create({
   todayCardBody: { color: colors.secondaryInk, fontSize: typography.bodySize, lineHeight: typography.bodyLineHeight },
   testSection: { borderTopColor: colors.border, borderTopWidth: layout.borderWidth, gap: spacing.compact, marginTop: spacing.section, paddingTop: spacing.standard },
   testLabel: { color: colors.secondaryInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  navigationBar: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, flexDirection: 'row', marginTop: 'auto', padding: spacing.compact },
+  navigationItem: { alignItems: 'center', flex: 1, minHeight: layout.controlMinimumHeight, justifyContent: 'center' },
+  navigationText: { color: colors.secondaryInk, fontSize: typography.detailSize, fontWeight: typography.strongWeight },
+  navigationTextSelected: { color: colors.accentDark },
 });

@@ -23,7 +23,10 @@ import {
   parseContentRevision,
   parseSha256Digest,
 } from '../../core/content/catalog-primitives';
-import type { KineoStore } from '../../core/persistence/kineo-store';
+import type {
+  AreaHistoryRecord,
+  KineoStore,
+} from '../../core/persistence/kineo-store';
 import {
   createSelectionDecision,
   decisionReasonKinds,
@@ -69,7 +72,10 @@ import type {
   RoutineEvent,
   RoutineSession,
 } from '../../core/persistence/routine-persistence-domain';
-import type { RoutineSessionId } from '../../core/content/routine-session-snapshot';
+import {
+  parseRoutineSessionId,
+  type RoutineSessionId,
+} from '../../core/content/routine-session-snapshot';
 import { KineoSqliteRoutineRepository } from './kineo-sqlite-routine-repository';
 
 const singletonProfileId = 1;
@@ -196,6 +202,18 @@ type DecisionNoticeRow = Readonly<{
   parameters_json: string;
 }>;
 
+type AreaHistoryRow = Readonly<{
+  area: string;
+  local_day: string;
+  change_report: string;
+  movement_comfort: string;
+  routine_session_id: string | null;
+  routine_status: string | null;
+  delivered_level: string | null;
+  included: number | null;
+  response: string | null;
+}>;
+
 function asBoolean(value: number): boolean | undefined {
   return value === trueInteger
     ? true
@@ -318,6 +336,77 @@ export class KineoSqliteStore implements KineoStore {
 
   hasFeedbackForRoutine(id: RoutineSessionId): Promise<PersistenceResult<boolean>> {
     return this.routineRepository.hasFeedbackForRoutine(id);
+  }
+
+  async loadAreaHistory(): Promise<PersistenceResult<readonly AreaHistoryRecord[]>> {
+    try {
+      const rows = await this.database.getAllAsync<AreaHistoryRow>(
+        `SELECT entry.area, check_in.local_day, entry.change_report,
+                entry.movement_comfort, routine.id AS routine_session_id,
+                routine.status AS routine_status,
+                decision.delivered_level, area_input.included,
+                feedback.response
+         FROM check_in_entries AS entry
+         JOIN check_ins AS check_in ON check_in.id = entry.check_in_id
+         LEFT JOIN routine_sessions AS routine ON routine.check_in_id = check_in.id
+         LEFT JOIN selection_decisions AS decision ON decision.id = routine.decision_id
+         LEFT JOIN decision_area_inputs AS area_input
+           ON area_input.decision_id = decision.id AND area_input.area = entry.area
+         LEFT JOIN feedback_submissions AS submission
+           ON submission.routine_session_id = routine.id
+         LEFT JOIN area_feedback AS feedback
+           ON feedback.feedback_submission_id = submission.id AND feedback.area = entry.area
+         WHERE check_in.purpose = 'normal' AND check_in.status = 'completed'
+         ORDER BY check_in.completed_at_ms, check_in.id, entry.role`,
+      );
+      const result: AreaHistoryRecord[] = [];
+      for (const row of rows) {
+        const area = asBodyArea(row.area);
+        const localDay = parseLocalDay(row.local_day);
+        const changeReport = oneOf(row.change_report, ['better', 'similar', 'worse'] as const);
+        const movementComfort = oneOf(row.movement_comfort, ['limited', 'okay', 'good'] as const);
+        if (area === undefined || !localDay.ok || changeReport === undefined || movementComfort === undefined) {
+          throw new StoreAbort({ code: 'corruptedStore' });
+        }
+        let routine: AreaHistoryRecord['routine'];
+        if (row.routine_session_id !== null) {
+          const sessionId = parseRoutineSessionId(row.routine_session_id);
+          const status = row.routine_status === null
+            ? undefined
+            : oneOf(row.routine_status, [
+                'prepared', 'inProgress', 'paused', 'completed',
+                'stopped', 'safetyStopped', 'abandoned',
+              ] as const);
+          const deliveredLevel = row.delivered_level === null
+            ? undefined
+            : oneOf(row.delivered_level, routineLevels);
+          const included = row.included === null ? undefined : asBoolean(row.included);
+          const response = row.response === null ? undefined : oneOf(row.response, areaResponses);
+          if (!sessionId.ok || status === undefined || deliveredLevel === undefined || included === undefined) {
+            throw new StoreAbort({ code: 'corruptedStore' });
+          }
+          routine = {
+            sessionId: sessionId.value,
+            status,
+            deliveredLevel,
+            wasIncluded: included,
+            response,
+          };
+        }
+        result.push({
+          area,
+          localDay: localDay.value,
+          changeReport,
+          movementComfort,
+          routine,
+        });
+      }
+      return { ok: true, value: Object.freeze(result) };
+    } catch (error) {
+      return error instanceof StoreAbort
+        ? { ok: false, error: error.persistenceError }
+        : { ok: false, error: { code: 'readFailed' } };
+    }
   }
 
   async loadProfileState(): Promise<
@@ -612,6 +701,29 @@ export class KineoSqliteStore implements KineoStore {
         }
         await this.upsertCheckIn(transaction, validated.value);
         await this.replaceCheckInEntries(transaction, validated.value);
+      });
+      return { ok: true, value: undefined };
+    } catch (error) {
+      return sqliteWriteFailure(error);
+    }
+  }
+
+  async abandonCheckInDraft(id: CheckInId): Promise<PersistenceResult<void>> {
+    try {
+      await this.database.withExclusiveTransactionAsync(async (transaction) => {
+        const existing = await transaction.getFirstAsync<{ status: string }>(
+          'SELECT status FROM check_ins WHERE id = ?',
+          [id],
+        );
+        if (existing === null) throw new StoreAbort({ code: 'recordNotFound' });
+        if (existing.status === 'abandoned') return;
+        if (existing.status !== 'draft') {
+          throw new StoreAbort({ code: 'conflictingWrite' });
+        }
+        await transaction.runAsync(
+          "UPDATE check_ins SET status = 'abandoned' WHERE id = ? AND status = 'draft'",
+          [id],
+        );
       });
       return { ok: true, value: undefined };
     } catch (error) {
