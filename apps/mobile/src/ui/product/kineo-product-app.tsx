@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   AppState,
   Pressable,
@@ -71,6 +72,11 @@ type LocalScreen =
   | Readonly<{ kind: 'safetyGuidance'; routine: RoutinePresentation }>
   | Readonly<{ kind: 'completion'; routine: RoutinePresentation }>
   | Readonly<{ kind: 'progress'; progress: ProgressPresentation }>
+  | Readonly<{
+      kind: 'progressArea';
+      progress: ProgressPresentation;
+      area: BodyArea;
+    }>
   | Readonly<{ kind: 'profile'; profile: ProfilePresentation }>
   | Readonly<{ kind: 'profileAreas'; profile: ProfilePresentation }>
   | Readonly<{ kind: 'confirmReset'; profile: ProfilePresentation }>
@@ -790,27 +796,101 @@ export function KineoProductApp({
   }
 
   if (screen.kind === 'progress') {
+    const hasHistory = screen.progress.areas.some(({ checkInCount }) => checkInCount > 0);
     return (
       <Shell>
         <PageHeader eyebrow="YOUR HISTORY" title="Progress without pressure" />
         <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>{screen.progress.participationDayCount}</Text>
-          <Text style={styles.metricLabel}>days you participated</Text>
+          <Text style={styles.metricValue}>
+            {screen.progress.weeklyParticipationDayCount} of {screen.progress.weeklyGoalDays}
+          </Text>
+          <Text style={styles.metricLabel}>consistency days this week</Text>
         </View>
-        {screen.progress.areas.map((area) => (
-          <View key={area.area} style={styles.historyCard}>
-            <Text style={styles.cardTitle}>{areaLabels[area.area]}</Text>
-            <Text style={styles.cardBody}>{area.checkInCount} check-ins · {area.completedRoutineCount} completed routines</Text>
-            <Text style={styles.cardBody}>{area.participationCount} routine or intentional pause choices</Text>
+        <Text style={styles.cardBody}>
+          {screen.progress.participationDayCount} total participation days. Completed routines, intentional stops, and eligible Pause Today choices count equally.
+        </Text>
+        {!hasHistory ? (
+          <View style={styles.historyCard}>
+            <Text style={styles.cardTitle}>Your patterns will appear here</Text>
+            <Text style={styles.cardBody}>Complete a check-in to begin your private history.</Text>
+          </View>
+        ) : (
+          <>
+            <Text style={styles.cardTitle}>Areas</Text>
+            {screen.progress.areas.filter(({ checkInCount }) => checkInCount > 0).map((area) => (
+              <ChoiceButton
+                key={area.area}
+                label={`${areaLabels[area.area]} · ${area.checkInCount} check-ins`}
+                onPress={() => setScreen({
+                  kind: 'progressArea',
+                  progress: screen.progress,
+                  area: area.area,
+                })}
+              />
+            ))}
+            <Text style={styles.cardTitle}>Recent sessions</Text>
+            {screen.progress.recentSessions.map((session) => (
+              <View key={session.sessionId} style={styles.historyCard}>
+                <Text style={styles.cardTitle}>{session.localDay} · {levelLabel(session.deliveredLevel)}</Text>
+                <Text style={styles.cardBody}>
+                  {session.areas.map((area) => areaLabels[area]).join(' + ')} · {routineStatusLabel(session.status)}
+                </Text>
+              </View>
+            ))}
+          </>
+        )}
+        <NavigationBar active="progress" onSelect={(tab) => void openTab(tab)} />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'progressArea') {
+    const area = screen.progress.areas.find(({ area }) => area === screen.area);
+    if (area === undefined) {
+      return (
+        <Shell>
+          <PageHeader eyebrow="PROGRESS" title="Area history unavailable" />
+          <PrimaryButton
+            label="Back to Progress"
+            onPress={() => setScreen({ kind: 'progress', progress: screen.progress })}
+          />
+        </Shell>
+      );
+    }
+    return (
+      <Shell>
+        <PageHeader eyebrow="AREA DETAIL" title={areaLabels[area.area]} />
+        <View style={styles.historyCard}>
+          <Text style={styles.cardTitle}>{area.participationCount} participation choices</Text>
+          <Text style={styles.cardBody}>{area.completedRoutineCount} completed routines</Text>
+          <Text style={styles.cardBody}>
+            Responses: {area.responses.better} better · {area.responses.same} same · {area.responses.worse} worse
+          </Text>
+          <Text style={styles.cardBody}>
+            {area.activeUnlocked ? 'Active option available' : 'Active remains locked'}
+          </Text>
+        </View>
+        <Text style={styles.cardTitle}>Check-in and level history</Text>
+        {[...area.history].reverse().map((entry, index) => (
+          <View key={`${entry.localDay}-${index}`} style={styles.historyCard}>
+            <Text style={styles.cardTitle}>{entry.localDay}</Text>
             <Text style={styles.cardBody}>
-              Responses: {area.responses.better} better · {area.responses.same} same · {area.responses.worse} worse
+              {changeReportLabel(entry.changeReport)} · {movementComfortLabel(entry.movementComfort)}
             </Text>
-            <Text style={styles.cardBody}>
-              Latest response: {area.latestResponse ?? 'None recorded'}
-            </Text>
-            <Text style={styles.cardBody}>{area.activeUnlocked ? 'Active option available' : 'Active remains locked'}</Text>
+            {entry.routine === undefined ? null : (
+              <Text style={styles.cardBody}>
+                {levelLabel(entry.routine.deliveredLevel)} · {routineStatusLabel(entry.routine.status)} · {entry.routine.response ?? 'No response'}
+              </Text>
+            )}
           </View>
         ))}
+        <Text style={styles.cardBody}>
+          These events occurred in your history. Kineo does not claim that one caused another.
+        </Text>
+        <PrimaryButton
+          label="Back to Progress"
+          onPress={() => setScreen({ kind: 'progress', progress: screen.progress })}
+        />
         <NavigationBar active="progress" onSelect={(tab) => void openTab(tab)} />
       </Shell>
     );
@@ -941,13 +1021,22 @@ export function KineoProductApp({
           }} />
         </View>
         <View style={styles.historyCard}>
+          <Text style={styles.cardTitle}>Routine preferences</Text>
+          <Text style={styles.cardBody}>
+            Your daily check-in selects the level. Choose Quick or Standard on each plan; available time never changes the selected level.
+          </Text>
+          <Text style={styles.cardBody}>Weekly consistency goal: {profile.weeklyGoalDays} days</Text>
+        </View>
+        <View style={styles.historyCard}>
           <Text style={styles.cardTitle}>Reminders</Text>
           <Text style={styles.cardBody}>
             {reminder?.enabled
               ? 'One generic daily reminder is scheduled.'
               : screen.profile.reminderAuthorization === 'denied'
                 ? 'Notifications are off in iPhone Settings. Kineo still works without them.'
-                : 'Optional. Kineo asks for notification access only after you choose a time.'}
+                : screen.profile.reminderAuthorization === 'unavailable'
+                  ? 'Reminder settings are temporarily unavailable. Kineo still works without them.'
+                  : 'Optional. Kineo asks for notification access only after you choose a time.'}
           </Text>
           {reminder?.enabled ? (
             <SecondaryButton
@@ -972,6 +1061,12 @@ export function KineoProductApp({
           )}
         </View>
         <View style={styles.historyCard}>
+          <Text style={styles.cardTitle}>Health app context</Text>
+          <Text style={styles.cardBody}>
+            Disabled in this prototype. Health data does not select or change Kineo routines.
+          </Text>
+        </View>
+        <View style={styles.historyCard}>
           <Text style={styles.cardTitle}>Privacy & data</Text>
           <Text style={styles.cardBody}>Your Kineo history stays on this device. Reset keeps your profile and any current Attention gate.</Text>
           <SecondaryButton
@@ -992,6 +1087,12 @@ export function KineoProductApp({
           <Text style={styles.cardBody}>
             This build uses prototype exercise media and is not ready for public release.
           </Text>
+          <Text style={styles.cardBody}>For app support during internal testing, contact the Kineo product team.</Text>
+        </View>
+        <View style={styles.historyCard}>
+          <Text style={styles.cardTitle}>App information</Text>
+          <Text style={styles.cardBody}>Kineo internal prototype · Expo build</Text>
+          <Text style={styles.cardBody}>No account, telemetry, or remote synchronization is enabled.</Text>
         </View>
         <NavigationBar active="profile" onSelect={(tab) => void openTab(tab)} />
       </Shell>
@@ -1234,13 +1335,42 @@ function PageHeader({ eyebrow, title }: Readonly<{ eyebrow: string; title: strin
 }
 
 function RoutineVideo({ accessibilityLabel }: Readonly<{ accessibilityLabel: string }>) {
+  const [reduceMotion, setReduceMotion] = useState(true);
   const player = useVideoPlayer(prototypeMovementVideo, (videoPlayer) => {
     videoPlayer.loop = true;
     videoPlayer.muted = true;
-    videoPlayer.play();
   });
+  useEffect(() => {
+    let isActive = true;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (isActive) setReduceMotion(enabled);
+      })
+      .catch(() => {
+        if (isActive) setReduceMotion(true);
+      });
+    const subscription = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      setReduceMotion,
+    );
+    return () => {
+      isActive = false;
+      subscription.remove();
+    };
+  }, []);
+  useEffect(() => {
+    if (reduceMotion) {
+      player.pause();
+    } else {
+      player.play();
+    }
+  }, [player, reduceMotion]);
   return (
-    <View accessibilityLabel={accessibilityLabel} style={styles.mediaPlaceholder}>
+    <View
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="image"
+      style={styles.mediaPlaceholder}
+    >
       <VideoView
         allowsPictureInPicture={false}
         contentFit="cover"
@@ -1397,6 +1527,30 @@ function levelLabel(level: PlanPresentation['deliveredLevel']): string {
 
 function durationLabel(duration: PlanPresentation['duration']): string {
   return duration === 'quick' ? 'Quick' : 'Standard';
+}
+
+function changeReportLabel(change: ChangeReport): string {
+  return displayValueLabel(change);
+}
+
+function movementComfortLabel(comfort: MovementComfort): string {
+  return displayValueLabel(comfort);
+}
+
+function displayValueLabel(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function routineStatusLabel(status: RoutinePresentation['status']): string {
+  switch (status) {
+    case 'inProgress': return 'In progress';
+    case 'safetyStopped': return 'Ended after safety pause';
+    case 'stopped': return 'Intentionally stopped';
+    case 'completed': return 'Completed';
+    case 'prepared': return 'Ready';
+    case 'paused': return 'Paused';
+    case 'abandoned': return 'Not completed';
+  }
 }
 
 function planExplanation(plan: PlanPresentation): string {

@@ -109,10 +109,29 @@ export type AreaProgressPresentation = Readonly<{
   activeUnlocked: boolean;
   latestResponse?: AreaResponse;
   responses: Readonly<Record<'better' | 'same' | 'worse', number>>;
+  history: readonly Readonly<{
+    localDay: LocalDayContext['localDay'];
+    changeReport: ChangeReport;
+    movementComfort: MovementComfort;
+    routine?: Readonly<{
+      status: RoutineStatus;
+      deliveredLevel: RoutineLevel;
+      response?: AreaResponse;
+    }>;
+  }>[];
 }>;
 
 export type ProgressPresentation = Readonly<{
   participationDayCount: number;
+  weeklyParticipationDayCount: number;
+  weeklyGoalDays: number;
+  recentSessions: readonly Readonly<{
+    sessionId: RoutineSessionId;
+    localDay: LocalDayContext['localDay'];
+    status: RoutineStatus;
+    deliveredLevel: RoutineLevel;
+    areas: readonly BodyArea[];
+  }>[];
   areas: readonly AreaProgressPresentation[];
 }>;
 

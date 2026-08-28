@@ -3,6 +3,7 @@ jest.mock('expo-video', () => ({
     const player = {
       loop: false,
       muted: false,
+      pause: jest.fn(),
       play: jest.fn(),
     };
     setup?.(player);

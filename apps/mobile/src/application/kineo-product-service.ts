@@ -93,6 +93,25 @@ export const prototypeSafetyBoundaryVersion = 'prototype-safety-v1';
 const firstEntryRevision = 1;
 const firstDecisionRevision = 1;
 const noExistingRevision = 0;
+const daysPerWeek = 7;
+const mondayWeekdayIndex = 1;
+const maximumRecentSessionCount = 5;
+const hoursPerDay = 24;
+const minutesPerHour = 60;
+const secondsPerMinute = 60;
+const millisecondsPerSecond = 1_000;
+const millisecondsPerDay =
+  hoursPerDay * minutesPerHour * secondsPerMinute * millisecondsPerSecond;
+
+function startOfWeekMilliseconds(localDay: string): number | undefined {
+  const date = new Date(`${localDay}T00:00:00Z`);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return undefined;
+  const daysSinceMonday =
+    (date.getUTCDay() - mondayWeekdayIndex + daysPerWeek) % daysPerWeek;
+  date.setUTCDate(date.getUTCDate() - daysSinceMonday);
+  return date.getTime();
+}
 
 export interface KineoProductServing {
   loadStartState(): Promise<ProductResult<ProductStartState>>;
@@ -650,6 +669,9 @@ export class KineoProductService implements KineoProductServing {
   }
 
   async loadProgress(): Promise<ProductResult<ProgressPresentation>> {
+    const profileState = await this.store.loadProfileState();
+    if (!profileState.ok) return persistenceFailure(profileState.error);
+    if (profileState.value === undefined) return invalidState;
     const history = await this.store.loadAreaHistory();
     if (!history.ok) return persistenceFailure(history.error);
     const pauseTodayHistory = await this.store.loadPauseTodayHistory();
@@ -667,6 +689,37 @@ export class KineoProductService implements KineoProductServing {
     for (const record of pauseTodayHistory.value) {
       participationDays.add(record.localDay);
     }
+    const currentWeekStart = startOfWeekMilliseconds(
+      this.runtime.localDayContext().localDay,
+    );
+    if (currentWeekStart === undefined) {
+      return { ok: false, error: { code: 'invalidData' } };
+    }
+    const nextWeekStart = currentWeekStart + daysPerWeek * millisecondsPerDay;
+    const weeklyParticipationDayCount = [...participationDays].filter((localDay) => {
+      const timestamp = new Date(`${localDay}T00:00:00Z`).getTime();
+      return timestamp >= currentWeekStart && timestamp < nextWeekStart;
+    }).length;
+    const sessions = new Map<
+      string,
+      ProgressPresentation['recentSessions'][number]
+    >();
+    for (const record of history.value) {
+      if (record.routine === undefined || !record.routine.wasIncluded) continue;
+      const existing = sessions.get(record.routine.sessionId);
+      sessions.set(record.routine.sessionId, {
+        sessionId: record.routine.sessionId,
+        localDay: record.localDay,
+        status: record.routine.status,
+        deliveredLevel: record.routine.deliveredLevel,
+        areas: existing === undefined
+          ? Object.freeze([record.area])
+          : Object.freeze([...existing.areas, record.area]),
+      });
+    }
+    const recentSessions = [...sessions.values()]
+      .reverse()
+      .slice(0, maximumRecentSessionCount);
     const areas = [];
     for (const area of bodyAreas) {
       const areaRecords = history.value.filter((record) => record.area === area);
@@ -713,11 +766,29 @@ export class KineoProductService implements KineoProductServing {
         activeUnlocked: isActiveUnlocked(activeHistory.value),
         latestResponse: activeHistory.value.mostRecentRecordedResponse,
         responses,
+        history: areaRecords.map((record) => ({
+          localDay: record.localDay,
+          changeReport: record.changeReport,
+          movementComfort: record.movementComfort,
+          routine: record.routine?.wasIncluded !== true
+            ? undefined
+            : {
+                status: record.routine.status,
+                deliveredLevel: record.routine.deliveredLevel,
+                response: record.routine.response,
+              },
+        })),
       });
     }
     return {
       ok: true,
-      value: { participationDayCount: participationDays.size, areas },
+      value: {
+        participationDayCount: participationDays.size,
+        weeklyParticipationDayCount,
+        weeklyGoalDays: profileState.value.profile.weeklyGoalDays,
+        recentSessions,
+        areas,
+      },
     };
   }
 

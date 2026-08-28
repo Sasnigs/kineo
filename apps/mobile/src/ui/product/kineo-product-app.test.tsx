@@ -10,6 +10,7 @@ import {
   type BodyArea,
 } from '@/core/domain/selection-domain';
 import type {
+  ProgressPresentation,
   ProductResult,
   ProductStartState,
 } from '@/core/product/product-flow';
@@ -27,6 +28,13 @@ class OnboardingService implements KineoProductServing {
     progress: { step: 'welcome' },
   };
   deleteResult: ProductResult<void> = { ok: true, value: undefined };
+  progress: ProgressPresentation = {
+    participationDayCount: 0,
+    weeklyParticipationDayCount: 0,
+    weeklyGoalDays: 3,
+    recentSessions: [],
+    areas: [],
+  };
 
   async loadStartState() {
     return { ok: true as const, value: this.state };
@@ -222,13 +230,7 @@ class OnboardingService implements KineoProductServing {
   }
 
   async loadProgress() {
-    return {
-      ok: true as const,
-      value: {
-        participationDayCount: 0,
-        areas: [] as const,
-      },
-    };
+    return { ok: true as const, value: this.progress };
   }
 
   async loadProfile() {
@@ -348,8 +350,61 @@ describe('Kineo product app', () => {
     await view.findByText('How are you moving?');
     await fireEvent.press(view.getByRole('tab', { name: 'Progress' }));
     await view.findByText('Progress without pressure');
+    expect(view.getByText('Your patterns will appear here')).toBeTruthy();
     await fireEvent.press(view.getByRole('tab', { name: 'Profile' }));
     await waitFor(() => expect(view.getByRole('header', { name: 'Profile' })).toBeTruthy());
+    expect(view.getByText('Health app context')).toBeTruthy();
+    expect(view.getByText('App information')).toBeTruthy();
+  });
+
+  it('shows private area history without implying causation', async () => {
+    const service = new OnboardingService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    service.progress = {
+      participationDayCount: 1,
+      weeklyParticipationDayCount: 1,
+      weeklyGoalDays: 3,
+      recentSessions: [{
+        sessionId: '00000000-0000-0000-0000-000000000204' as never,
+        localDay: '2025-06-15' as never,
+        status: 'completed',
+        deliveredLevel: 'balanced',
+        areas: ['neck'],
+      }],
+      areas: [{
+        area: 'neck',
+        checkInCount: 1,
+        completedRoutineCount: 1,
+        participationCount: 1,
+        qualifyingOutcomeCount: 1,
+        activeUnlocked: false,
+        latestResponse: 'same',
+        responses: { better: 0, same: 1, worse: 0 },
+        history: [{
+          localDay: '2025-06-15' as never,
+          changeReport: 'similar',
+          movementComfort: 'okay',
+          routine: {
+            status: 'completed',
+            deliveredLevel: 'balanced',
+            response: 'same',
+          },
+        }],
+      }],
+    };
+    const view = await render(
+      <KineoProductApp service={service} onStoreRestartRequired={() => undefined} />,
+    );
+
+    await view.findByText('How are you moving?');
+    await fireEvent.press(view.getByRole('tab', { name: 'Progress' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Neck · 1 check-ins' }));
+    expect(view.getByText('Similar · Okay')).toBeTruthy();
+    expect(view.getByText(/does not claim that one caused another/)).toBeTruthy();
   });
 
   it('freezes routine menus and keeps safety guidance behind an explicit choice', async () => {

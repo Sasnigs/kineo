@@ -856,11 +856,26 @@ describe('Kineo product service check-in', () => {
     }
 
     const progress = await service.loadProgress();
-    expect(progress).toMatchObject({ ok: true, value: { participationDayCount: 1 } });
+    expect(progress).toMatchObject({
+      ok: true,
+      value: {
+        participationDayCount: 1,
+        weeklyParticipationDayCount: 1,
+        weeklyGoalDays: 3,
+      },
+    });
+    expect(progress.ok ? progress.value.recentSessions : []).toHaveLength(
+      qualifyingRoutineCount,
+    );
+    expect(progress.ok ? progress.value.recentSessions[0] : undefined).toMatchObject({
+      status: 'completed',
+      deliveredLevel: 'balanced',
+      areas: ['neck'],
+    });
     const neckProgress = progress.ok
       ? progress.value.areas.find(({ area }) => area === 'neck')
       : undefined;
-    expect(neckProgress).toEqual({
+    expect(neckProgress).toMatchObject({
       area: 'neck',
       checkInCount: qualifyingRoutineCount,
       completedRoutineCount: qualifyingRoutineCount,

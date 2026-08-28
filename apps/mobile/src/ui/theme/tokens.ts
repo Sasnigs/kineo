@@ -1,15 +1,20 @@
+import { DynamicColorIOS } from 'react-native';
+
+const adaptiveColor = (light: string, dark: string) =>
+  DynamicColorIOS({ light, dark });
+
 export const colors = {
-  canvas: '#F4F1E8',
-  surface: '#FFFFFF',
-  ink: '#18322B',
-  secondaryInk: '#5B6964',
-  accent: '#B7D55A',
-  accentDark: '#315F4F',
-  accentSoft: '#E7F0C5',
-  inverseInk: '#FFFFFF',
-  mutedSurface: '#EBEEE9',
-  danger: '#A43D3D',
-  border: '#D8DDD8',
+  canvas: adaptiveColor('#F4F1E8', '#101915'),
+  surface: adaptiveColor('#FFFFFF', '#1B2923'),
+  ink: adaptiveColor('#18322B', '#F3F7F5'),
+  secondaryInk: adaptiveColor('#5B6964', '#B8C5C0'),
+  accent: adaptiveColor('#B7D55A', '#B7D55A'),
+  accentDark: adaptiveColor('#315F4F', '#B7D55A'),
+  accentSoft: adaptiveColor('#E7F0C5', '#294238'),
+  inverseInk: adaptiveColor('#FFFFFF', '#101915'),
+  mutedSurface: adaptiveColor('#EBEEE9', '#26352F'),
+  danger: adaptiveColor('#A43D3D', '#FF9B9B'),
+  border: adaptiveColor('#D8DDD8', '#42534C'),
 } as const;
 
 export const spacing = {
