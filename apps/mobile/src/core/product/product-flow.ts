@@ -22,6 +22,7 @@ import type {
   SafetyEventId,
   UserProfile,
 } from '../persistence/persistence-domain';
+import type { ReminderAuthorization } from './reminder-scheduling';
 
 export type CheckInDraft = Readonly<{
   checkInId: CheckInId;
@@ -114,6 +115,7 @@ export type ProgressPresentation = Readonly<{
 export type ProfilePresentation = Readonly<{
   profile: UserProfile;
   reminderSettings?: ReminderSettings;
+  reminderAuthorization: ReminderAuthorization;
 }>;
 
 export type OnboardingProgress =
@@ -142,6 +144,7 @@ export type ProductFlowError =
   | Readonly<{ code: 'invalidState' }>
   | Readonly<{ code: 'invalidData' }>
   | Readonly<{ code: 'contentUnavailable' }>
+  | Readonly<{ code: 'reminderUnavailable' }>
   | Readonly<{ code: 'attentionRequired'; areas: readonly BodyArea[] }>
   | Readonly<{ code: 'persistence'; cause: PersistenceError }>;
 

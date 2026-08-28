@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -8,8 +9,10 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useVideoPlayer, VideoView } from 'expo-video';
 
 import type { KineoProductServing } from '@/application/kineo-product-service';
+import type { Dose } from '@/core/content/catalog-primitives';
 import {
   bodyAreas,
   requiresConditionalSafetyAnswer,
@@ -82,12 +85,24 @@ const areaLabels: Readonly<Record<BodyArea, string>> = Object.freeze({
   lowerBack: 'Lower back',
 });
 
+const minutesPerHour = 60;
+const morningReminderWindow = Object.freeze({
+  startMinutes: 8 * minutesPerHour,
+  endMinutes: 9 * minutesPerHour,
+});
+const eveningReminderWindow = Object.freeze({
+  startMinutes: 18 * minutesPerHour,
+  endMinutes: 19 * minutesPerHour,
+});
+const prototypeMovementVideo = require('../../../assets/videos/prototype-side-reach.mp4') as number;
+
 function errorMessage(error: ProductFlowError): string {
   if (error.code === 'invalidState' || error.code === 'invalidData') {
     return "Kineo couldn't continue from that state. Try again.";
   }
   if (error.code === 'contentUnavailable') return 'No approved prototype routine is available for this plan.';
   if (error.code === 'attentionRequired') return 'Attention Required is active. Review it before another routine.';
+  if (error.code === 'reminderUnavailable') return "Kineo couldn't update reminders. Try again.";
   switch (error.cause.code) {
     case 'protectedDataUnavailable':
       return 'Unlock this iPhone, then try again.';
@@ -129,6 +144,43 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
       isActive = false;
     };
   }, [service]);
+
+  const lifecycleRoutine = screen.kind === 'routine' || screen.kind === 'feedback'
+    ? screen.routine
+    : screen.kind === 'start' && screen.state.kind === 'unfinishedRoutine'
+      ? screen.state.routine
+      : undefined;
+  const lifecycleSessionId = lifecycleRoutine?.sessionId;
+  const lifecycleStatus = lifecycleRoutine?.status;
+
+  useEffect(() => {
+    if (lifecycleSessionId === undefined || lifecycleStatus !== 'inProgress') return;
+    let isActive = true;
+    let isPausing = false;
+    const refresh = async () => {
+      const result = await service.refreshRoutine(lifecycleSessionId);
+      if (!isActive) return;
+      setScreen(result.ok
+        ? { kind: 'routine', routine: result.value }
+        : { kind: 'error', error: result.error });
+    };
+    const interval = setInterval(() => void refresh(), routineRefreshIntervalMilliseconds);
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active' || isPausing) return;
+      isPausing = true;
+      void service.pauseRoutine(lifecycleSessionId).then((result) => {
+        if (!isActive) return;
+        setScreen(result.ok
+          ? { kind: 'routine', routine: result.value }
+          : { kind: 'error', error: result.error });
+      });
+    });
+    return () => {
+      isActive = false;
+      clearInterval(interval);
+      subscription.remove();
+    };
+  }, [lifecycleSessionId, lifecycleStatus, service]);
 
   const submit = useCallback(
     async <Value,>(operation: () => Promise<
@@ -424,21 +476,44 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
     }
     if (activeRoutine.status === 'inProgress' && activeRoutine.currentItem !== undefined) {
       const item = activeRoutine.currentItem;
+      const alternative = activeRoutine.selectedAlternative;
       const instruction = item.kind === 'movement'
-        ? item.localizedInstruction
+        ? alternative?.localizedInstruction ?? item.localizedInstruction
         : 'Take this brief transition before continuing.';
-      const safetyCue = item.kind === 'movement' ? item.localizedSafetyCue : undefined;
+      const safetyCue = item.kind === 'movement'
+        ? alternative?.localizedSafetyCue ?? item.localizedSafetyCue
+        : undefined;
+      const presentedTitle = alternative?.localizedTitle ?? item.localizedTitle;
+      const dose = item.kind === 'movement'
+        ? alternative?.scheduledDose ?? item.scheduledDose
+        : undefined;
       return (
         <Shell>
           <View style={styles.routineProgressRow}>
             <Text style={styles.eyebrow}>STEP {activeRoutine.currentStepIndex + displayIndexOffset} OF {activeRoutine.totalStepCount}</Text>
             <Text style={styles.areaBadgeText}>{areaLabels[item.sourceArea]}</Text>
           </View>
-          <View style={styles.mediaPlaceholder} accessibilityLabel={item.kind === 'movement' ? item.accessibleDescription : 'Routine transition'}>
-            <Text style={styles.mediaPlaceholderText}>MOVEMENT PREVIEW</Text>
-          </View>
-          <PageHeader eyebrow={activeRoutine.deliveredLevel.toUpperCase()} title={item.localizedTitle} />
+          {item.kind === 'movement' ? (
+            <RoutineVideo accessibilityLabel={item.accessibleDescription} />
+          ) : (
+            <View style={styles.mediaPlaceholder} accessibilityLabel="Routine transition">
+              <Text style={styles.mediaPlaceholderText}>NEXT MOVEMENT</Text>
+            </View>
+          )}
+          <PageHeader eyebrow={activeRoutine.deliveredLevel.toUpperCase()} title={presentedTitle} />
           <Text style={styles.supporting}>{instruction}</Text>
+          {dose === undefined ? null : (
+            <View style={styles.routineTimerCard}>
+              <Text style={styles.routineTimerText}>
+                {routineTimerText(activeRoutine, dose)}
+              </Text>
+              <Text style={styles.cardBody}>
+                {dose.kind === 'timed'
+                  ? `${dose.activeSeconds} seconds planned`
+                  : `${dose.repetitionCount} repetitions`}
+              </Text>
+            </View>
+          )}
           {safetyCue === undefined ? null : <Text style={styles.safetyCue}>{safetyCue}</Text>}
           <PrimaryButton
             label="Continue"
@@ -637,6 +712,13 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
 
   if (screen.kind === 'profile') {
     const profile = screen.profile.profile;
+    const reminder = screen.profile.reminderSettings;
+    const updateReminder = async (
+      window: typeof morningReminderWindow,
+    ) => {
+      const result = await submit(() => service.enableReminder(window));
+      if (result?.ok) setScreen({ kind: 'profile', profile: result.value });
+    };
     return (
       <Shell>
         <PageHeader eyebrow="SETTINGS" title="Profile" />
@@ -652,6 +734,37 @@ export function KineoProductApp({ service, onDeleted }: KineoProductAppProps) {
             setIsSecondaryCleared(profile.secondaryArea === undefined);
             setScreen({ kind: 'profileAreas', profile: screen.profile });
           }} />
+        </View>
+        <View style={styles.historyCard}>
+          <Text style={styles.cardTitle}>Reminders</Text>
+          <Text style={styles.cardBody}>
+            {reminder?.enabled
+              ? 'One generic daily reminder is scheduled.'
+              : screen.profile.reminderAuthorization === 'denied'
+                ? 'Notifications are off in iPhone Settings. Kineo still works without them.'
+                : 'Optional. Kineo asks for notification access only after you choose a time.'}
+          </Text>
+          {reminder?.enabled ? (
+            <SecondaryButton
+              label="Turn reminders off"
+              disabled={isSubmitting}
+              onPress={() => void (async () => {
+                const result = await submit(() => service.disableReminder());
+                if (result?.ok) setScreen({ kind: 'profile', profile: result.value });
+              })()}
+            />
+          ) : (
+            <>
+              <ChoiceButton
+                label="Morning · 8:00 AM"
+                onPress={() => void updateReminder(morningReminderWindow)}
+              />
+              <ChoiceButton
+                label="Evening · 6:00 PM"
+                onPress={() => void updateReminder(eveningReminderWindow)}
+              />
+            </>
+          )}
         </View>
         <View style={styles.historyCard}>
           <Text style={styles.cardTitle}>Privacy & data</Text>
@@ -912,6 +1025,28 @@ function PageHeader({ eyebrow, title }: Readonly<{ eyebrow: string; title: strin
   );
 }
 
+function RoutineVideo({ accessibilityLabel }: Readonly<{ accessibilityLabel: string }>) {
+  const player = useVideoPlayer(prototypeMovementVideo, (videoPlayer) => {
+    videoPlayer.loop = true;
+    videoPlayer.muted = true;
+    videoPlayer.play();
+  });
+  return (
+    <View accessibilityLabel={accessibilityLabel} style={styles.mediaPlaceholder}>
+      <VideoView
+        allowsPictureInPicture={false}
+        contentFit="cover"
+        nativeControls={false}
+        player={player}
+        style={styles.routineVideo}
+      />
+      <View pointerEvents="none" style={styles.prototypeMediaBadge}>
+        <Text style={styles.prototypeMediaBadgeText}>PROTOTYPE MOVEMENT</Text>
+      </View>
+    </View>
+  );
+}
+
 function ProgressLabel({ current, total }: Readonly<{ current: number; total: number }>) {
   return <Text style={styles.progress}>STEP {current} OF {total}</Text>;
 }
@@ -1042,6 +1177,10 @@ function NavigationBar({
 }
 
 const secondsPerMinute = 60;
+const millisecondsPerSecond = 1_000;
+const countdownRoundingOffsetMilliseconds = millisecondsPerSecond - 1;
+const routineRefreshIntervalMilliseconds = millisecondsPerSecond;
+const noElapsedMilliseconds = 0;
 const displayIndexOffset = 1;
 
 function levelLabel(level: PlanPresentation['deliveredLevel']): string {
@@ -1058,6 +1197,25 @@ function planExplanation(plan: PlanPresentation): string {
     : plan.recommendedLevel === 'active'
       ? 'Your recent check-ins support the Active option.'
       : 'A balanced routine matches what you shared today.';
+}
+
+function routineTimerText(
+  routine: RoutinePresentation,
+  dose: Dose,
+): string {
+  if (dose.kind === 'timed') {
+    const totalMilliseconds = dose.estimatedSeconds * millisecondsPerSecond;
+    const remainingMilliseconds = Math.max(
+      noElapsedMilliseconds,
+      totalMilliseconds - routine.stepElapsedMilliseconds,
+    );
+    const remainingSeconds = Math.floor(
+      (remainingMilliseconds + countdownRoundingOffsetMilliseconds) /
+        millisecondsPerSecond,
+    );
+    return `${remainingSeconds} seconds remaining`;
+  }
+  return `${Math.floor(routine.stepElapsedMilliseconds / millisecondsPerSecond)} seconds elapsed`;
 }
 
 function screenForAttentionResolution(resolution: AttentionResolution): LocalScreen {
@@ -1121,7 +1279,12 @@ const styles = StyleSheet.create({
   routineProgressRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   mediaPlaceholder: { alignItems: 'center', aspectRatio: 1.35, backgroundColor: colors.accentSoft, borderRadius: radius.card, justifyContent: 'center' },
   mediaPlaceholderText: { color: colors.accentDark, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  routineVideo: { height: '100%', width: '100%' },
+  prototypeMediaBadge: { backgroundColor: colors.accentDark, borderRadius: radius.status, bottom: spacing.compact, left: spacing.compact, paddingHorizontal: spacing.compact, paddingVertical: spacing.compact, position: 'absolute' },
+  prototypeMediaBadgeText: { color: colors.inverseInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   safetyCue: { backgroundColor: colors.surface, borderLeftColor: colors.accent, borderLeftWidth: spacing.compact, borderRadius: radius.card, color: colors.secondaryInk, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight, padding: spacing.standard },
+  routineTimerCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.compact, padding: spacing.standard },
+  routineTimerText: { color: colors.ink, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
   todayCardEyebrow: { color: colors.secondaryInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   todayCardTitle: { color: colors.ink, fontSize: typography.titleSize, fontWeight: typography.displayWeight, lineHeight: typography.titleLineHeight },
   todayCardBody: { color: colors.secondaryInk, fontSize: typography.bodySize, lineHeight: typography.bodyLineHeight },

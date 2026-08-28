@@ -37,6 +37,7 @@ import type { KineoPersistence } from '../infrastructure/persistence/protected-k
 
 type RoutineEnvironment = Readonly<{
   nowMilliseconds(): number;
+  monotonicMilliseconds(): number;
   nextIdentifier(): string;
 }>;
 
@@ -58,6 +59,8 @@ function invalidState<Value>(): ProductResult<Value> {
 }
 
 export class KineoRoutineModule {
+  private readonly activeStepStartedAt = new Map<RoutineSessionId, number>();
+
   constructor(
     private readonly store: KineoPersistence,
     private readonly environment: RoutineEnvironment,
@@ -390,23 +393,36 @@ export class KineoRoutineModule {
     });
     if (!event.ok) return invalidData();
     const terminal = status === 'completed' || status === 'stopped' || status === 'safetyStopped';
+    const elapsed = kind === 'stepCompleted' || kind === 'skipped'
+      ? { ok: true as const, value: noElapsedTime }
+      : this.elapsedMilliseconds(session);
+    if (!elapsed.ok) return elapsed;
+    const activeStart = status === 'inProgress'
+      ? this.monotonicNow()
+      : { ok: true as const, value: undefined };
+    if (!activeStart.ok) return activeStart;
     const recorded = await this.store.recordRoutineEvent(event.value, {
       status,
       currentStepIndex,
-      stepElapsedMilliseconds: noElapsedTime,
+      stepElapsedMilliseconds: elapsed.value,
       updatedAtMilliseconds: timestamp,
       endedAtMilliseconds: terminal ? timestamp : undefined,
     });
     if (!recorded.ok) return failure({ code: 'persistence', cause: recorded.error });
+    if (activeStart.value !== undefined) {
+      this.activeStepStartedAt.set(session.id, activeStart.value);
+    } else {
+      this.activeStepStartedAt.delete(session.id);
+    }
     const updated = await this.store.loadRoutineSession(session.id);
     if (!updated.ok) return failure({ code: 'persistence', cause: updated.error });
     return updated.value === undefined ? invalidData() : { ok: true, value: updated.value };
   }
 
-  private presentation(
+  private async presentation(
     session: RoutineSession,
     selectedMovementId?: NonNullable<RoutinePresentation['selectedAlternative']>['movementId'],
-  ): ProductResult<RoutinePresentation> {
+  ): Promise<ProductResult<RoutinePresentation>> {
     const snapshot = this.decodeSnapshot(session);
     if (!snapshot.ok) return snapshot;
     const terminal = session.status === 'completed' || session.status === 'stopped' ||
@@ -414,12 +430,26 @@ export class KineoRoutineModule {
     const currentItem = terminal ? undefined : snapshot.value.items[session.currentStepIndex];
     const primaryArea = snapshot.value.includedAreas[initialStepIndex];
     if ((!terminal && currentItem === undefined) || primaryArea === undefined) return invalidData();
+    let restoredMovementId: string | undefined = selectedMovementId;
+    if (restoredMovementId === undefined && currentItem !== undefined) {
+      const events = await this.store.loadRoutineEvents(session.id);
+      if (!events.ok) return failure({ code: 'persistence', cause: events.error });
+      restoredMovementId = [...events.value].reverse().find(
+        (event) =>
+          event.kind === 'alternativeSelected' && event.stepId === currentItem.itemId,
+      )?.alternativeId;
+    }
     const selectedAlternative =
-      selectedMovementId === undefined || currentItem === undefined
+      restoredMovementId === undefined || currentItem === undefined
         ? undefined
         : currentItem.availableAlternatives.find(
-            ({ movementId }) => movementId === selectedMovementId,
+            ({ movementId }) => movementId === restoredMovementId,
           );
+    if (restoredMovementId !== undefined && selectedAlternative === undefined) {
+      return invalidData();
+    }
+    const elapsed = this.elapsedMilliseconds(session);
+    if (!elapsed.ok) return elapsed;
     return {
       ok: true,
       value: {
@@ -434,10 +464,35 @@ export class KineoRoutineModule {
         totalStepCount: snapshot.value.items.length,
         currentItem,
         selectedAlternative,
-        stepElapsedMilliseconds: session.stepElapsedMilliseconds,
+        stepElapsedMilliseconds: elapsed.value,
         contentAvailable: true,
       },
     };
+  }
+
+  private elapsedMilliseconds(
+    session: RoutineSession,
+  ): ProductResult<number> {
+    if (session.status !== 'inProgress') {
+      return { ok: true, value: session.stepElapsedMilliseconds };
+    }
+    const startedAt = this.activeStepStartedAt.get(session.id);
+    if (startedAt === undefined) {
+      return { ok: true, value: session.stepElapsedMilliseconds };
+    }
+    const current = this.monotonicNow();
+    if (!current.ok || current.value < startedAt) return invalidData();
+    const total = session.stepElapsedMilliseconds + (current.value - startedAt);
+    return Number.isSafeInteger(total) && total >= noElapsedTime
+      ? { ok: true, value: total }
+      : invalidData();
+  }
+
+  private monotonicNow(): ProductResult<number> {
+    const value = Math.floor(this.environment.monotonicMilliseconds());
+    return Number.isSafeInteger(value) && value >= noElapsedTime
+      ? { ok: true, value }
+      : invalidData();
   }
 
   private isTerminal(status: RoutineSession['status']): boolean {

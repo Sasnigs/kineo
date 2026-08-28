@@ -7,6 +7,12 @@ import { migrateKineoDatabase } from '../infrastructure/persistence/kineo-schema
 import { ProtectedKineoStore } from '../infrastructure/persistence/protected-kineo-store';
 import { NodeSqliteTestDatabase } from '../infrastructure/persistence/testing/node-sqlite-test-database';
 import { KineoProductService } from './kineo-product-service';
+import type {
+  ReminderAuthorization,
+  ReminderScheduling,
+  ReminderResult,
+} from '../core/product/reminder-scheduling';
+import type { ReminderWindow } from '../core/persistence/persistence-domain';
 
 const initialTimestamp = 1_750_000_000_000;
 const nextTimestamp = initialTimestamp + 1;
@@ -22,12 +28,55 @@ const lastGeneratedIdentifier = 199;
 const uuidSuffixLength = 12;
 const localDay = '2025-06-15';
 const followingLocalDay = '2025-06-16';
+const firstElapsedIncrementMilliseconds = 1_500;
+const pausedClockIncrementMilliseconds = 8_000;
+const morningReminderWindow = Object.freeze({
+  startMinutes: 8 * 60,
+  endMinutes: 9 * 60,
+});
+
+class FakeReminderScheduler implements ReminderScheduling {
+  authorization: ReminderAuthorization = 'notDetermined';
+  requestResult: ReminderResult<ReminderAuthorization> = {
+    ok: true,
+    value: 'authorized',
+  };
+  scheduleResult: ReminderResult<void> = { ok: true, value: undefined };
+  cancelResult: ReminderResult<void> = { ok: true, value: undefined };
+  scheduledWindow?: ReminderWindow;
+  scheduledTimeZoneId?: string;
+  cancelCount = 0;
+
+  async authorizationStatus(): Promise<ReminderAuthorization> {
+    return this.authorization;
+  }
+
+  async requestAuthorization(): Promise<ReminderResult<ReminderAuthorization>> {
+    if (this.requestResult.ok) this.authorization = this.requestResult.value;
+    return this.requestResult;
+  }
+
+  async replaceDailyReminder(
+    window: ReminderWindow,
+    timeZoneId: string,
+  ): Promise<ReminderResult<void>> {
+    this.scheduledWindow = window;
+    this.scheduledTimeZoneId = timeZoneId;
+    return this.scheduleResult;
+  }
+
+  async cancelAll(): Promise<ReminderResult<void>> {
+    this.cancelCount += 1;
+    return this.cancelResult;
+  }
+}
 
 async function makeService() {
   const database = new NodeSqliteTestDatabase();
   const migrated = await migrateKineoDatabase(database, initialTimestamp);
   if (!migrated.ok) throw new Error('Product-service migration failed.');
   let timestamp = initialTimestamp;
+  let monotonicMilliseconds = 0;
   let currentLocalDay = localDay;
   const store = new ProtectedKineoStore(
     new KineoSqliteStore(database),
@@ -35,6 +84,7 @@ async function makeService() {
     async () => undefined,
     async () => ({ ok: true, value: undefined }),
   );
+  const reminderScheduler = new FakeReminderScheduler();
   return {
     database,
     store,
@@ -54,15 +104,21 @@ async function makeService() {
             return identifier;
           };
         })(),
+        monotonicMilliseconds: () => monotonicMilliseconds,
         localDayContext: () => ({
           localDay: currentLocalDay,
           timeZoneId: 'America/Chicago',
           calendarId: 'gregorian',
         }),
       },
+      reminderScheduler,
     ),
+    reminderScheduler,
     advanceClock: () => {
       timestamp = nextTimestamp;
+    },
+    advanceMonotonicClock: (increment: number) => {
+      monotonicMilliseconds += increment;
     },
     setLocalDay: (value: string) => {
       currentLocalDay = value;
@@ -130,6 +186,96 @@ describe('Kineo product service onboarding', () => {
         progress: { step: 'secondaryArea', primaryArea: 'upperMidBack' },
       },
     });
+    await database.closeAsync();
+  });
+});
+
+describe('Kineo product service reminders', () => {
+  it('persists intent before permission and enables only after scheduling succeeds', async () => {
+    const { database, service, reminderScheduler } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+
+    const enabled = await service.enableReminder(morningReminderWindow);
+
+    expect(enabled).toMatchObject({
+      ok: true,
+      value: {
+        reminderAuthorization: 'authorized',
+        reminderSettings: {
+          enabled: true,
+          window: morningReminderWindow,
+          timeZoneId: 'America/Chicago',
+        },
+      },
+    });
+    expect(reminderScheduler.scheduledWindow).toEqual(morningReminderWindow);
+    expect(reminderScheduler.scheduledTimeZoneId).toBe('America/Chicago');
+    await database.closeAsync();
+  });
+
+  it('keeps the reminder disabled when permission is denied', async () => {
+    const { database, service, reminderScheduler } = await makeService();
+    reminderScheduler.requestResult = { ok: true, value: 'denied' };
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+
+    await expect(service.enableReminder(morningReminderWindow)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        reminderAuthorization: 'denied',
+        reminderSettings: { enabled: false, window: morningReminderWindow },
+      },
+    });
+    expect(reminderScheduler.scheduledWindow).toBeUndefined();
+    await database.closeAsync();
+  });
+
+  it('surfaces scheduling failure and preserves disabled persisted state', async () => {
+    const { database, service, reminderScheduler } = await makeService();
+    reminderScheduler.authorization = 'authorized';
+    reminderScheduler.scheduleResult = {
+      ok: false,
+      error: { code: 'schedulingFailed' },
+    };
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+
+    await expect(service.enableReminder(morningReminderWindow)).resolves.toEqual({
+      ok: false,
+      error: { code: 'reminderUnavailable' },
+    });
+    await expect(service.loadProfile()).resolves.toMatchObject({
+      ok: true,
+      value: { reminderSettings: { enabled: false } },
+    });
+    await database.closeAsync();
+  });
+
+  it('cancels before persisting a disabled reminder', async () => {
+    const { database, service, reminderScheduler } = await makeService();
+    reminderScheduler.authorization = 'authorized';
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    await service.enableReminder(morningReminderWindow);
+
+    await expect(service.disableReminder()).resolves.toMatchObject({
+      ok: true,
+      value: { reminderSettings: { enabled: false } },
+    });
+    expect(reminderScheduler.cancelCount).toBe(1);
     await database.closeAsync();
   });
 });
@@ -425,6 +571,47 @@ describe('Kineo product service check-in', () => {
     await database.closeAsync();
   });
 
+  it('uses monotonic time while active and checkpoints it while paused', async () => {
+    const { database, service, advanceMonotonicClock } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const draft = await service.beginCheckIn();
+    if (!draft.ok) throw new Error('Timed check-in did not start.');
+    const checkedIn = await service.submitCheckIn(draft.value, {
+      area: 'neck',
+      changeReport: 'similar',
+      movementComfort: 'okay',
+    });
+    if (!checkedIn.ok || checkedIn.value.kind !== 'plan') {
+      throw new Error('Timed plan was not created.');
+    }
+    const started = await service.startRoutine(checkedIn.value.plan.decisionId);
+    if (!started.ok) throw new Error('Timed routine did not start.');
+
+    advanceMonotonicClock(firstElapsedIncrementMilliseconds);
+    await expect(service.refreshRoutine(started.value.sessionId)).resolves.toMatchObject({
+      ok: true,
+      value: { stepElapsedMilliseconds: firstElapsedIncrementMilliseconds },
+    });
+    const paused = await service.pauseRoutine(started.value.sessionId);
+    expect(paused).toMatchObject({
+      ok: true,
+      value: {
+        status: 'paused',
+        stepElapsedMilliseconds: firstElapsedIncrementMilliseconds,
+      },
+    });
+    advanceMonotonicClock(pausedClockIncrementMilliseconds);
+    await expect(service.refreshRoutine(started.value.sessionId)).resolves.toMatchObject({
+      ok: true,
+      value: { stepElapsedMilliseconds: firstElapsedIncrementMilliseconds },
+    });
+    await database.closeAsync();
+  });
+
   it('persists alternatives, skip reasons, safe stopping, and idempotent feedback', async () => {
     const { database, service } = await makeService();
     await service.confirmAdultEligibility();
@@ -461,6 +648,12 @@ describe('Kineo product service check-in', () => {
       },
     });
     if (!routine.ok) throw new Error('Alternative was not selected.');
+    await expect(service.refreshRoutine(routine.value.sessionId)).resolves.toMatchObject({
+      ok: true,
+      value: {
+        selectedAlternative: { movementId: alternative.movementId },
+      },
+    });
     routine = await service.resumeRoutine(routine.value.sessionId);
     if (!routine.ok) throw new Error('Routine did not resume.');
     routine = await service.skipRoutineStep(routine.value.sessionId, 'unclear');

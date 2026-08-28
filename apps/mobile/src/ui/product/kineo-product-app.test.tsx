@@ -216,6 +216,7 @@ class OnboardingService implements KineoProductServing {
     return {
       ok: true as const,
       value: {
+        reminderAuthorization: 'notDetermined' as const,
         profile: {
           onboardingCompletedAtMilliseconds: 1_750_000_000_000,
           adultAcknowledged: true,
@@ -232,6 +233,14 @@ class OnboardingService implements KineoProductServing {
   }
 
   async saveAreaPreferences() {
+    return this.loadProfile();
+  }
+
+  async enableReminder() {
+    return this.loadProfile();
+  }
+
+  async disableReminder() {
     return this.loadProfile();
   }
 

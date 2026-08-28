@@ -28,6 +28,7 @@ import {
 import type { PersistenceError } from '../core/persistence/persistence-contract';
 import {
   createProfileState,
+  createReminderSettings,
   createSafetyEvent,
   createSafetyMutation,
   defaultWeeklyGoalDays,
@@ -36,8 +37,10 @@ import {
   type CheckIn,
   type LocalDayContext,
   type ProfileState,
+  type ReminderWindow,
   type UserProfile,
 } from '../core/persistence/persistence-domain';
+import type { ReminderScheduling } from '../core/product/reminder-scheduling';
 import {
   createActiveHistoryState,
   isActiveUnlocked,
@@ -78,6 +81,7 @@ export type ProductClock = Readonly<{
 
 export type ProductRuntime = Readonly<{
   nextIdentifier(): string;
+  monotonicMilliseconds(): number;
   localDayContext(): Readonly<{
     localDay: string;
     timeZoneId: string;
@@ -159,6 +163,10 @@ export interface KineoProductServing {
     primaryArea: BodyArea,
     secondaryArea?: BodyArea,
   ): Promise<ProductResult<ProfilePresentation>>;
+  enableReminder(
+    window: ReminderWindow,
+  ): Promise<ProductResult<ProfilePresentation>>;
+  disableReminder(): Promise<ProductResult<ProfilePresentation>>;
   resetHistory(): Promise<ProductResult<void>>;
   deleteAllData(): Promise<ProductResult<void>>;
 }
@@ -182,9 +190,11 @@ export class KineoProductService implements KineoProductServing {
     private readonly store: KineoPersistence,
     private readonly clock: ProductClock,
     private readonly runtime: ProductRuntime,
+    private readonly reminderScheduler: ReminderScheduling,
   ) {
     this.routineModule = new KineoRoutineModule(store, {
       nowMilliseconds: () => clock.nowMilliseconds(),
+      monotonicMilliseconds: () => runtime.monotonicMilliseconds(),
       nextIdentifier: () => runtime.nextIdentifier(),
     });
     this.attentionModule = new KineoAttentionModule(store, clock, runtime);
@@ -692,15 +702,16 @@ export class KineoProductService implements KineoProductServing {
   async loadProfile(): Promise<ProductResult<ProfilePresentation>> {
     const state = await this.store.loadProfileState();
     if (!state.ok) return persistenceFailure(state.error);
-    return state.value === undefined
-      ? invalidState
-      : {
-          ok: true,
-          value: {
-            profile: state.value.profile,
-            reminderSettings: state.value.reminderSettings,
-          },
-        };
+    if (state.value === undefined) return invalidState;
+    const reminderAuthorization = await this.reminderScheduler.authorizationStatus();
+    return {
+      ok: true,
+      value: {
+        profile: state.value.profile,
+        reminderSettings: state.value.reminderSettings,
+        reminderAuthorization,
+      },
+    };
   }
 
   async saveAreaPreferences(
@@ -717,12 +728,97 @@ export class KineoProductService implements KineoProductServing {
     return updated.ok ? this.loadProfile() : updated;
   }
 
+  async enableReminder(
+    window: ReminderWindow,
+  ): Promise<ProductResult<ProfilePresentation>> {
+    const state = await this.store.loadProfileState();
+    if (!state.ok) return persistenceFailure(state.error);
+    if (state.value === undefined) return invalidState;
+    const moment = this.runtime.localDayContext();
+    const pending = createReminderSettings({
+      enabled: false,
+      window,
+      timeZoneId: moment.timeZoneId,
+      updatedAtMilliseconds: this.clock.nowMilliseconds(),
+    });
+    if (!pending.ok) return { ok: false, error: { code: 'invalidData' } };
+    const pendingState = createProfileState({
+      profile: state.value.profile,
+      reminderSettings: pending.value,
+    });
+    if (!pendingState.ok) return { ok: false, error: { code: 'invalidData' } };
+    const pendingSaved = await this.store.saveProfileState(pendingState.value);
+    if (!pendingSaved.ok) return persistenceFailure(pendingSaved.error);
+
+    let authorization = await this.reminderScheduler.authorizationStatus();
+    if (authorization === 'notDetermined') {
+      const requested = await this.reminderScheduler.requestAuthorization();
+      if (!requested.ok) return { ok: false, error: { code: 'reminderUnavailable' } };
+      authorization = requested.value;
+    }
+    if (authorization !== 'authorized' && authorization !== 'provisional') {
+      return this.loadProfile();
+    }
+    const scheduled = await this.reminderScheduler.replaceDailyReminder(
+      window,
+      moment.timeZoneId,
+    );
+    if (!scheduled.ok) return { ok: false, error: { code: 'reminderUnavailable' } };
+    const enabled = createReminderSettings({
+      enabled: true,
+      window,
+      timeZoneId: moment.timeZoneId,
+      updatedAtMilliseconds: Math.max(
+        this.clock.nowMilliseconds(),
+        pending.value.updatedAtMilliseconds + firstEntryRevision,
+      ),
+    });
+    if (!enabled.ok) return { ok: false, error: { code: 'invalidData' } };
+    const enabledState = createProfileState({
+      profile: state.value.profile,
+      reminderSettings: enabled.value,
+    });
+    if (!enabledState.ok) return { ok: false, error: { code: 'invalidData' } };
+    const enabledSaved = await this.store.saveProfileState(enabledState.value);
+    if (!enabledSaved.ok) return persistenceFailure(enabledSaved.error);
+    return this.loadProfile();
+  }
+
+  async disableReminder(): Promise<ProductResult<ProfilePresentation>> {
+    const cancelled = await this.reminderScheduler.cancelAll();
+    if (!cancelled.ok) return { ok: false, error: { code: 'reminderUnavailable' } };
+    const state = await this.store.loadProfileState();
+    if (!state.ok) return persistenceFailure(state.error);
+    if (state.value === undefined) return invalidState;
+    const existing = state.value.reminderSettings;
+    if (existing !== undefined) {
+      const disabled = createReminderSettings({
+        enabled: false,
+        updatedAtMilliseconds: Math.max(
+          this.clock.nowMilliseconds(),
+          existing.updatedAtMilliseconds + firstEntryRevision,
+        ),
+      });
+      if (!disabled.ok) return { ok: false, error: { code: 'invalidData' } };
+      const disabledState = createProfileState({
+        profile: state.value.profile,
+        reminderSettings: disabled.value,
+      });
+      if (!disabledState.ok) return { ok: false, error: { code: 'invalidData' } };
+      const saved = await this.store.saveProfileState(disabledState.value);
+      if (!saved.ok) return persistenceFailure(saved.error);
+    }
+    return this.loadProfile();
+  }
+
   async resetHistory(): Promise<ProductResult<void>> {
     const result = await this.store.resetHistory();
     return result.ok ? result : persistenceFailure(result.error);
   }
 
   async deleteAllData(): Promise<ProductResult<void>> {
+    const cancelled = await this.reminderScheduler.cancelAll();
+    if (!cancelled.ok) return { ok: false, error: { code: 'reminderUnavailable' } };
     const result = await this.store.deleteAllData();
     return result.ok ? result : persistenceFailure(result.error);
   }

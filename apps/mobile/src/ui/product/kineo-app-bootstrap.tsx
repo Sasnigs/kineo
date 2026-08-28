@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { KineoProductService } from '@/application/kineo-product-service';
 import { systemProductRuntime } from '@/infrastructure/product/system-product-runtime';
+import { expoReminderScheduler } from '@/infrastructure/reminders/expo-reminder-scheduler';
 import { openProtectedKineoStore } from '@/infrastructure/persistence/open-protected-kineo-store';
 import type { KineoPersistence } from '@/infrastructure/persistence/protected-kineo-store';
 import { colors, spacing, typography } from '@/ui/theme/tokens';
@@ -48,7 +49,12 @@ export function KineoAppBootstrap() {
 
   const service = useMemo(
     () => state.kind === 'ready'
-      ? new KineoProductService(state.store, systemProductClock, systemProductRuntime)
+      ? new KineoProductService(
+          state.store,
+          systemProductClock,
+          systemProductRuntime,
+          expoReminderScheduler,
+        )
       : undefined,
     [state],
   );

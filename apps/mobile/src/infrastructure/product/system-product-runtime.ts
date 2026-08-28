@@ -20,6 +20,7 @@ function localDay(): string {
 
 export const systemProductRuntime: ProductRuntime = Object.freeze({
   nextIdentifier: randomUUID,
+  monotonicMilliseconds: () => performance.now(),
   localDayContext: () => ({
     localDay: localDay(),
     timeZoneId: Intl.DateTimeFormat().resolvedOptions().timeZone,
