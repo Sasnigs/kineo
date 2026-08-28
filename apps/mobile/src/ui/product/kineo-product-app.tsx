@@ -6,7 +6,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -35,6 +34,7 @@ import type {
   ProductStartState,
   RoutinePresentation,
 } from '@/core/product/product-flow';
+import { Text } from '@/ui/primitives/adaptive-text';
 import {
   colors,
   layout,
