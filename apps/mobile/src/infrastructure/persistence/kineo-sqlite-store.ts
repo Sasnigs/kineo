@@ -23,7 +23,11 @@ import {
   parseContentRevision,
   parseSha256Digest,
 } from '../../core/content/catalog-primitives';
-import type { KineoStore } from '../../core/persistence/kineo-store';
+import type {
+  AreaHistoryRecord,
+  KineoStore,
+  PauseTodayHistoryRecord,
+} from '../../core/persistence/kineo-store';
 import {
   createSelectionDecision,
   decisionReasonKinds,
@@ -45,8 +49,10 @@ import {
   createCheckInEntry,
   createLocalDayContext,
   createProfileState,
+  createSafetyEvent,
   createSafetyMutation,
   parseLocalDay,
+  parseSafetyEventId,
   telemetryChoices,
   type AttentionState,
   type CheckIn,
@@ -56,6 +62,8 @@ import {
   type LocalDay,
   type ProfileState,
   type SafetyMutation,
+  type SafetyEvent,
+  type SafetyEventId,
   type TelemetryChoice,
 } from '../../core/persistence/persistence-domain';
 import type {
@@ -65,7 +73,10 @@ import type {
   RoutineEvent,
   RoutineSession,
 } from '../../core/persistence/routine-persistence-domain';
-import type { RoutineSessionId } from '../../core/content/routine-session-snapshot';
+import {
+  parseRoutineSessionId,
+  type RoutineSessionId,
+} from '../../core/content/routine-session-snapshot';
 import { KineoSqliteRoutineRepository } from './kineo-sqlite-routine-repository';
 
 const singletonProfileId = 1;
@@ -192,6 +203,24 @@ type DecisionNoticeRow = Readonly<{
   parameters_json: string;
 }>;
 
+type AreaHistoryRow = Readonly<{
+  area: string;
+  local_day: string;
+  change_report: string;
+  movement_comfort: string;
+  routine_session_id: string | null;
+  routine_status: string | null;
+  delivered_level: string | null;
+  included: number | null;
+  response: string | null;
+}>;
+
+type PauseTodayHistoryRow = Readonly<{
+  local_day: string;
+  primary_area: string;
+  secondary_area: string | null;
+}>;
+
 function asBoolean(value: number): boolean | undefined {
   return value === trueInteger
     ? true
@@ -310,6 +339,119 @@ export class KineoSqliteStore implements KineoStore {
 
   submitFeedback(submission: FeedbackSubmission): Promise<PersistenceResult<void>> {
     return this.routineRepository.submitFeedback(submission);
+  }
+
+  hasFeedbackForRoutine(id: RoutineSessionId): Promise<PersistenceResult<boolean>> {
+    return this.routineRepository.hasFeedbackForRoutine(id);
+  }
+
+  async loadAreaHistory(): Promise<PersistenceResult<readonly AreaHistoryRecord[]>> {
+    try {
+      const rows = await this.database.getAllAsync<AreaHistoryRow>(
+        `SELECT entry.area, check_in.local_day, entry.change_report,
+                entry.movement_comfort, routine.id AS routine_session_id,
+                routine.status AS routine_status,
+                decision.delivered_level, area_input.included,
+                feedback.response
+         FROM check_in_entries AS entry
+         JOIN check_ins AS check_in ON check_in.id = entry.check_in_id
+         LEFT JOIN routine_sessions AS routine ON routine.check_in_id = check_in.id
+         LEFT JOIN selection_decisions AS decision ON decision.id = routine.decision_id
+         LEFT JOIN decision_area_inputs AS area_input
+           ON area_input.decision_id = decision.id AND area_input.area = entry.area
+         LEFT JOIN feedback_submissions AS submission
+           ON submission.routine_session_id = routine.id
+         LEFT JOIN area_feedback AS feedback
+           ON feedback.feedback_submission_id = submission.id AND feedback.area = entry.area
+         WHERE check_in.purpose = 'normal' AND check_in.status = 'completed'
+         ORDER BY check_in.completed_at_ms, check_in.id, entry.role`,
+      );
+      const result: AreaHistoryRecord[] = [];
+      for (const row of rows) {
+        const area = asBodyArea(row.area);
+        const localDay = parseLocalDay(row.local_day);
+        const changeReport = oneOf(row.change_report, ['better', 'similar', 'worse'] as const);
+        const movementComfort = oneOf(row.movement_comfort, ['limited', 'okay', 'good'] as const);
+        if (area === undefined || !localDay.ok || changeReport === undefined || movementComfort === undefined) {
+          throw new StoreAbort({ code: 'corruptedStore' });
+        }
+        let routine: AreaHistoryRecord['routine'];
+        if (row.routine_session_id !== null) {
+          const sessionId = parseRoutineSessionId(row.routine_session_id);
+          const status = row.routine_status === null
+            ? undefined
+            : oneOf(row.routine_status, [
+                'prepared', 'inProgress', 'paused', 'completed',
+                'stopped', 'safetyStopped', 'abandoned',
+              ] as const);
+          const deliveredLevel = row.delivered_level === null
+            ? undefined
+            : oneOf(row.delivered_level, routineLevels);
+          const included = row.included === null ? undefined : asBoolean(row.included);
+          const response = row.response === null ? undefined : oneOf(row.response, areaResponses);
+          if (!sessionId.ok || status === undefined || deliveredLevel === undefined || included === undefined) {
+            throw new StoreAbort({ code: 'corruptedStore' });
+          }
+          routine = {
+            sessionId: sessionId.value,
+            status,
+            deliveredLevel,
+            wasIncluded: included,
+            response,
+          };
+        }
+        result.push({
+          area,
+          localDay: localDay.value,
+          changeReport,
+          movementComfort,
+          routine,
+        });
+      }
+      return { ok: true, value: Object.freeze(result) };
+    } catch (error) {
+      return error instanceof StoreAbort
+        ? { ok: false, error: error.persistenceError }
+        : { ok: false, error: { code: 'readFailed' } };
+    }
+  }
+
+  async loadPauseTodayHistory(): Promise<
+    PersistenceResult<readonly PauseTodayHistoryRecord[]>
+  > {
+    try {
+      const rows = await this.database.getAllAsync<PauseTodayHistoryRow>(
+        `SELECT pause.local_day, check_in.primary_area, check_in.secondary_area
+         FROM pause_today_events AS pause
+         JOIN check_ins AS check_in ON check_in.id = pause.check_in_id
+         ORDER BY pause.chosen_at_ms, pause.id`,
+      );
+      const records: PauseTodayHistoryRecord[] = [];
+      for (const row of rows) {
+        const localDay = parseLocalDay(row.local_day);
+        const primaryArea = asBodyArea(row.primary_area);
+        const secondaryArea = asBodyArea(row.secondary_area);
+        if (
+          !localDay.ok ||
+          primaryArea === undefined ||
+          (row.secondary_area !== null && secondaryArea === undefined) ||
+          primaryArea === secondaryArea
+        ) {
+          throw new StoreAbort({ code: 'corruptedStore' });
+        }
+        records.push({
+          localDay: localDay.value,
+          areas: secondaryArea === undefined
+            ? Object.freeze([primaryArea])
+            : Object.freeze([primaryArea, secondaryArea]),
+        });
+      }
+      return { ok: true, value: Object.freeze(records) };
+    } catch (error) {
+      return error instanceof StoreAbort
+        ? { ok: false, error: error.persistenceError }
+        : { ok: false, error: { code: 'readFailed' } };
+    }
   }
 
   async loadProfileState(): Promise<
@@ -560,6 +702,28 @@ export class KineoSqliteStore implements KineoStore {
     }
   }
 
+  async loadLatestCheckInDraft(
+    kind: CheckIn['kind'],
+  ): Promise<PersistenceResult<CheckIn | undefined>> {
+    try {
+      const row = await this.database.getFirstAsync<{ id: string }>(
+        `SELECT id FROM check_ins
+         WHERE status = 'draft' AND purpose = ?
+         ORDER BY started_at_ms DESC, id DESC
+         LIMIT 1`,
+        [kind],
+      );
+      if (row === null) return { ok: true, value: undefined };
+      const id = parseCheckInId(row.id);
+      if (!id.ok) throw new StoreAbort({ code: 'corruptedStore' });
+      return this.loadCheckIn(id.value);
+    } catch (error) {
+      return error instanceof StoreAbort
+        ? { ok: false, error: error.persistenceError }
+        : { ok: false, error: { code: 'readFailed' } };
+    }
+  }
+
   async saveCheckInDraft(checkIn: CheckIn): Promise<PersistenceResult<void>> {
     const validated = createCheckIn(checkIn);
     if (!validated.ok || validated.value.status !== 'draft') {
@@ -582,6 +746,29 @@ export class KineoSqliteStore implements KineoStore {
         }
         await this.upsertCheckIn(transaction, validated.value);
         await this.replaceCheckInEntries(transaction, validated.value);
+      });
+      return { ok: true, value: undefined };
+    } catch (error) {
+      return sqliteWriteFailure(error);
+    }
+  }
+
+  async abandonCheckInDraft(id: CheckInId): Promise<PersistenceResult<void>> {
+    try {
+      await this.database.withExclusiveTransactionAsync(async (transaction) => {
+        const existing = await transaction.getFirstAsync<{ status: string }>(
+          'SELECT status FROM check_ins WHERE id = ?',
+          [id],
+        );
+        if (existing === null) throw new StoreAbort({ code: 'recordNotFound' });
+        if (existing.status === 'abandoned') return;
+        if (existing.status !== 'draft') {
+          throw new StoreAbort({ code: 'conflictingWrite' });
+        }
+        await transaction.runAsync(
+          "UPDATE check_ins SET status = 'abandoned' WHERE id = ? AND status = 'draft'",
+          [id],
+        );
       });
       return { ok: true, value: undefined };
     } catch (error) {
@@ -708,9 +895,48 @@ export class KineoSqliteStore implements KineoStore {
         await this.replaceCheckInEntries(transaction, validated.value);
         await this.upsertCheckIn(transaction, validated.value);
         for (const mutation of mutations) {
-          await this.applySafetyMutation(transaction, mutation);
+          await this.applySafetyMutationInTransaction(transaction, mutation);
         }
       });
+      return { ok: true, value: undefined };
+    } catch (error) {
+      return sqliteWriteFailure(error);
+    }
+  }
+
+  async applySafetyMutation(
+    input: SafetyMutation,
+  ): Promise<PersistenceResult<void>> {
+    const mutation = createSafetyMutation(input);
+    if (!mutation.ok) {
+      return {
+        ok: false,
+        error: { code: 'constraintViolation', constraint: 'domainInvariant' },
+      };
+    }
+    try {
+      const existing = await this.database.getFirstAsync<SafetyEventRow>(
+        'SELECT * FROM safety_events WHERE id = ?',
+        [mutation.value.event.id],
+      );
+      if (existing !== null) {
+        const event = mutation.value.event;
+        const matches =
+          existing.area === event.area &&
+          existing.kind === event.kind &&
+          optional(existing.source_check_in_entry_id) === event.sourceCheckInEntryId &&
+          optional(existing.return_answer) === event.returnAnswer &&
+          existing.occurred_at_ms === event.occurredAtMilliseconds &&
+          existing.local_day === event.dayContext.localDay &&
+          existing.time_zone_id === event.dayContext.timeZoneId &&
+          existing.calendar_id === event.dayContext.calendarId;
+        return matches
+          ? { ok: true, value: undefined }
+          : { ok: false, error: { code: 'conflictingWrite' } };
+      }
+      await this.database.withExclusiveTransactionAsync((transaction) =>
+        this.applySafetyMutationInTransaction(transaction, mutation.value),
+      );
       return { ok: true, value: undefined };
     } catch (error) {
       return sqliteWriteFailure(error);
@@ -742,6 +968,60 @@ export class KineoSqliteStore implements KineoStore {
       return { ok: true, value: Object.freeze(states) };
     } catch {
       return { ok: false, error: { code: 'readFailed' } };
+    }
+  }
+
+  async loadSafetyEvent(
+    id: SafetyEventId,
+  ): Promise<PersistenceResult<SafetyEvent | undefined>> {
+    try {
+      const row = await this.database.getFirstAsync<SafetyEventRow>(
+        'SELECT * FROM safety_events WHERE id = ?',
+        [id],
+      );
+      if (row === null) return { ok: true, value: undefined };
+      const parsedId = parseSafetyEventId(row.id);
+      const localDay = parseLocalDay(row.local_day);
+      const area = asBodyArea(row.area);
+      const kind = oneOf(row.kind, [
+        'attentionEntered',
+        'attentionClearedReturnedToUsual',
+        'attentionClearedCorrection',
+        'attentionReaffirmed',
+        'attentionReaffirmedCorrection',
+      ] as const);
+      const sourceId = row.source_check_in_entry_id === null
+        ? undefined
+        : parseCheckInEntryId(row.source_check_in_entry_id);
+      if (
+        !parsedId.ok ||
+        !localDay.ok ||
+        area === undefined ||
+        kind === undefined ||
+        (sourceId !== undefined && !sourceId.ok)
+      ) throw new StoreAbort({ code: 'corruptedStore' });
+      const event = createSafetyEvent({
+        id: parsedId.value,
+        area,
+        kind,
+        sourceCheckInEntryId: sourceId?.value,
+        returnAnswer: row.return_answer === null
+          ? undefined
+          : definedOrAbort(oneOf(row.return_answer, ['no', 'yes', 'notSure'] as const)),
+        occurredAtMilliseconds: row.occurred_at_ms,
+        dayContext: {
+          localDay: localDay.value,
+          timeZoneId: row.time_zone_id,
+          calendarId: row.calendar_id,
+        },
+      });
+      return event.ok
+        ? { ok: true, value: event.value }
+        : { ok: false, error: { code: 'corruptedStore' } };
+    } catch (error) {
+      return error instanceof StoreAbort
+        ? { ok: false, error: error.persistenceError }
+        : { ok: false, error: { code: 'readFailed' } };
     }
   }
 
@@ -915,6 +1195,32 @@ export class KineoSqliteStore implements KineoStore {
     }
   }
 
+  async loadLatestUnconsumedSelectionDecision(): Promise<
+    PersistenceResult<SelectionDecision | undefined>
+  > {
+    try {
+      const row = await this.database.getFirstAsync<{ check_in_id: string }>(
+        `SELECT decision.check_in_id
+         FROM selection_decisions AS decision
+         LEFT JOIN routine_sessions AS routine ON routine.decision_id = decision.id
+         LEFT JOIN pause_today_events AS pause ON pause.check_in_id = decision.check_in_id
+         WHERE decision.outcome = 'selected'
+           AND routine.id IS NULL
+           AND pause.id IS NULL
+         ORDER BY decision.created_at_ms DESC, decision.revision DESC, decision.id DESC
+         LIMIT 1`,
+      );
+      if (row === null) return { ok: true, value: undefined };
+      const checkInId = parseCheckInId(row.check_in_id);
+      if (!checkInId.ok) throw new StoreAbort({ code: 'corruptedStore' });
+      return this.loadLatestSelectionDecision(checkInId.value);
+    } catch (error) {
+      return error instanceof StoreAbort
+        ? { ok: false, error: error.persistenceError }
+        : { ok: false, error: { code: 'readFailed' } };
+    }
+  }
+
   async resetHistory(): Promise<PersistenceResult<void>> {
     const deletionOrder = [
       'area_feedback',
@@ -1009,7 +1315,7 @@ export class KineoSqliteStore implements KineoStore {
     }
   }
 
-  private async applySafetyMutation(
+  private async applySafetyMutationInTransaction(
     transaction: SqliteExecutor,
     mutation: SafetyMutation,
   ): Promise<void> {

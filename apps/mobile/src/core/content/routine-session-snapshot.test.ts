@@ -20,6 +20,7 @@ import {
 } from './routine-composer';
 import {
   buildRoutineSessionSnapshot,
+  decodeRoutineSessionSnapshot,
   findSnapshotAlternative,
   parseRoutineSessionId,
 } from './routine-session-snapshot';
@@ -214,6 +215,28 @@ describe('Routine session snapshot', () => {
     ).toEqual({
       ok: false,
       error: { code: 'alternativeNotOffered', movementId: unknown },
+    });
+  });
+
+  it('decodes a valid snapshot and rejects corrupted nested dose data', () => {
+    const built = buildRoutineSessionSnapshot(snapshotInput(undefined));
+    if (!built.ok) throw new Error('Expected a valid snapshot.');
+    expect(decodeRoutineSessionSnapshot(JSON.stringify(built.value))).toEqual({
+      ok: true,
+      value: built.value,
+    });
+    const corrupted = JSON.parse(JSON.stringify(built.value)) as {
+      items: { scheduledDose?: { activeSeconds?: unknown } }[];
+    };
+    const movement = corrupted.items.find((item) => item.scheduledDose !== undefined);
+    if (movement?.scheduledDose === undefined) {
+      throw new Error('Expected a movement dose fixture.');
+    }
+    movement.scheduledDose.activeSeconds = 'not-a-number';
+
+    expect(decodeRoutineSessionSnapshot(JSON.stringify(corrupted))).toEqual({
+      ok: false,
+      error: 'invalidRoutineSessionSnapshot',
     });
   });
 });

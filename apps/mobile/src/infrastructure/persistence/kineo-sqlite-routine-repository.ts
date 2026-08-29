@@ -450,6 +450,18 @@ export class KineoSqliteRoutineRepository {
     }
   }
 
+  async hasFeedbackForRoutine(id: RoutineSessionId): Promise<PersistenceResult<boolean>> {
+    try {
+      const row = await this.database.getFirstAsync<{ id: string }>(
+        'SELECT id FROM feedback_submissions WHERE routine_session_id = ? LIMIT 1',
+        [id],
+      );
+      return { ok: true, value: row !== null };
+    } catch (error) {
+      return this.readFailure(error);
+    }
+  }
+
   private async count(executor: SqliteExecutor, sql: string, parameters: readonly SqlValue[] = []): Promise<number> {
     const row = await executor.getFirstAsync<{ count: number }>(sql, parameters);
     return row?.count ?? falseInteger;

@@ -1,0 +1,56 @@
+[
+  {
+    "changeReport": "better",
+    "movementComfort": "limited",
+    "lockedLevel": "gentle",
+    "unlockedLevel": "gentle"
+  },
+  {
+    "changeReport": "better",
+    "movementComfort": "okay",
+    "lockedLevel": "balanced",
+    "unlockedLevel": "balanced"
+  },
+  {
+    "changeReport": "better",
+    "movementComfort": "good",
+    "lockedLevel": "balanced",
+    "unlockedLevel": "active"
+  },
+  {
+    "changeReport": "similar",
+    "movementComfort": "limited",
+    "lockedLevel": "gentle",
+    "unlockedLevel": "gentle"
+  },
+  {
+    "changeReport": "similar",
+    "movementComfort": "okay",
+    "lockedLevel": "balanced",
+    "unlockedLevel": "balanced"
+  },
+  {
+    "changeReport": "similar",
+    "movementComfort": "good",
+    "lockedLevel": "balanced",
+    "unlockedLevel": "balanced"
+  },
+  {
+    "changeReport": "worse",
+    "movementComfort": "limited",
+    "lockedLevel": "gentle",
+    "unlockedLevel": "gentle"
+  },
+  {
+    "changeReport": "worse",
+    "movementComfort": "okay",
+    "lockedLevel": "gentle",
+    "unlockedLevel": "gentle"
+  },
+  {
+    "changeReport": "worse",
+    "movementComfort": "good",
+    "lockedLevel": "gentle",
+    "unlockedLevel": "gentle"
+  }
+]

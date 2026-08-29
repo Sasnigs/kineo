@@ -1,13 +1,20 @@
 import type { RoutineSessionId } from '../../core/content/routine-session-snapshot';
 import type { CheckInId } from '../../core/domain/selection-domain';
 import type { SelectionDecision } from '../../core/persistence/decision-persistence-domain';
-import type { KineoStore } from '../../core/persistence/kineo-store';
+import type {
+  AreaHistoryRecord,
+  KineoStore,
+  KineoPersistence,
+  PauseTodayHistoryRecord,
+} from '../../core/persistence/kineo-store';
 import type { PersistenceResult } from '../../core/persistence/persistence-contract';
 import type {
   AttentionState,
   CheckIn,
   LocalDay,
   ProfileState,
+  SafetyEvent,
+  SafetyEventId,
   SafetyMutation,
 } from '../../core/persistence/persistence-domain';
 import type {
@@ -21,10 +28,6 @@ import type {
 type ProtectionCheck = () => Promise<PersistenceResult<void>>;
 type PoisonCleanup = () => Promise<void>;
 type DeleteStore = () => Promise<PersistenceResult<void>>;
-
-export interface KineoPersistence extends KineoStore {
-  deleteAllData(): Promise<PersistenceResult<void>>;
-}
 
 const poisonedResult = Object.freeze({
   ok: false,
@@ -57,12 +60,24 @@ export class ProtectedKineoStore implements KineoPersistence {
     return this.read(() => this.base.loadCheckIn(id));
   }
 
+  loadLatestCheckInDraft(kind: CheckIn['kind']): Promise<PersistenceResult<CheckIn | undefined>> {
+    return this.read(() => this.base.loadLatestCheckInDraft(kind));
+  }
+
   saveCheckInDraft(checkIn: CheckIn): Promise<PersistenceResult<void>> {
     return this.write(() => this.base.saveCheckInDraft(checkIn));
   }
 
+  abandonCheckInDraft(id: CheckInId): Promise<PersistenceResult<void>> {
+    return this.write(() => this.base.abandonCheckInDraft(id));
+  }
+
   completeCheckIn(checkIn: CheckIn, safetyMutations: readonly SafetyMutation[]): Promise<PersistenceResult<void>> {
     return this.write(() => this.base.completeCheckIn(checkIn, safetyMutations));
+  }
+
+  applySafetyMutation(mutation: SafetyMutation): Promise<PersistenceResult<void>> {
+    return this.write(() => this.base.applySafetyMutation(mutation));
   }
 
   appendSelectionDecision(decision: SelectionDecision): Promise<PersistenceResult<void>> {
@@ -71,6 +86,10 @@ export class ProtectedKineoStore implements KineoPersistence {
 
   loadLatestSelectionDecision(checkInId: CheckInId): Promise<PersistenceResult<SelectionDecision | undefined>> {
     return this.read(() => this.base.loadLatestSelectionDecision(checkInId));
+  }
+
+  loadLatestUnconsumedSelectionDecision(): Promise<PersistenceResult<SelectionDecision | undefined>> {
+    return this.read(() => this.base.loadLatestUnconsumedSelectionDecision());
   }
 
   recordPauseToday(event: PauseTodayEvent): Promise<PersistenceResult<void>> {
@@ -105,8 +124,26 @@ export class ProtectedKineoStore implements KineoPersistence {
     return this.write(() => this.base.submitFeedback(submission));
   }
 
+  hasFeedbackForRoutine(id: RoutineSessionId): Promise<PersistenceResult<boolean>> {
+    return this.read(() => this.base.hasFeedbackForRoutine(id));
+  }
+
+  loadAreaHistory(): Promise<PersistenceResult<readonly AreaHistoryRecord[]>> {
+    return this.read(() => this.base.loadAreaHistory());
+  }
+
+  loadPauseTodayHistory(): Promise<
+    PersistenceResult<readonly PauseTodayHistoryRecord[]>
+  > {
+    return this.read(() => this.base.loadPauseTodayHistory());
+  }
+
   loadAttentionStates(): Promise<PersistenceResult<readonly AttentionState[]>> {
     return this.read(() => this.base.loadAttentionStates());
+  }
+
+  loadSafetyEvent(id: SafetyEventId): Promise<PersistenceResult<SafetyEvent | undefined>> {
+    return this.read(() => this.base.loadSafetyEvent(id));
   }
 
   resetHistory(): Promise<PersistenceResult<void>> {

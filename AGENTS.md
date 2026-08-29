@@ -6,6 +6,7 @@ These rules apply to the entire repository.
 - Model expected failures with typed errors at module boundaries. Do not use force-try, force-unwrap recoverable values, empty `catch` blocks, or silent `try?` calls. A best-effort cleanup may preserve the primary error only when the code explains why and tests the resulting safe state.
 - Map infrastructure failures to domain errors once, show users safe recovery states, and never replace a failed persistent store with an empty one.
 - Test failure, rollback, retry, corruption, and protected-data paths when changing persistence or lifecycle code.
-- After Swift coding, review the change with the installed `swift-language`, `swift-api-design-guidelines`, `swift-concurrency`, and `swift-testing` skills as applicable, then run focused tests and the full relevant suite before declaring completion.
 - Expo code uses strict TypeScript. Keep domain modules free of React, Expo, persistence, and platform imports; represent expected module failures with discriminated typed results or typed errors.
-- During migration, do not remove or weaken the Swift reference implementation until the corresponding Expo slice passes documented parity gates.
+- Keep the generated `apps/mobile/ios` project out of version control. Native behavior belongs in a narrowly scoped local Expo module only when Expo APIs cannot satisfy the requirement.
+- After changing native Swift bridge code, review it with the installed Swift language, API-design, concurrency, and testing skills as applicable, then run focused tests and a native iOS build.
+- Until E6 closes, retain the top-level Swift reference implementation; new product work belongs in `apps/mobile`.

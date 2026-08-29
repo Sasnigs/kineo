@@ -9,6 +9,7 @@ private let exceptionCode = 1
 
 private struct ProtectedDirectoryRecord: Record {
   @Field var path: String = ""
+  @Field var uri: String = ""
   @Field var backupExcluded: Bool = false
   @Field var completeProtectionVerified: Bool = false
   @Field var completeProtectionSupported: Bool = true
@@ -55,14 +56,15 @@ public class KineoStorageProtectionModule: Module {
         throw storageException("Protected data is unavailable.")
       }
       let directory = try privateDirectoryURL().standardizedFileURL
-      let candidatePaths = [databasePath, databasePath + "-wal", databasePath + "-shm"]
-      guard FileManager.default.fileExists(atPath: databasePath) else {
+      let candidateURLs = KineoStoragePathPolicy.databaseFileURLs(from: databasePath)
+      guard let databaseURL = candidateURLs.first else {
+        throw storageException("The Kineo database path is invalid.")
+      }
+      guard FileManager.default.fileExists(atPath: databaseURL.path) else {
         throw storageException("The Kineo database does not exist.")
       }
-      return try candidatePaths.compactMap { path in
-        let candidate = URL(fileURLWithPath: path).standardizedFileURL
-        let prefix = directory.path + "/"
-        guard candidate.path == directory.path || candidate.path.hasPrefix(prefix) else {
+      return try candidateURLs.compactMap { candidate in
+        guard KineoStoragePathPolicy.contains(candidate, within: directory) else {
           throw storageException("A path escaped Kineo's private directory.")
         }
         guard FileManager.default.fileExists(atPath: candidate.path) else {
@@ -184,6 +186,7 @@ public class KineoStorageProtectionModule: Module {
 
     return ProtectedDirectoryRecord(
       path: mutableURL.path,
+      uri: mutableURL.absoluteString,
       backupExcluded: true,
       completeProtectionVerified: protectionVerified,
       completeProtectionSupported: protectionSupported

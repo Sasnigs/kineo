@@ -527,9 +527,39 @@ describe('Kineo SQLite store', () => {
       ok: true,
       value: event,
     });
+    await expect(store.loadPauseTodayHistory()).resolves.toEqual({
+      ok: true,
+      value: [{ localDay: completed.dayContext.localDay, areas: ['neck'] }],
+    });
     await expect(store.createRoutine(preparedRoutine(completed, decision))).resolves.toEqual({
       ok: false,
       error: { code: 'conflictingWrite' },
+    });
+    await database.closeAsync();
+  });
+
+  it('fails closed when Pause Today history references invalid area data', async () => {
+    const { database, store } = await makeStore();
+    const completed = pauseEligibleCheckIn('completed');
+    const decision = selectedDecision(completed);
+    const event = required(createPauseTodayEvent({
+      id: required(parsePauseTodayEventId(pauseEventIdValue)),
+      checkInId: completed.id,
+      chosenAtMilliseconds: safetyAtMilliseconds + 1,
+      dayContext: completed.dayContext,
+    }));
+    await store.saveCheckInDraft(pauseEligibleCheckIn('draft'));
+    await store.completeCheckIn(completed, []);
+    await store.appendSelectionDecision(decision);
+    await store.recordPauseToday(event);
+    await database.runAsync(
+      'UPDATE pause_today_events SET local_day = ? WHERE id = ?',
+      ['not-a-day!', event.id],
+    );
+
+    await expect(store.loadPauseTodayHistory()).resolves.toEqual({
+      ok: false,
+      error: { code: 'corruptedStore' },
     });
     await database.closeAsync();
   });

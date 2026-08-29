@@ -1,8 +1,9 @@
 import type { PersistenceResult } from '../../core/persistence/persistence-contract';
+import type { KineoPersistence } from '../../core/persistence/kineo-store';
 import { openKineoDatabase } from './expo-sqlite-database';
 import { KineoSqliteStore } from './kineo-sqlite-store';
 import { deleteProtectedStore, prepareProtectedStorageDirectory, protectDatabaseFiles } from './protected-storage';
-import { ProtectedKineoStore, type KineoPersistence } from './protected-kineo-store';
+import { ProtectedKineoStore } from './protected-kineo-store';
 
 const kineoDatabaseName = 'kineo.sqlite';
 

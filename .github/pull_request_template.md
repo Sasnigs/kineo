@@ -15,8 +15,9 @@
 ## Verification
 
 - [ ] Relevant unit tests added or updated
-- [ ] `swift test --package-path Packages/KineoModules`
-- [ ] App target builds
+- [ ] `npm run typecheck && npm run lint && npm run test:ci`
+- [ ] Expo dependency checks pass
+- [ ] iOS bundle or native target builds
 - [ ] Relevant simulator flow checked
 
 ## Risk review

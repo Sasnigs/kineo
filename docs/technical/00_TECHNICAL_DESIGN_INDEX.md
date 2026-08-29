@@ -3,12 +3,12 @@
 | Field | Value |
 | --- | --- |
 | Technical-design version | 0.1 |
-| Status | Approved prototype contract; Expo parity migration E0 authorized and in progress |
-| Platform | Expo/React Native iPhone app; verified Swift reference retained during migration |
+| Status | Approved prototype contract; Expo E6 cutover pending |
+| Platform | Expo/React Native iPhone app; Swift retained for final qualification |
 | Minimum deployment target | iOS 17.0 |
 | Product source | `../KINEO_PRODUCT_DESIGN.md` |
 | UX source | `../KINEO_UX_DESIGN_SPEC.md` |
-| Last updated | August 17, 2026 |
+| Last updated | August 28, 2026 |
 
 ## 1. Purpose and authority
 
@@ -60,7 +60,7 @@ Arrows show decision dependency, not runtime calls.
 | `03_SELECTION_SAFETY_ENGINE.md` | Check-in validation, Attention Required, level selection, Active eligibility, overrides, explanations | Movement authoring |
 | `04_ROUTINE_CATALOG_COMPOSITION.md` | Catalog schema, validation, composition, duration bounds, alternatives, installed assets | User-state persistence |
 | `05_APP_FLOW_STATE_MACHINES.md` | Onboarding, check-in, plan, guided session, feedback, and destructive-flow states | Visual styling |
-| `06_UI_ARCHITECTURE_ACCESSIBILITY.md` | Verified SwiftUI reference presentation and accessibility behavior | Domain decisions |
+| `06_UI_ARCHITECTURE_ACCESSIBILITY.md` | Presentation and accessibility behavior; SwiftUI details are historical reference | Domain decisions |
 | `07_PLATFORM_SERVICES.md` | Notifications, HealthKit boundary, media, app lifecycle, logging, feature flags | Selection or content policy |
 | `08_TESTING_RELEASE_GATES.md` | Test layers, traceability, fixtures, privacy checks, prototype and release gates | Production content approval itself |
 | `09_EXPO_MIGRATION.md` | Platform migration order, parity seams, cutover conditions | Product behavior or release approval |

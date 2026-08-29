@@ -5,6 +5,7 @@ import type { PersistenceResult } from '../../core/persistence/persistence-contr
 function inspectionIsValid(inspection: ProtectedPathInspection): boolean {
   return (
     inspection.path.trim().length > 0 &&
+    inspection.uri.trim().length > 0 &&
     inspection.backupExcluded &&
     (!inspection.completeProtectionSupported ||
       inspection.completeProtectionVerified)
@@ -43,7 +44,7 @@ export async function prepareProtectedStorageDirectory(): Promise<
     const inspection =
       await KineoStorageProtectionModule.preparePrivateDirectoryAsync();
     return inspectionIsValid(inspection)
-      ? { ok: true, value: inspection.path }
+      ? { ok: true, value: inspection.uri }
       : { ok: false, error: { code: 'storageProtectionFailed' } };
   } catch {
     return storageFailure();
