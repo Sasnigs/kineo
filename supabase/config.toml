@@ -1,0 +1,53 @@
+project_id = "kineo-local"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+
+[db]
+port = 54322
+major_version = 17
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+
+[auth]
+enabled = true
+site_url = "kineo://auth/callback"
+additional_redirect_urls = ["kineo://auth/callback", "kineo://auth/reset"]
+enable_signup = true
+minimum_password_length = 15
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = true
+
+[auth.email.smtp]
+enabled = true
+host = "inbucket"
+port = 2500
+user = ""
+pass = ""
+admin_email = "no-reply@kineo.local"
+sender_name = "Kineo"
+
+[auth.rate_limit]
+email_sent = 3
+token_refresh = 150
+sign_in_sign_ups = 30
+token_verifications = 30
+
+[edge_runtime]
+enabled = true
+policy = "per_worker"
+
+[analytics]
+enabled = false
