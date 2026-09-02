@@ -63,7 +63,7 @@ installed_container="$(xcrun simctl get_app_container \
     app)"
 installed_executable="$installed_container/$APP_EXECUTABLE_NAME"
 
-if ! ps -ax -o command= | grep -Fxq "$installed_executable"; then
+if ! ps -ax -o command= | grep -Fx "$installed_executable" >/dev/null; then
     printf 'Simulator launch check failed: Kineo terminated after launch.\n' >&2
     exit 1
 fi

@@ -98,7 +98,7 @@ jobs:
           Scripts/verify-simulator-launch.sh \
             "$KINEO_SIMULATOR_ID" \
             "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
-            "routine shaped"
+            "MOVE WITH TODAY"
 
       - name: Verify Expo common tasks
         working-directory: ${{ github.workspace }}
