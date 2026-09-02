@@ -1,0 +1,16 @@
+appId: app.kineo.expo.prototype
+---
+- assertVisible: ${EXPECTED_MOVEMENT}
+- runFlow:
+    file: tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "More options"
+- runFlow:
+    file: tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Skip this step"
+- assertVisible: "Prototype content"
+- runFlow:
+    file: tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Continue"

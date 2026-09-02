@@ -5,7 +5,7 @@ name: Attention gate survives relaunch and clears through correction
     clearState: true
 - extendedWaitUntil:
     visible: "A routine shaped around how you feel now."
-    timeout: 15000
+    timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
 - runFlow: subflows/onboard-single-area.yaml
 - tapOn: "Check in"
 - tapOn: "Worse"
@@ -16,7 +16,7 @@ name: Attention gate survives relaunch and clears through correction
 - launchApp
 - extendedWaitUntil:
     visible: "Pause before another routine."
-    timeout: 15000
+    timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
 - tapOn: "Review now"
 - assertVisible: "Has neck returned to its usual pattern?"
 - tapOn: "I selected that by mistake"
@@ -25,5 +25,5 @@ name: Attention gate survives relaunch and clears through correction
 - tapOn: "Okay"
 - extendedWaitUntil:
     visible: "How are you moving?"
-    timeout: 15000
+    timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
 - assertVisible: "Check in"

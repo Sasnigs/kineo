@@ -5,64 +5,83 @@ name: First use through routine feedback and deletion
     clearState: true
 - extendedWaitUntil:
     visible: "A routine shaped around how you feel now."
-    timeout: 15000
+    timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
 - runFlow: subflows/onboard-single-area.yaml
-- tapOn: "Check in"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Check in"
 - assertVisible: "Compared with your usual pattern…"
-- tapOn: "Similar"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Similar"
 - assertVisible: "How does movement feel?"
-- tapOn: "Okay"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Okay"
 - assertVisible: "Your plan for today"
+- runFlow:
+    file: subflows/scroll-to-element.yaml
+    env:
+      ELEMENT_LABEL: "Balanced"
 - assertVisible: "Balanced"
-- assertVisible: "Included today: Neck."
-- tapOn: "Quick"
-- tapOn: "Begin routine"
-- assertVisible: "Prototype movement 1"
-- scrollUntilVisible:
-    element: "More options"
-    direction: DOWN
-- tapOn: "More options"
-- tapOn: "Skip this step"
-- assertVisible: "Prototype content"
-- tapOn: "Continue"
-- assertVisible: "Prototype movement 4"
-- scrollUntilVisible:
-    element: "More options"
-    direction: DOWN
-- tapOn: "More options"
-- tapOn: "Skip this step"
-- assertVisible: "Prototype content"
-- tapOn: "Continue"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Quick"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Begin routine"
+- runFlow:
+    file: subflows/skip-current-movement.yaml
+    env:
+      EXPECTED_MOVEMENT: "Prototype movement 1"
+- runFlow:
+    file: subflows/skip-current-movement.yaml
+    env:
+      EXPECTED_MOVEMENT: "Prototype movement 4"
 - assertVisible: "Prototype movement 2"
-- scrollUntilVisible:
-    element: "More options"
-    direction: DOWN
-- tapOn: "More options"
-- tapOn: "Skip this step"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "More options"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Skip this step"
 - assertVisible: "How did neck feel afterward?"
-- tapOn: "About the same"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "About the same"
 - assertVisible: "You made a choice for today."
-- tapOn: "Done"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Done"
 - assertVisible: "How are you moving?"
-- scrollUntilVisible:
-    element: "Progress"
-    direction: DOWN
-- tapOn: "Progress"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Progress"
 - assertVisible: "Progress without pressure"
-- scrollUntilVisible:
-    element: "Profile"
-    direction: DOWN
-- tapOn: "Profile"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Profile"
 - assertVisible: "Profile"
-- scrollUntilVisible:
-    element: "Delete All Data"
-    direction: DOWN
-- tapOn: "Delete All Data"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Delete All Data"
 - assertVisible: "Delete all Kineo data?"
-- scrollUntilVisible:
-    element: "Delete all data"
-    direction: DOWN
-- tapOn: "Delete all data"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Delete all data"
 - extendedWaitUntil:
     visible: "A routine shaped around how you feel now."
-    timeout: 15000
+    timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
