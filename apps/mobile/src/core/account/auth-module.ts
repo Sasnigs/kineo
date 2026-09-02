@@ -1,7 +1,4 @@
-import type {
-  AccountState,
-  EmailCredentials,
-} from './account-domain';
+import type { EmailCredentials } from './account-domain';
 import type { Result } from '../shared/result';
 
 export type AuthProvider = 'apple' | 'google' | 'email';
@@ -14,7 +11,7 @@ export type AuthState =
     }>
   | Readonly<{
       kind: 'authenticated';
-      account: AccountState;
+      accountId: string;
       provider: AuthProvider;
     }>;
 

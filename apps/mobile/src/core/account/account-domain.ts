@@ -41,17 +41,27 @@ function isNonEmpty(value: string): boolean {
   return value.trim().length > 0;
 }
 
+export function validateEmailAddress(
+  input: string,
+): Result<string, AccountValidationError> {
+  const email = input.trim().toLocaleLowerCase('en-US');
+  return emailShape.test(email)
+    ? { ok: true, value: email }
+    : { ok: false, error: { code: 'invalidEmail' } };
+}
+
 export function validateEmailCredentials(
   input: EmailCredentials,
 ): Result<EmailCredentials, AccountValidationError> {
-  const email = input.email.trim().toLocaleLowerCase('en-US');
-  if (!emailShape.test(email)) {
-    return { ok: false, error: { code: 'invalidEmail' } };
-  }
+  const email = validateEmailAddress(input.email);
+  if (!email.ok) return email;
   if ([...input.password].length < minimumPasswordCharacterCount) {
     return { ok: false, error: { code: 'passwordTooShort' } };
   }
-  return { ok: true, value: { email, password: input.password } };
+  return {
+    ok: true,
+    value: { email: email.value, password: input.password },
+  };
 }
 
 export function validateLegalAcceptance(
