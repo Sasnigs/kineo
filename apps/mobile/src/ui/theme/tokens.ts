@@ -4,15 +4,15 @@ const adaptiveColor = (light: string, dark: string) =>
   DynamicColorIOS({ light, dark });
 
 export const colors = {
-  canvas: adaptiveColor('#F6F4EC', '#09130F'),
+  canvas: adaptiveColor('#F8F7F2', '#09130F'),
   surface: adaptiveColor('#FFFFFF', '#14231D'),
   elevatedSurface: adaptiveColor('#FCFDF9', '#1B2C25'),
   ink: adaptiveColor('#102A22', '#F4F8F5'),
   secondaryInk: adaptiveColor('#60706A', '#B7C5BF'),
   accent: adaptiveColor('#C7F36A', '#C7F36A'),
-  accentDark: adaptiveColor('#215D4B', '#C7F36A'),
+  accentDark: adaptiveColor('#2B665B', '#C7F36A'),
   accentDeep: adaptiveColor('#123D31', '#D9F8A0'),
-  accentSoft: adaptiveColor('#EAF6D5', '#263E32'),
+  accentSoft: adaptiveColor('#E9F4F0', '#263E32'),
   forest: adaptiveColor('#123D31', '#0E2A22'),
   inverseInk: adaptiveColor('#F8FCF9', '#0A1712'),
   onDark: adaptiveColor('#F8FCF9', '#F4F8F5'),
@@ -91,6 +91,5 @@ export const layout = {
   shadowRadius: 18,
   shadowOffsetY: 10,
   elevation: 4,
-  controlFontSizeMultiplier: 1.6,
-  navigationFontSizeMultiplier: 1.4,
+  fixedBottomBarMaximumFontScale: 1.6,
 } as const;

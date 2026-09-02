@@ -47,10 +47,6 @@ name: First use through routine feedback and deletion
 - runFlow:
     file: subflows/tap-visible-control.yaml
     env:
-      CONTROL_LABEL: "More options"
-- runFlow:
-    file: subflows/tap-visible-control.yaml
-    env:
       CONTROL_LABEL: "Skip this step"
 - assertVisible: "How did neck feel afterward?"
 - runFlow:

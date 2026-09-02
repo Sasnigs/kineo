@@ -574,9 +574,7 @@ describe('Kineo product app', () => {
     await fireEvent.press(await view.findByRole('button', { name: 'Similar' }));
     await fireEvent.press(await view.findByRole('button', { name: 'Okay' }));
     await fireEvent.press(await view.findByRole('button', { name: 'Begin routine' }));
-    await fireEvent.press(await view.findByRole('button', { name: 'More options' }));
-    await view.findByText('What do you need?');
-    await fireEvent.press(view.getByRole('button', { name: 'Something feels wrong' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Something feels wrong' }));
     await view.findByText('Stop if something feels wrong.');
     await fireEvent.press(view.getByRole('button', { name: 'I tapped this by mistake' }));
     await view.findByText('Your place is saved.');

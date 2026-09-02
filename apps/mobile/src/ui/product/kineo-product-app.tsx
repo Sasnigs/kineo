@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -44,6 +45,8 @@ import {
   typography,
 } from '@/ui/theme/tokens';
 
+import { createExclusiveActionGate } from './exclusive-action-gate';
+
 type LocalScreen =
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'error'; error: ProductFlowError }>
@@ -64,7 +67,6 @@ type LocalScreen =
   | Readonly<{ kind: 'attentionGuidance'; prompt: AttentionPrompt }>
   | Readonly<{ kind: 'plan'; plan: PlanPresentation }>
   | Readonly<{ kind: 'routine'; routine: RoutinePresentation }>
-  | Readonly<{ kind: 'routineOptions'; routine: RoutinePresentation }>
   | Readonly<{
       kind: 'alternativePreview';
       routine: RoutinePresentation;
@@ -140,7 +142,7 @@ export function KineoProductApp({
   const [selectedSecondaryArea, setSelectedSecondaryArea] = useState<BodyArea>();
   const [isSecondaryCleared, setIsSecondaryCleared] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const submissionInFlight = useRef(false);
+  const submissionGate = useRef(createExclusiveActionGate());
   const [reminderReconciliationFailed, setReminderReconciliationFailed] = useState(false);
 
   const load = useCallback(async () => {
@@ -220,19 +222,19 @@ export function KineoProductApp({
       | Readonly<{ ok: true; value: Value }>
       | Readonly<{ ok: false; error: ProductFlowError }>
     >) => {
-      if (submissionInFlight.current) return undefined;
-      submissionInFlight.current = true;
-      setIsSubmitting(true);
-      try {
-        const result = await operation();
-        if (!result.ok) {
-          setScreen({ kind: 'error', error: result.error });
+      const result = await submissionGate.current.run(async () => {
+        setIsSubmitting(true);
+        try {
+          return await operation();
+        } finally {
+          setIsSubmitting(false);
         }
-        return result;
-      } finally {
-        submissionInFlight.current = false;
-        setIsSubmitting(false);
+      });
+      if (result === undefined) return undefined;
+      if (!result.ok) {
+        setScreen({ kind: 'error', error: result.error });
       }
+      return result;
     },
     [],
   );
@@ -306,18 +308,16 @@ export function KineoProductApp({
 
   const pauseForRoutineMenu = useCallback(async (
     routine: RoutinePresentation,
-    destination: 'options' | 'end' | 'safety',
+    destination: 'end' | 'safety',
   ) => {
     const paused = routine.status === 'inProgress'
       ? await submit(() => service.pauseRoutine(routine.sessionId))
       : { ok: true as const, value: routine };
     if (!paused?.ok) return;
     setScreen(
-      destination === 'options'
-        ? { kind: 'routineOptions', routine: paused.value }
-        : destination === 'end'
-          ? { kind: 'endConfirmation', routine: paused.value }
-          : { kind: 'safetyGuidance', routine: paused.value },
+      destination === 'end'
+        ? { kind: 'endConfirmation', routine: paused.value }
+        : { kind: 'safetyGuidance', routine: paused.value },
     );
   }, [service, submit]);
 
@@ -425,50 +425,6 @@ export function KineoProductApp({
             movementComfort: undefined,
           })}
         />
-      </Shell>
-    );
-  }
-
-  if (screen.kind === 'routineOptions') {
-    const routine = screen.routine;
-    const movement = routine.currentItem?.kind === 'movement'
-      ? routine.currentItem
-      : undefined;
-    const alternative = movement?.availableAlternatives[0];
-    return (
-      <Shell key="routine-options">
-        <PageHeader eyebrow="ROUTINE OPTIONS" title="What do you need?" />
-        {alternative === undefined ? null : (
-          <ChoiceButton
-            label="Try an alternative"
-            onPress={() => setScreen({
-              kind: 'alternativePreview',
-              routine,
-              alternative,
-            })}
-          />
-        )}
-        <ChoiceButton
-          label="Skip this step"
-          onPress={() => void (async () => {
-            const resumed = await submit(() => service.resumeRoutine(routine.sessionId));
-            if (!resumed?.ok) return;
-            const skipped = await submit(() => service.skipRoutineStep(
-              resumed.value.sessionId,
-              resumed.value.currentStepIndex,
-            ));
-            if (skipped?.ok) setScreen({ kind: 'routine', routine: skipped.value });
-          })()}
-        />
-        <ChoiceButton
-          label="End routine"
-          onPress={() => setScreen({ kind: 'endConfirmation', routine })}
-        />
-        <ChoiceButton
-          label="Something feels wrong"
-          onPress={() => setScreen({ kind: 'safetyGuidance', routine })}
-        />
-        <SecondaryButton label="Back to routine" onPress={() => setScreen({ kind: 'routine', routine })} />
       </Shell>
     );
   }
@@ -658,6 +614,9 @@ export function KineoProductApp({
     if (activeRoutine.status === 'inProgress' && activeRoutine.currentItem !== undefined) {
       const item = activeRoutine.currentItem;
       const alternative = activeRoutine.selectedAlternative;
+      const availableAlternative = item.kind === 'movement'
+        ? item.availableAlternatives[0]
+        : undefined;
       const instruction = item.kind === 'movement'
         ? alternative?.localizedInstruction ?? item.localizedInstruction
         : 'Take this brief transition before continuing.';
@@ -669,7 +628,64 @@ export function KineoProductApp({
         ? alternative?.scheduledDose ?? item.scheduledDose
         : undefined;
       return (
-        <Shell key={`routine-step-${activeRoutine.currentStepIndex}`}>
+        <Shell
+          bottomBar={(
+            <View style={styles.actionStack}>
+              <PrimaryButton
+                icon="arrow-forward"
+                label="Continue"
+                disabled={isSubmitting || !routineStepCanAdvance(activeRoutine, dose)}
+                onPress={() => void updateRoutine(() => service.advanceRoutine(
+                  activeRoutine.sessionId,
+                  activeRoutine.currentStepIndex,
+                ))}
+              />
+              <View style={styles.routineActionRow}>
+                {availableAlternative === undefined ? null : (
+                  <RoutineActionButton
+                    accessibilityLabel="Try an alternative"
+                    disabled={isSubmitting}
+                    icon="swap-horizontal-outline"
+                    label="Alternative"
+                    onPress={() => void (async () => {
+                      const paused = await submit(() => service.pauseRoutine(activeRoutine.sessionId));
+                      if (paused?.ok) {
+                        setScreen({
+                          kind: 'alternativePreview',
+                          routine: paused.value,
+                          alternative: availableAlternative,
+                        });
+                      }
+                    })()}
+                  />
+                )}
+                <RoutineActionButton
+                  disabled={isSubmitting}
+                  icon="play-skip-forward-outline"
+                  label="Skip this step"
+                  onPress={() => void updateRoutine(() => service.skipRoutineStep(
+                    activeRoutine.sessionId,
+                    activeRoutine.currentStepIndex,
+                  ))}
+                />
+                <RoutineActionButton
+                  disabled={isSubmitting}
+                  icon="pause"
+                  label="Pause"
+                  onPress={() => void updateRoutine(() => service.pauseRoutine(activeRoutine.sessionId))}
+                />
+                <RoutineActionButton
+                  accessibilityLabel="Something feels wrong"
+                  disabled={isSubmitting}
+                  icon="alert-circle-outline"
+                  label="Safety"
+                  onPress={() => void pauseForRoutineMenu(activeRoutine, 'safety')}
+                />
+              </View>
+            </View>
+          )}
+          key={`routine-step-${activeRoutine.currentStepIndex}`}
+        >
           <View style={styles.routineProgressRow}>
             <Text style={styles.eyebrow}>STEP {activeRoutine.currentStepIndex + displayIndexOffset} OF {activeRoutine.totalStepCount}</Text>
             <View style={styles.areaBadge}>
@@ -705,29 +721,6 @@ export function KineoProductApp({
             </View>
           )}
           {safetyCue === undefined ? null : <Text style={styles.safetyCue}>{safetyCue}</Text>}
-          <PrimaryButton
-            icon="arrow-forward"
-            label="Continue"
-            disabled={isSubmitting || !routineStepCanAdvance(activeRoutine, dose)}
-            onPress={() => void updateRoutine(() => service.advanceRoutine(
-              activeRoutine.sessionId,
-              activeRoutine.currentStepIndex,
-            ))}
-          />
-          <SecondaryButton
-            icon="pause"
-            label="Pause"
-            disabled={isSubmitting}
-            onPress={() => void updateRoutine(() => service.pauseRoutine(activeRoutine.sessionId))}
-          />
-          <SecondaryButton
-            label="Something feels wrong"
-            onPress={() => void pauseForRoutineMenu(activeRoutine, 'safety')}
-          />
-          <SecondaryButton
-            label="More options"
-            onPress={() => void pauseForRoutineMenu(activeRoutine, 'options')}
-          />
         </Shell>
       );
     }
@@ -794,7 +787,6 @@ export function KineoProductApp({
               onSelect={(duration) => void revise(duration)}
             />
             <PrimaryButton
-              constrainTextScale
               icon="play"
               label="Begin routine"
               disabled={isSubmitting}
@@ -1262,7 +1254,6 @@ export function KineoProductApp({
         bottomBar={(
           <View style={styles.actionStack}>
             <PrimaryButton
-              constrainTextScale
               icon="arrow-forward"
               label="Get started"
               onPress={() => setScreen({ kind: 'ageConfirmation' })}
@@ -1449,7 +1440,7 @@ export function KineoProductApp({
           </View>
           <View style={styles.todayCardPill}>
             <Ionicons color={colors.accentDeep} name="time-outline" size={layout.smallIconSize} />
-            <Text style={styles.todayCardPillText}>2 questions per area</Text>
+            <Text style={styles.todayCardPillText}>Brief check-in</Text>
           </View>
         </View>
         <Text style={styles.todayCardEyebrow}>YOUR NEXT ROUTINE</Text>
@@ -1492,6 +1483,9 @@ function Shell({
   children: ReactNode;
   bottomBar?: ReactNode;
 }>) {
+  const { fontScale } = useWindowDimensions();
+  const shouldInlineBottomBar = bottomBar !== undefined &&
+    fontScale > layout.fixedBottomBarMaximumFontScale;
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.shell}>
@@ -1500,9 +1494,14 @@ function Shell({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.readable}>{children}</View>
+          <View style={styles.readable}>
+            {children}
+            {shouldInlineBottomBar ? (
+              <View style={styles.inlineBottomBar}>{bottomBar}</View>
+            ) : null}
+          </View>
         </ScrollView>
-        {bottomBar === undefined ? null : (
+        {bottomBar === undefined || shouldInlineBottomBar ? null : (
           <View style={styles.bottomBar}>{bottomBar}</View>
         )}
       </View>
@@ -1720,12 +1719,11 @@ function AreaSelection({
   );
 }
 
-function PrimaryButton({ label, onPress, disabled = false, icon, constrainTextScale = false }: Readonly<{
+function PrimaryButton({ label, onPress, disabled = false, icon }: Readonly<{
   label: string;
   onPress: () => void;
   disabled?: boolean;
   icon?: KineoIconName;
-  constrainTextScale?: boolean;
 }>) {
   return (
     <Pressable
@@ -1740,10 +1738,7 @@ function PrimaryButton({ label, onPress, disabled = false, icon, constrainTextSc
         {icon === undefined ? null : (
           <Ionicons color={colors.inverseInk} name={icon} size={layout.smallIconSize} />
         )}
-        <Text
-          maxFontSizeMultiplier={constrainTextScale ? layout.controlFontSizeMultiplier : undefined}
-          style={styles.primaryButtonText}
-        >{label}</Text>
+        <Text style={styles.primaryButtonText}>{label}</Text>
       </View>
     </Pressable>
   );
@@ -1819,7 +1814,7 @@ function PlanDurationSelector({
 }>) {
   return (
     <View style={styles.durationSelector}>
-      <Text maxFontSizeMultiplier={layout.navigationFontSizeMultiplier} style={styles.sectionLabel}>CHOOSE A DURATION</Text>
+      <Text style={styles.sectionLabel}>CHOOSE A DURATION</Text>
       <View accessibilityRole="radiogroup" style={styles.segmentedControl}>
         {(['quick', 'standard'] as const).map((duration) => (
           <Pressable
@@ -1838,11 +1833,52 @@ function PlanDurationSelector({
               name={duration === 'quick' ? 'flash-outline' : 'layers-outline'}
               size={layout.smallIconSize}
             />
-            <Text maxFontSizeMultiplier={layout.navigationFontSizeMultiplier} style={styles.segmentText}>{durationLabel(duration)}</Text>
+            <Text style={styles.segmentText}>{durationLabel(duration)}</Text>
+            {activeDuration === duration ? (
+              <Ionicons
+                accessibilityElementsHidden
+                color={colors.accentDeep}
+                importantForAccessibility="no-hide-descendants"
+                name="checkmark-circle"
+                size={layout.smallIconSize}
+              />
+            ) : null}
           </Pressable>
         ))}
       </View>
     </View>
+  );
+}
+
+function RoutineActionButton({
+  accessibilityLabel,
+  disabled = false,
+  icon,
+  label,
+  onPress,
+}: Readonly<{
+  accessibilityLabel?: string;
+  disabled?: boolean;
+  icon: KineoIconName;
+  label: string;
+  onPress: () => void;
+}>) {
+  return (
+    <Pressable
+      accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.routineAction,
+        disabled && styles.buttonDisabled,
+        pressed && styles.buttonPressed,
+      ]}
+    >
+      <Ionicons color={colors.accentDark} name={icon} size={layout.smallIconSize} />
+      <Text style={styles.routineActionText}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -1892,7 +1928,7 @@ function NavigationBar({
             name={active === tab.id ? tab.selectedIcon : tab.icon}
             size={layout.iconSize}
           />
-          <Text maxFontSizeMultiplier={layout.navigationFontSizeMultiplier} style={[
+          <Text style={[
             styles.navigationText,
             active === tab.id && styles.navigationTextSelected,
           ]}>{tab.label}</Text>
@@ -2045,6 +2081,7 @@ const styles = StyleSheet.create({
   page: { flexGrow: 1, paddingBottom: spacing.roomy, paddingHorizontal: spacing.screenHorizontal, paddingTop: spacing.screenVertical },
   readable: { alignSelf: 'center', flexGrow: 1, gap: spacing.large, maxWidth: layout.readableWidth, width: '100%' },
   bottomBar: { backgroundColor: colors.canvas, borderTopColor: colors.border, borderTopWidth: layout.borderWidth, paddingBottom: spacing.micro, paddingHorizontal: spacing.screenHorizontal, paddingTop: spacing.compact },
+  inlineBottomBar: { borderTopColor: colors.border, borderTopWidth: layout.borderWidth, marginTop: spacing.standard, paddingTop: spacing.standard },
   actionStack: { gap: spacing.compact },
   centered: { alignItems: 'center', flex: 1, gap: spacing.standard, justifyContent: 'center' },
   header: { gap: spacing.compact },
@@ -2129,7 +2166,7 @@ const styles = StyleSheet.create({
   durationSelector: { gap: spacing.micro },
   segmentedControl: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.button, borderWidth: layout.borderWidth, flexDirection: 'row', padding: spacing.compact },
   segment: { alignItems: 'center', borderRadius: radius.button, flex: 1, flexDirection: 'row', gap: spacing.compact, justifyContent: 'center', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.standard },
-  segmentSelected: { backgroundColor: colors.accentSoft },
+  segmentSelected: { backgroundColor: colors.accentSoft, borderColor: colors.accentDark, borderWidth: layout.selectedBorderWidth },
   segmentText: { color: colors.accentDark, fontSize: typography.detailSize, fontWeight: typography.strongWeight },
   consistencyMeter: { ...raisedSurfaceShadow, backgroundColor: colors.forest, borderRadius: radius.card, gap: spacing.standard, padding: spacing.roomy },
   metricHeader: { alignItems: 'center', flexDirection: 'row', gap: spacing.compact },
@@ -2143,6 +2180,9 @@ const styles = StyleSheet.create({
   consistencyDotComplete: { backgroundColor: colors.accent, opacity: 1 },
   historyCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.compact, padding: spacing.roomy },
   routineProgressRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  routineActionRow: { flexDirection: 'row', gap: spacing.compact },
+  routineAction: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.button, borderWidth: layout.borderWidth, flex: 1, gap: spacing.micro, justifyContent: 'center', minHeight: layout.controlMinimumHeight, padding: spacing.compact },
+  routineActionText: { color: colors.accentDark, fontSize: typography.captionSize, fontWeight: typography.strongWeight, textAlign: 'center' },
   mediaPlaceholder: { ...raisedSurfaceShadow, alignItems: 'center', aspectRatio: layout.mediaAspectRatio, backgroundColor: colors.accentSoft, borderRadius: radius.card, justifyContent: 'center', overflow: 'hidden' },
   mediaPlaceholderText: { color: colors.accentDark, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   routineVideo: { height: '100%', width: '100%' },
