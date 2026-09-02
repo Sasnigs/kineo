@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | E0–E4 complete; E5 qualification in progress; E6 cutover blocked |
+| Status | E0–E4 complete; Account track supersedes the no-network prototype constraint |
 | Target | Expo SDK 57, React Native, strict TypeScript, iOS 17 minimum |
 | Source | Existing product behavior and TD-00 through TD-08 |
 | Last reviewed | September 1, 2026 |
@@ -15,7 +15,7 @@ This document overrides SwiftUI-, Swift-, Xcode-module-, and GRDB-specific imple
 - Port vertical behavior slices; do not translate files mechanically.
 - Treat the existing deterministic Swift behavior and product matrices as reference evidence, not code to call at runtime.
 - Do not share production state between the Swift and Expo apps during migration.
-- Do not add networking, telemetry, accounts, remote configuration, HealthKit, or new product scope.
+- Add only the approved Account authentication and synchronization network surface in TD-10 through TD-12. Telemetry, remote configuration, and HealthKit remain excluded.
 - The `kineo` URL scheme exists only so Expo can launch development builds and the simulator. It does not authorize product deep links, inbound navigation, or authentication callbacks.
 - Keep exact-archive and physical-device qualification visibly open until those checks run.
 
@@ -70,6 +70,6 @@ E2 is delivered in three slices: catalog contracts, the signed prototype catalog
 - `apps/mobile` launches from the Expo toolchain without changing the Swift app.
 - TypeScript strict checking, linting, and non-watch Jest tests run locally.
 - The first domain slice implements the complete area-level matrix through a pure interface.
-- No runtime network client, telemetry package, account system, database, or native capability is added.
+- No runtime network client, telemetry package, account system, database, or native capability was added during E0; TD-10 through TD-12 now authorize a narrowly scoped Account data plane.
 - Dependency versions and lockfile are committed; generated caches and secrets are ignored.
 - During E0–E5, the Swift tests and project-boundary checks remained green.

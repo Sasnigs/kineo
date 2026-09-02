@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — M1–M3 complete; M4–M12 sequentially authorized subject to documented gates |
+| Status | Approved flow contract with Account amendment |
 | Scope | Onboarding, Today/check-in, attention, plan, routine, feedback, Progress, and Profile |
 | Product source | `../KINEO_PRODUCT_DESIGN.md` v0.5 |
 | UX source | `../KINEO_UX_DESIGN_SPEC.md` |
@@ -28,7 +28,16 @@ stateDiagram-v2
     Completion --> Today: done
 ```
 
-The map shows the main lifecycle. The tables below define guards, writes, recovery, and secondary paths.
+The map shows the established product lifecycle after authenticated hydration. TD-10 adds the required first-use path before Onboarding.
+
+~~~mermaid
+flowchart LR
+    promise[Product promise] --> adult[18+ declaration]
+    adult --> auth[Authentication]
+    auth --> legal[Legal acceptance]
+    legal --> hydrate[Account hydration]
+    hydrate --> onboarding[Progressive product onboarding]
+~~~
 
 ## 1. Decisions that remove source ambiguity
 
@@ -71,7 +80,7 @@ These decisions are authoritative for implementation unless the product contract
 | `MainTabs` | `selectTab(Today/Progress/Profile)` | Retain an independent navigation path per tab | Selected tab root |
 | Any state | `deleteAllVerified` | Complete TD-02's phased erasure and remove its pending marker | `Onboarding.Welcome` |
 
-Bootstrap precedence is: protected-data availability, pending deletion, onboarding, then main tabs. Attention flags affect Today content but do not block access to Progress, Profile, privacy, deletion, support, or safety information. An unfinished routine never auto-resumes into active playback; Today offers an explicit Resume or End choice and reconstructs it paused.
+Bootstrap precedence is: protected-data availability, pending Account deletion, session restoration, authentication, legal acceptance, hydration, onboarding, then main tabs. Attention flags affect Today content but do not block access to Progress, Profile, privacy, deletion, support, or safety information. An unfinished routine never auto-resumes into active playback; Today offers an explicit Resume or End choice and reconstructs it paused.
 
 ## 4. Onboarding state machine
 

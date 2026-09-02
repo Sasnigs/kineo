@@ -2,15 +2,15 @@
 
 | Field | Value |
 | --- | --- |
-| Version | 0.5 |
+| Version | 0.6 |
 | Status | **Approved for Prototype Implementation** |
 | Product | Kineo |
 | Working line | **Daily movement that adapts to how you feel.** |
 | Initial platform | iPhone app implemented with Expo/React Native |
 | Initial market | United States |
-| Last updated | August 7, 2026 |
+| Last updated | September 2, 2026 |
 
-> This is a living product and engineering specification. Version 0.5 authorizes prototype implementation against this contract. Public distribution still requires the separate release gates and **1.0 — Release-Ready Design**.
+> This is a living product and engineering specification. Version 0.6 adds required accounts and protected synchronization. Public distribution still requires the separate release gates and **1.0 — Release-Ready Design**.
 
 ## Document Lifecycle
 
@@ -22,7 +22,8 @@ This document evolves through explicit review stages:
 | 0.2 | User experience | Onboarding, Today, guided routine, feedback, Progress, and Profile flows are decision-complete |
 | 0.3 | Technical behavior | Data model, deterministic rules, offline behavior, HealthKit boundaries, and failure states are decision-complete |
 | 0.4 | Prototype readiness review | Placeholder content and technical defaults are approved; remaining launch issues are separated |
-| 0.5 | Approved for prototype implementation | No prototype implementation blocker remains |
+| 0.5 | Approved for prototype implementation | No local prototype implementation blocker remains |
+| 0.6 | Account architecture | Required authentication, synchronization, and privacy lifecycle are decision-complete |
 | 1.0 | Release-ready design | Production content, safety, privacy, and App Store gates are closed |
 
 Every revision must update the Decision Register, Open Decisions, and Revision History. A rejected or deferred feature is recorded rather than silently removed.
@@ -35,7 +36,7 @@ Kineo is a consumer daily movement companion for adults who self-manage recurrin
 
 Unlike a static stretching library, Kineo creates a short guided routine from the user's current check-in, active body areas, and previous routine responses. Optional HealthKit information may appear separately as personal context but never controls the routine. Version one uses deterministic and explainable rules. It does not diagnose a condition, treat pain, measure recovery, calculate physical capacity, or generate exercises.
 
-The product is local-first and works offline. Kineo does not transmit check-in answers, body areas, HealthKit-derived values, routine responses, or free text in version one. Privacy-minimized remote diagnostics and generic event counts may be used only within the boundaries in this document.
+The product uses a required Account and synchronizes Kineo product data through a protected cloud service. Cached history and an active Routine remain usable offline. Initial authentication, committed Check-in submission, and creation of a new Plan require internet access and server validation. Kineo still excludes HealthKit expansion, telemetry, advertising, and third-party diagnostics from this implementation.
 
 ### Product thesis
 
@@ -47,7 +48,7 @@ Daily check-in -> bounded routine selection -> guided completion -> response fee
 
 ### Version-one outcome
 
-A user can open Kineo, complete a very short check-in, understand why a routine was selected, perform a guided routine, report how it felt, and see patterns over time without an account or internet connection.
+An authenticated user can complete a very short Check-in, understand why a Plan was selected, perform a guided Routine, report how it felt, and see synchronized patterns over time. An already active Routine and cached history remain available without connectivity.
 
 ## 2. Product Contract
 
@@ -165,7 +166,7 @@ Profile contains:
 - HealthKit connection/context state and explanation, without claiming that denied read access can be distinguished from no matching data.
 - Privacy, safety, support, data deletion, and app information.
 
-No Kineo account is required in version one.
+Profile also contains Account access, export, Reset History, logout, and Delete Account controls.
 
 ## 5. Onboarding
 
@@ -175,11 +176,15 @@ Onboarding is progressive. It obtains only the information needed to produce the
 
 1. Product promise and consumer-product scope.
 2. Confirm the user is 18 or older.
-3. Select a primary area.
-4. Optionally select one secondary area.
-5. No routine preference is requested in the initial prototype. A later content requirement may add an explicit preference in Profile, not silently extend onboarding.
-6. Review and acknowledge the one-time safety screen.
-7. Enter Today and complete the first check-in.
+3. Authenticate with Apple, Google, or verified email and password.
+4. Accept the current Terms and Privacy Policy versions.
+5. Hydrate Account state.
+6. Select a primary area.
+7. Optionally select one secondary area.
+8. Review and acknowledge the one-time safety screen.
+9. Enter Today and complete the first Check-in.
+
+No routine preference is requested during onboarding. Authentication requires connectivity; an interrupted flow resumes from the last committed step.
 
 ### 5.2 Deferred onboarding prompts
 
@@ -510,9 +515,9 @@ Accessibility is tested on physical iPhones across supported screen sizes using 
 
 ## 12. Data and Privacy Architecture
 
-### 12.1 Local sensitive data
+### 12.1 Sensitive product data
 
-Kineo does not intentionally transmit the following product values in version one:
+Kineo synchronizes the following values only to its authenticated private account data service:
 
 - Age-eligibility acknowledgment.
 - Body-area selections.
@@ -523,35 +528,19 @@ Kineo does not intentionally transmit the following product values in version on
 - Better, Same, and Worse feedback.
 - Progress aggregates and reminder preference.
 
-These values are stored using iOS Complete Protection, excluded from Kineo-controlled cloud synchronization, and marked for backup exclusion using Apple's documented resource mechanism. That marker is the strongest app-controlled mechanism but is not an absolute guarantee about operating-system backup behavior. Raw HealthKit samples are read only as needed and are not copied into Kineo's database; Kineo stores only the minimum derived local context required for display. Health data may separately sync through Apple's services according to the user's Apple settings, which is outside Kineo's control and must not be described as Kineo storage.
+These values are cached locally using iOS Complete Protection and Apple's documented backup-exclusion mechanism, then synchronized over authenticated encrypted transport to private PostgreSQL tables. Raw HealthKit samples remain outside this design. No sensitive value appears in email, logs, notification text, diagnostics, filenames, or object-storage keys.
 
 ### 12.2 Permitted remote services
 
-Remote services may process:
-
-- Crash and performance diagnostics scrubbed of sensitive product values.
-- Privacy-minimized product events with no body area, check-in answer, HealthKit-derived value, routine-response value, routine identifier, or free text.
-
-Example permitted events include `onboarding_completed`, `routine_started`, and `routine_completed`. Product copy calls this telemetry **privacy-minimized**, not anonymous. Version one does not attach a Kineo account ID, advertising identifier, stable device identifier, or cross-app identifier. Events are aggregated locally into coarse counts before transmission; properties and time buckets must not reasonably reconstruct an individual's health or usage history. Remote services must not persist raw network metadata as a substitute identifier.
-
-Third-party SDKs are prohibited by default. Any proposed diagnostics or analytics service requires a documented data-flow inventory, SDK inspection, retention limit, deletion process, privacy-policy disclosure, required user consent, and verification that collection remains within this section. Kineo-controlled telemetry is off until the user explicitly opts in, can be disabled in Profile, and never affects product functionality. Apple-managed aggregate analytics and diagnostics follow the user's system sharing settings and must be described separately.
+Approved remote services are Supabase Auth, authenticated Edge Functions, private PostgreSQL, and Resend transactional authentication email. No product analytics, advertising, remote diagnostics, or generic third-party SDK is included. Apple and Google receive only the information inherent to their selected sign-in flows; Resend messages contain no wellness history.
 
 ### 12.3 Offline behavior
 
-Without connectivity, users can:
-
-- Complete onboarding after the app and content are installed.
-- Check in.
-- Generate and complete a routine.
-- Record feedback.
-- Review Progress.
-- Change local preferences.
-
-Permitted telemetry may retry when connectivity returns. Telemetry failure or refusal never blocks product access or changes local data.
+Without connectivity, an authenticated user with hydrated data can review cached Progress and continue the active Routine from installed assets. Draft input may be retained locally, but submitting a Check-in, creating a new Plan, changing account-wide settings, exporting data, resetting history, and deleting the Account require server validation. Pending and signed-out states explain the limitation without implying that local data is authoritative.
 
 ### 12.4 Accounts and synchronization
 
-Version one has no Kineo account and no cross-device health-data synchronization. Required accounts and encrypted synchronization are roadmap items. Introducing them requires a new privacy and security design review; it is not merely a login-screen change.
+One adult profile belongs to each required Account. Supabase credentials remain in Auth; Kineo profile tables do not duplicate email. Every product row is Account-owned, clients cannot write arbitrary rows, and authenticated server commands derive ownership only from the verified token. Synchronization is idempotent, cursor-based, and protected against retries, cross-account relationships, stale writes, and stale history after Reset History.
 
 ### 12.5 User control
 
@@ -560,10 +549,12 @@ Profile must provide:
 - A clear explanation of local and remote data use.
 - A way to disconnect HealthKit permissions through the appropriate system flow.
 - A way to change the Kineo-controlled telemetry choice, when telemetry exists.
-- A way to reset Kineo's local history.
-- A way to delete locally stored Kineo data.
+- A way to reset synchronized Kineo history.
+- A private structured personal-data export.
+- A way to log out and wipe local cached data.
+- An in-app Delete Account workflow.
 
-Reset History removes check-ins, plan decisions, sessions, feedback, Progress/eligibility projections, and safety-transition history while retaining onboarding, preferences, reminders, and only the minimum current Attention Required row. The confirmation must disclose that exception so reset cannot silently become a safety bypass. Delete All removes every Kineo-owned local record, including current Attention rows, and any pending telemetry. Because transmitted telemetry has no Kineo lookup identifier, it cannot be retrieved as an individual record and expires under the disclosed aggregate-retention policy. The interface must separately explain that Kineo cannot delete data held independently by Apple, including HealthKit source data and Apple-managed diagnostics.
+Reset History removes account-wide check-ins, Plans, Routines, feedback, Progress projections, and safety-transition history while retaining Account access, settings, legal records, and only the minimum current Attention Required row. It increments History Epoch so stale offline mutations cannot restore removed history. Delete Account requires reauthentication, revokes Sessions and Installations first, then irreversibly removes domain and Auth data through a resumable server workflow. The interface separately explains data held independently by Apple or Google.
 
 ## 13. Product Success Measures
 
@@ -613,27 +604,30 @@ Any later upload, export, or research use of sensitive patterns requires a separ
 12. **Two-area catalog gap:** If a combined routine does not exist, Kineo serves the primary area and explains that the secondary area was not included.
 13. **Routine control:** Pause, skip, stop, and approved-alternative actions preserve session state and do not invent content.
 14. **Feedback:** Better/Same/Worse is stored separately for each included area; skipping feedback is allowed.
-15. **Offline:** Check-in, selection, routine playback from installed assets, feedback, and Progress work in airplane mode.
-16. **Reset and deletion:** Reset History removes check-ins, routines, feedback, Progress, and safety-transition history while retaining the minimum current Attention row; Delete All removes those values plus every current Attention row and all other Kineo-owned local data before returning to onboarding.
+15. **Offline:** Cached Progress and an active Routine work in airplane mode; Check-in submission and new Plan creation clearly require connectivity.
+16. **Reset and deletion:** Reset History is account-wide and rejects old-epoch mutations; Delete Account revokes access before removing domain and Auth data, resumes after interruption, and wipes the local cache.
 17. **Skipped feedback:** A completed routine without feedback does not qualify for Active unlock and does not replace the most recent recorded response.
 18. **Stopped routine:** A stopped routine remains incomplete; an explicit response is retained, but the routine does not qualify for Active unlock.
 19. **Area-specific history:** Changing the primary area does not transfer Active eligibility or responses from another area.
 20. **Repeat session:** Starting another routine on the same day requires a new check-in and creates a distinct auditable decision.
 21. **Bounded composition:** A two-area session uses only an allowed template-module pairing and stays within the chosen duration range.
 22. **Incompatible composition:** An unapproved pairing produces a disclosed primary-only routine rather than an improvised combination.
-23. **Privacy boundary:** Network inspection shows no body area, check-in, HealthKit-derived value, routine identifier, response, free text, or stable Kineo user/device identifier leaving the app.
+23. **Privacy boundary:** Network inspection shows only authenticated, documented Kineo payloads reaching allow-listed Supabase endpoints; no sensitive value appears in logs, email, notifications, filenames, telemetry, or unapproved services.
 24. **Protected storage:** Sensitive local records use Complete Protection and carry the documented backup-exclusion marker; representative backup inspection finds no Kineo sensitive record without claiming control over all OS backup behavior.
 25. **Accessible core flow:** Every common task can be completed with VoiceOver, Voice Control, and accessibility text sizes without losing instructions or controls.
 26. **Accessible routine:** A user can understand and control the timer and movement sequence without seeing video, hearing audio, distinguishing color, or performing a precise gesture.
 27. **Active reset:** A Worse response resets the area's qualifying Active count; skipped feedback or a stopped routine cannot rebuild it.
-28. **Telemetry choice:** Before opt-in and after opt-out, network inspection shows no Kineo-controlled product telemetry, with no loss of product functionality.
+28. **Telemetry absence:** Network inspection shows no Kineo-controlled product telemetry; authentication and synchronization traffic is classified separately.
+29. **Authentication:** Apple and Google cancellation is recoverable; email access requires verification; generic responses resist account enumeration.
+30. **Multi-installation sync:** Duplicate and reordered retries are idempotent, stale mutable writes return a conflict, and only one unfinished Routine exists per Account.
+31. **Export:** Recent reauthentication produces a private, one-time, expiring structured export for only the authenticated Account.
+32. **Stale-device protection:** A revoked or pre-reset Installation cannot restore deleted history or continue Account commands.
 
 ## 15. Roadmap and Excluded Ideas
 
 ### 15.1 Deferred roadmap
 
 - AI ranking of pre-approved routines after real usage data exists.
-- Required accounts and encrypted cross-device synchronization.
 - Clinician-supported users and clinician-facing workflows.
 - Additional body areas.
 - Adaptive reminder timing.
@@ -725,10 +719,10 @@ These decisions may remain open during internal prototyping but must be resolved
 | HealthKit as context only | Accepted | Preserves optional sleep and activity visibility without using them to control routines |
 | Guided routine with user controls | Accepted | Supports completion and personal agency |
 | Today/Progress/Profile | Accepted | Keeps daily guidance central |
-| Local-first and offline | Accepted | Protects sensitive data and improves reliability |
+| Required account and protected sync | Accepted | Preserves history across Installations and makes server validation authoritative |
 | Split measurement model | Accepted | Keeps sensitive personal insights on-device and limits remote measurement to privacy-minimized operational counts |
 | No stable Kineo analytics identifier | Accepted | Prevents generic telemetry from becoming individual health or usage histories |
-| No account in version one | Accepted | Avoids unnecessary onboarding and cloud scope |
+| Supabase Auth and private PostgreSQL | Accepted | Provides native provider authentication, verified email, managed sessions, and a constrained server data plane |
 | Accessibility as product contract | Accepted | Core movement and safety tasks must remain usable with common iPhone assistive technologies and settings |
 | Placeholder content for development only | Accepted | Enables product prototyping without treating placeholders as shippable content |
 | Vision-based movement check | Excluded | Technical feasibility does not establish clinical validity or product need |
@@ -738,7 +732,7 @@ These decisions may remain open during internal prototyping but must be resolved
 | Prototype timing | Resolved for prototype design | Five-minute Quick and ten-minute Standard fixtures make timing deterministic without setting production claims |
 | HealthKit in initial prototype | Off | Baseline and presentation behavior require a separate approved design |
 | Prototype persistence | Resolved for prototype design | Exactly pinned GRDB 7.10.0 backed by SQLite provides explicit constraints, migrations, transactions, file handling, and auditable deletion |
-| Prototype telemetry | None | Avoids an unapproved data flow and preserves a verifiable zero-network core |
+| Prototype telemetry | None | Authentication and synchronization are approved network flows; unrelated telemetry remains absent |
 
 ## 18. References and Policy Inputs
 
@@ -755,6 +749,7 @@ These sources inform the product boundaries; they do not constitute legal advice
 
 | Version | Date | Status | Summary |
 | --- | --- | --- | --- |
+| 0.6 | September 2, 2026 | Approved account amendment | Required accounts, Supabase synchronization, server-authoritative Plan creation, changed offline behavior, export, reset, and deletion lifecycle |
 | 0.5.1 | August 27, 2026 | Approved implementation amendment | Changed the implementation platform to Expo/React Native while preserving iPhone-first scope and every product and release boundary |
 | 0.5 | August 7, 2026 | Approved for Prototype Implementation | Recorded product-owner approval after Gate D0 passed; authorized M1 while preserving later milestone and release gates |
 | 0.1.7 | August 6, 2026 | Draft | Clarified prototype onboarding, external-participant safety-copy gating, future HealthKit placement, and technical-document identifiers after independent review |

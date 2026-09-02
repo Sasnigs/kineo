@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Expo E0–E4 complete; E5 qualification in progress; E6 cutover blocked |
+| Status | Expo E0–E4 complete; account track A0–A5 authorized |
 | Platform | Expo/React Native iPhone app, iOS 17 minimum; Swift retained for E6 qualification |
 | Sources | Product design, UX specification, and TD-00 through TD-09 |
-| Last updated | September 1, 2026 |
+| Last updated | September 2, 2026 |
 
 ## 1. Development approach
 
@@ -259,7 +259,29 @@ Learning stays attached to the current milestone:
 
 There is no separate tutorial application. The target split is roughly 15% explanation, 70% building, and 15% verification/review.
 
-## 5. Milestone completion rule
+## 5. Account architecture track — A0 through A5
+
+~~~mermaid
+flowchart LR
+    a0[A0 Contracts] --> a1[A1 Types and schema]
+    a1 --> a2[A2 Authentication]
+    a2 --> a3[A3 Commands and sync]
+    a3 --> a4[A4 Privacy lifecycle]
+    a4 --> a5[A5 Qualification]
+~~~
+
+| Stage | Outcome | Exit gate |
+| --- | --- | --- |
+| A0 Contracts | Product, threat, offline, and privacy contracts match required accounts | Documentation consistency passes |
+| A1 Types and schema | Shared typed commands plus private PostgreSQL and local outbox migrations | Type, schema, ownership, and migration tests pass |
+| A2 Authentication | Apple, Google, verified email, secure sessions, and reauthentication | Provider-fake and local Auth/Mailpit tests pass |
+| A3 Commands and sync | Server-authoritative Check-in/Plan and resilient cursor synchronization | Idempotency, conflict, paging, and two-Installation tests pass |
+| A4 Privacy lifecycle | Logout wipe, Reset History, export, and resumable Delete Account | Reset-epoch, authorization, expiry, revocation, and interruption tests pass |
+| A5 Qualification | Security, privacy, accessibility, load, simulator, and device evidence | No Critical/Major issue; external gates are recorded |
+
+This track supersedes the account-free and fully offline assumptions in earlier milestones. It does not authorize production credentials, public distribution, or bypass professional and privacy review.
+
+## 6. Milestone completion rule
 
 A milestone is complete only when:
 
@@ -270,10 +292,10 @@ A milestone is complete only when:
 - the implementation still matches the product, UX, and owning TD;
 - the next milestone can build on it without a known redesign.
 
-## 6. Explicitly deferred from the core build
+## 7. Explicitly deferred from the core build
 
 - HealthKit context until its addendum is approved.
 - Kineo telemetry or third-party diagnostics until a separate data-flow review.
-- Accounts, cloud sync, exports, clinician workflows, widgets, or shared containers.
+- Clinician workflows, widgets, or shared containers.
 - Camera, pose, joint, or generative movement analysis.
 - Public distribution until M11 and M12 close the production gates.

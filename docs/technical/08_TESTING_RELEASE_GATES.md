@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved verification contract — M1–M3 complete; M4–M12 sequentially authorized subject to documented gates |
+| Status | Approved verification contract with Account amendment |
 | Scope | Automated tests, manual validation, acceptance traceability, prototype and public-release gates |
 | Sources | `../KINEO_PRODUCT_DESIGN.md`, `../KINEO_UX_DESIGN_SPEC.md`, TD-01 through TD-07 |
 | Implementation authorization | Not granted by this document |
@@ -90,7 +90,7 @@ Fixtures contain no real user or HealthKit data. Production incident data may no
 ### 3.3 Build channels
 
 - `DebugPrototype`: fixture and placeholder content permitted and visibly identified.
-- `InternalPrototype`: schema-complete placeholder content permitted; HealthKit and Kineo telemetry off; no general network client.
+- `InternalPrototype`: schema-complete placeholder content permitted; HealthKit and Kineo telemetry off; only approved Auth and Sync networking.
 - `ReleaseCandidate/Release`: placeholder content prohibited; only approved production catalog/copy and reviewed capabilities.
 
 Catalog validation derives prototype durations from the authoritative catalog configuration: Quick is nominally 5 minutes (270–360-second valid range) and Standard is nominally 10 minutes (480–720-second valid range). These are internal fixtures, not production claims.
@@ -199,7 +199,18 @@ Snapshot tests detect regressions but cannot prove usability, reading order, foc
 
 ## 5. Privacy and security verification
 
-### 5.1 Network boundary (`PRIV-NET`)
+### 5.1 Account, authentication, and synchronization
+
+- `AUTH-001`: Apple and Google cancellation, unavailable provider, invalid credential, revocation, and generic error handling.
+- `AUTH-002`: verified-email signup/login, resend, reset, password policy, compromised-password rejection, and enumeration resistance.
+- `AUTH-003`: protected refresh-token storage, serialized refresh rotation, expiry, and reauthentication grant enforcement.
+- `SYNC-001`: bootstrap pagination and duplicate, stale, reordered, malformed, and interrupted Mutation handling.
+- `SYNC-002`: cross-Account denial for every table, command, and composite relationship.
+- `SYNC-003`: two Installations racing for an unfinished Routine; only the originating owner may control playback.
+- `SYNC-004`: History Epoch rejects pre-reset Mutations and prevents stale-data resurrection.
+- `PRIV-ACC-001`: logout pending-work choice, local wipe, export authorization/expiry, interrupted deletion, token revocation, and stale-Installation rejection.
+
+### 5.2 Network boundary (`PRIV-NET`)
 
 Run the ReleaseCandidate build through an intercepting proxy and device-level traffic capture during cold launch and every common task, with both IPv4/IPv6 and Wi-Fi/cellular where practical.
 
@@ -207,7 +218,7 @@ Initial prototype expectation: no Kineo-controlled network request. Any observed
 
 If telemetry is later approved, repeat before opt-in, after opt-in, immediately after opt-out, offline queue/retry, and Delete All. Payload/header/query inspection must show no body area, check-in/safety answer, Health value, routine/movement/catalog identifier, feedback, free text, reminder time, stable Kineo/device/account/cross-app identifier, or reconstructable precise timeline.
 
-### 5.2 Storage and backup (`PRIV-STO`)
+### 5.3 Storage and backup (`PRIV-STO`)
 
 - Enumerate the exact app-owned sensitive directory and database sidecars after creation, writes, migration, checkpoint, Reset, and Delete.
 - Verify `NSFileProtectionComplete` and the backup-exclusion resource value on database, WAL, SHM, derived caches, pending diagnostic/telemetry files, and recoverable copies.
@@ -215,11 +226,11 @@ If telemetry is later approved, repeat before opt-in, after opt-in, immediately 
 - Inspect representative encrypted and unencrypted device backups for Kineo sensitive records. Record that this is evidence of configuration/representative behavior, not a guarantee about all OS behavior.
 - Search UserDefaults, restoration payloads, Spotlight, widgets, pasteboard, notifications, logs, screenshots created by the app, and temporary directories for prohibited values.
 
-### 5.3 Deletion residue (`PRIV-DEL`)
+### 5.4 Deletion residue (`PRIV-DEL`)
 
 Seed a uniquely identifiable synthetic dataset, pending notification, derived context, and (if it exists) pending telemetry. Execute Reset and Delete separately, close/relaunch, inspect logical repositories and app-owned files, then verify the exact retained/deleted scope. Inject a partial-deletion failure and confirm the UI does not claim success.
 
-### 5.4 Logging and dependency review (`PRIV-LOG`)
+### 5.5 Logging and dependency review (`PRIV-LOG`)
 
 - Exercise every error path and scan unified logs/crash artifacts for forbidden values and identifiers.
 - Logger APIs accept allow-listed codes only; mutation tests attempt forbidden metadata.
@@ -338,7 +349,7 @@ Rerun D0 whenever any source or TD changes. Passing D0 does not authorize coding
 - Gate D0 and P0 pass.
 - All 28 acceptance scenarios pass with prototype fixtures where applicable; a deliberately disabled optional feature uses the explicit absence/non-influence evidence in section 7 rather than a fabricated UI path.
 - Placeholder catalog is visibly labeled and technically blocked from public configuration.
-- HealthKit and Kineo telemetry are off/absent; no general network client or third-party SDK is present.
+- HealthKit and Kineo telemetry are off/absent; network access is restricted to approved authentication and synchronization dependencies.
 - Airplane-mode, lifecycle restoration, schema/migration, Reset/Delete, notification privacy, and network-zero tests pass.
 - Automated accessibility suite and at least one complete physical-device common-task pass have no critical/major defects.
 - Internal testers receive explicit prototype/non-production-content disclosure.

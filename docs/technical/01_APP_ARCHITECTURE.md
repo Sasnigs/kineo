@@ -2,12 +2,12 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Verified Swift reference architecture; Expo target architecture is owned by TD-09 |
+| Status | Historical Swift reference; Expo and account architecture owned by TD-09 through TD-12 |
 | Scope | Swift reference implementation during Expo migration |
 | Sources | `../KINEO_PRODUCT_DESIGN.md`, `../KINEO_UX_DESIGN_SPEC.md` |
 | Last reviewed | August 9, 2026 |
 
-This document defines the verified Swift reference architecture. TD-09 overrides its platform-specific choices for migrated slices; product behavior remains governed by the source documents and TD-00.
+This document defines the verified Swift reference architecture. TD-09 overrides its platform-specific choices and TD-10 through TD-12 supersede every account-free, no-network, and local-only clause.
 
 ## 1. Goals and constraints
 
@@ -21,7 +21,7 @@ The architecture must enforce:
 - build rejection of placeholder public content;
 - accessibility within each feature contract.
 
-Version one has no account, server, sync, remote configuration, generative content, camera analysis, or exercise marketplace.
+Version one excludes remote configuration, generative content, camera analysis, and an exercise marketplace. The approved Account, server, and synchronization architecture is defined by TD-10 through TD-12.
 
 ## 2. Decisions
 
@@ -36,7 +36,7 @@ Version one has no account, server, sync, remote configuration, generative conte
 | Project structure | Thin Xcode application target plus local Swift package modules | Enforces dependency direction without creating separate repositories. |
 | Persistence | SQLite through Swift Package Manager with GRDB `7.10.0` using an exact-version requirement | Provides explicit schemas, transactions, migrations, and testable queries. It is a local source library, not a remote service or diagnostics SDK. |
 | Content | Versioned JSON manifest with explicit review evidence and bundled media in the application bundle | Guarantees offline availability and reproducible composition without implying a cryptographic signature. |
-| Networking | No general network client in the prototype | Prevents accidental transmission and is unnecessary for the core product. |
+| Networking | Allow-listed Supabase authentication and Edge Function client only | Supports approved Account and synchronization flows without creating a general endpoint surface. |
 | Telemetry | Disabled; no telemetry dependency or endpoint | Safest implementation of the unresolved telemetry decision. Add only through a separate approved design. |
 | HealthKit context | Feature flag off in the prototype | Baseline window and display rules are unresolved. The selection core has no HealthKit dependency regardless. |
 
@@ -228,14 +228,14 @@ Use stable failure categories with recoverability, not raw error messages:
 
 | Failure | Required behavior |
 | --- | --- |
-| Protected files unavailable while device is locked | Do not create an empty database. Hold or pause the UI, explain that data becomes available after unlock, and retry on protected-data notification. If a final write was prevented, recover only the last committed routine checkpoint and infer nothing after it. |
+| Protected files unavailable while device is locked | Do not create an empty database or hydrate over it. Hold or pause the UI, explain that data becomes available after unlock, and retry on protected-data notification. If a final write was prevented, recover only the last committed routine checkpoint and infer nothing after it. |
 | Catalog missing, invalid, placeholder in public build, or incompatible | Produce Content Unavailable. Never improvise or substitute unrelated content. |
 | Database write failure | Preserve the last committed state, stop forward navigation, and offer Retry. Do not show a plan that lacks its saved decision or start a routine that lacks its saved snapshot/session. |
 | Database corruption or future schema | Do not silently recreate. Preserve the file, show a local-data recovery screen, and offer user-confirmed deletion. |
 | Routine asset missing | Move a prepared session to abandoned and prevent guidance from starting. If already active after an update anomaly, retain the session and offer End. |
 | Notification permission denied | Keep reminders off and link to system settings; core use is unchanged. |
 | HealthKit unavailable or yields no observable context | Hide context or show a neutral no-context state; never claim read denial, and keep selection output identical. |
-| No connectivity | Core UI remains fully functional. The prototype should not present a blocking network error because it has no required network call. |
+| No connectivity | Cached history and an active Routine remain available. Authentication, Check-in submission, new Plan creation, and Account privacy commands show a typed recoverable offline state. |
 | Application termination during a session | Restore the latest checkpoint and offer Resume or End; never infer elapsed repetitions or completion. |
 
 Errors shown to users are plain-language and non-clinical. Diagnostic logs must use category codes and must not interpolate body area, answers, routine identifiers, feedback, or free text.
@@ -250,7 +250,7 @@ Use separate build configurations with compile-time enforcement:
 
 Capabilities are deny-by-default:
 
-- No general network client in prototype modules.
+- No general network client outside the allow-listed Auth and Sync adapters in TD-10 and TD-11.
 - No HealthKit entitlement until its separate implementation decision is approved.
 - Notification entitlement/use is local-only and optional.
 - No iCloud or CloudKit container.

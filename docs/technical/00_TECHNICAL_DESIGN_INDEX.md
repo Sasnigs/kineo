@@ -2,13 +2,13 @@
 
 | Field | Value |
 | --- | --- |
-| Technical-design version | 0.1 |
-| Status | Approved prototype contract; Expo E6 cutover pending |
+| Technical-design version | 0.2 |
+| Status | Approved account architecture; implementation in progress |
 | Platform | Expo/React Native iPhone app; Swift retained for final qualification |
 | Minimum deployment target | iOS 17.0 |
 | Product source | `../KINEO_PRODUCT_DESIGN.md` |
 | UX source | `../KINEO_UX_DESIGN_SPEC.md` |
-| Last updated | August 28, 2026 |
+| Last updated | September 2, 2026 |
 
 ## 1. Purpose and authority
 
@@ -39,6 +39,9 @@ flowchart LR
     catalog --> flows
     flows --> ui[TD-06 UI and accessibility]
     platform --> ui
+    architecture --> auth[TD-10 Account and authentication]
+    auth --> sync[TD-11 Cloud data and sync]
+    sync --> privacy[TD-12 Account privacy lifecycle]
     architecture --> migration[TD-09 Expo migration]
     migration --> tests[TD-08 Tests and gates]
     data --> tests
@@ -64,10 +67,13 @@ Arrows show decision dependency, not runtime calls.
 | `07_PLATFORM_SERVICES.md` | Notifications, HealthKit boundary, media, app lifecycle, logging, feature flags | Selection or content policy |
 | `08_TESTING_RELEASE_GATES.md` | Test layers, traceability, fixtures, privacy checks, prototype and release gates | Production content approval itself |
 | `09_EXPO_MIGRATION.md` | Platform migration order, parity seams, cutover conditions | Product behavior or release approval |
+| `10_ACCOUNT_AUTHENTICATION.md` | Authentication, session, verification, reauthentication, logout | Product-data synchronization |
+| `11_CLOUD_DATA_SYNCHRONIZATION.md` | Private cloud model, commands, outbox, bootstrap, synchronization, conflicts | Authentication provider UI |
+| `12_ACCOUNT_PRIVACY_LIFECYCLE.md` | Reset History, export, Delete Account, interrupted-workflow recovery | Routine selection policy |
 
 ## 3. Non-negotiable system invariants
 
-- The app is useful without an account, network connection, HealthKit, analytics, or notification permission.
+- An Account is required. Initial login, Check-in submission, and new Plan creation require connectivity; cached history and an active Routine remain available offline after hydration.
 - A routine is selected only from validated, bundled, versioned content. The app never invents or generatively modifies a movement.
 - The selection engine is deterministic for the same current inputs, history, rules version, and catalog version.
 - HealthKit, reminder settings, time available, telemetry state, and device activity never affect routine level or composition.
@@ -75,7 +81,7 @@ Arrows show decision dependency, not runtime calls.
 - A safety block cannot be bypassed by an override, duration choice, catalog fallback, secondary omission, or changing selected areas. The documented return or correction flow is required.
 - Quick and Standard are separately authored variants. Quick is never a runtime truncation of Standard.
 - Active eligibility is stored and calculated independently for each body area. History never transfers between areas.
-- Sensitive product values remain on-device, use iOS Complete Protection, carry Apple's documented backup-exclusion marker, and never appear in logs, notifications, crash payloads, or network requests. Kineo does not claim absolute control over OS backup behavior.
+- Sensitive product values use protected local storage and authenticated private cloud storage. They never appear in logs, email, notifications, filenames, telemetry, or unapproved network requests.
 - Data deletion is complete and testable; reset and delete are different operations only if the UI describes the difference precisely.
 - Placeholder content can run only in an internal prototype configuration and makes no production or professional-review claim.
 
@@ -101,6 +107,11 @@ These decisions remove implementation ambiguity while preserving explicit public
 | TD-014 | Version capture | Every decision and session captures rules, catalog, and content versions at creation | Preserves auditability after app or catalog updates |
 | TD-015 | Remote configuration | None in version one; flags are local build configuration plus persisted rollout state only where specified | Core behavior must be stable offline and not change invisibly |
 | TD-016 | Implementation platform | Migrate to Expo SDK 57 through tested vertical slices; keep the Swift app as the runnable reference until parity cutover | Preserves verified behavior while enabling a cross-platform implementation without a dual-runtime production app |
+| TD-017 | Account access | Require Apple, Google, or verified email/password authentication through Supabase Auth | Enables durable synchronized Account functionality |
+| TD-018 | Cloud writes | Route product mutations through authenticated Edge Functions and transactional PostgreSQL routines; clients cannot write private domain tables | Centralizes validation, ownership, idempotency, and auditability |
+| TD-019 | Plan authority | Submit Check-ins online and create Plans on the server with shared versioned TypeScript rules | Prevents divergent multi-Installation decisions |
+| TD-020 | Reset protection | Increment Account History Epoch and reject older Mutations | Prevents stale offline data from resurrecting deleted history |
+| TD-021 | Privacy lifecycle | Provide reauthenticated export and resumable irreversible Delete Account in-app | Matches Account ownership and deletion obligations |
 
 ## 5. Remaining gates, not implementation ambiguities
 
