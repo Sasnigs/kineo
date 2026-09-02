@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -7,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -43,6 +45,8 @@ import {
   typography,
 } from '@/ui/theme/tokens';
 
+import { createExclusiveActionGate } from './exclusive-action-gate';
+
 type LocalScreen =
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'error'; error: ProductFlowError }>
@@ -63,7 +67,6 @@ type LocalScreen =
   | Readonly<{ kind: 'attentionGuidance'; prompt: AttentionPrompt }>
   | Readonly<{ kind: 'plan'; plan: PlanPresentation }>
   | Readonly<{ kind: 'routine'; routine: RoutinePresentation }>
-  | Readonly<{ kind: 'routineOptions'; routine: RoutinePresentation }>
   | Readonly<{
       kind: 'alternativePreview';
       routine: RoutinePresentation;
@@ -139,6 +142,7 @@ export function KineoProductApp({
   const [selectedSecondaryArea, setSelectedSecondaryArea] = useState<BodyArea>();
   const [isSecondaryCleared, setIsSecondaryCleared] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionGate = useRef(createExclusiveActionGate());
   const [reminderReconciliationFailed, setReminderReconciliationFailed] = useState(false);
 
   const load = useCallback(async () => {
@@ -218,16 +222,21 @@ export function KineoProductApp({
       | Readonly<{ ok: true; value: Value }>
       | Readonly<{ ok: false; error: ProductFlowError }>
     >) => {
-      if (isSubmitting) return undefined;
-      setIsSubmitting(true);
-      const result = await operation();
-      setIsSubmitting(false);
+      const result = await submissionGate.current.run(async () => {
+        setIsSubmitting(true);
+        try {
+          return await operation();
+        } finally {
+          setIsSubmitting(false);
+        }
+      });
+      if (result === undefined) return undefined;
       if (!result.ok) {
         setScreen({ kind: 'error', error: result.error });
       }
       return result;
     },
-    [isSubmitting],
+    [],
   );
 
   const onboarding =
@@ -299,18 +308,16 @@ export function KineoProductApp({
 
   const pauseForRoutineMenu = useCallback(async (
     routine: RoutinePresentation,
-    destination: 'options' | 'end' | 'safety',
+    destination: 'end' | 'safety',
   ) => {
     const paused = routine.status === 'inProgress'
       ? await submit(() => service.pauseRoutine(routine.sessionId))
       : { ok: true as const, value: routine };
     if (!paused?.ok) return;
     setScreen(
-      destination === 'options'
-        ? { kind: 'routineOptions', routine: paused.value }
-        : destination === 'end'
-          ? { kind: 'endConfirmation', routine: paused.value }
-          : { kind: 'safetyGuidance', routine: paused.value },
+      destination === 'end'
+        ? { kind: 'endConfirmation', routine: paused.value }
+        : { kind: 'safetyGuidance', routine: paused.value },
     );
   }, [service, submit]);
 
@@ -418,50 +425,6 @@ export function KineoProductApp({
             movementComfort: undefined,
           })}
         />
-      </Shell>
-    );
-  }
-
-  if (screen.kind === 'routineOptions') {
-    const routine = screen.routine;
-    const movement = routine.currentItem?.kind === 'movement'
-      ? routine.currentItem
-      : undefined;
-    const alternative = movement?.availableAlternatives[0];
-    return (
-      <Shell key="routine-options">
-        <PageHeader eyebrow="ROUTINE OPTIONS" title="What do you need?" />
-        {alternative === undefined ? null : (
-          <ChoiceButton
-            label="Try an alternative"
-            onPress={() => setScreen({
-              kind: 'alternativePreview',
-              routine,
-              alternative,
-            })}
-          />
-        )}
-        <ChoiceButton
-          label="Skip this step"
-          onPress={() => void (async () => {
-            const resumed = await submit(() => service.resumeRoutine(routine.sessionId));
-            if (!resumed?.ok) return;
-            const skipped = await submit(() => service.skipRoutineStep(
-              resumed.value.sessionId,
-              resumed.value.currentStepIndex,
-            ));
-            if (skipped?.ok) setScreen({ kind: 'routine', routine: skipped.value });
-          })()}
-        />
-        <ChoiceButton
-          label="End routine"
-          onPress={() => setScreen({ kind: 'endConfirmation', routine })}
-        />
-        <ChoiceButton
-          label="Something feels wrong"
-          onPress={() => setScreen({ kind: 'safetyGuidance', routine })}
-        />
-        <SecondaryButton label="Back to routine" onPress={() => setScreen({ kind: 'routine', routine })} />
       </Shell>
     );
   }
@@ -651,6 +614,9 @@ export function KineoProductApp({
     if (activeRoutine.status === 'inProgress' && activeRoutine.currentItem !== undefined) {
       const item = activeRoutine.currentItem;
       const alternative = activeRoutine.selectedAlternative;
+      const availableAlternative = item.kind === 'movement'
+        ? item.availableAlternatives[0]
+        : undefined;
       const instruction = item.kind === 'movement'
         ? alternative?.localizedInstruction ?? item.localizedInstruction
         : 'Take this brief transition before continuing.';
@@ -662,15 +628,77 @@ export function KineoProductApp({
         ? alternative?.scheduledDose ?? item.scheduledDose
         : undefined;
       return (
-        <Shell key={`routine-step-${activeRoutine.currentStepIndex}`}>
+        <Shell
+          bottomBar={(
+            <View style={styles.actionStack}>
+              <PrimaryButton
+                icon="arrow-forward"
+                label="Continue"
+                disabled={isSubmitting || !routineStepCanAdvance(activeRoutine, dose)}
+                onPress={() => void updateRoutine(() => service.advanceRoutine(
+                  activeRoutine.sessionId,
+                  activeRoutine.currentStepIndex,
+                ))}
+              />
+              <View style={styles.routineActionRow}>
+                {availableAlternative === undefined ? null : (
+                  <RoutineActionButton
+                    accessibilityLabel="Try an alternative"
+                    disabled={isSubmitting}
+                    icon="swap-horizontal-outline"
+                    label="Alternative"
+                    onPress={() => void (async () => {
+                      const paused = await submit(() => service.pauseRoutine(activeRoutine.sessionId));
+                      if (paused?.ok) {
+                        setScreen({
+                          kind: 'alternativePreview',
+                          routine: paused.value,
+                          alternative: availableAlternative,
+                        });
+                      }
+                    })()}
+                  />
+                )}
+                <RoutineActionButton
+                  disabled={isSubmitting}
+                  icon="play-skip-forward-outline"
+                  label="Skip this step"
+                  onPress={() => void updateRoutine(() => service.skipRoutineStep(
+                    activeRoutine.sessionId,
+                    activeRoutine.currentStepIndex,
+                  ))}
+                />
+                <RoutineActionButton
+                  disabled={isSubmitting}
+                  icon="pause"
+                  label="Pause"
+                  onPress={() => void updateRoutine(() => service.pauseRoutine(activeRoutine.sessionId))}
+                />
+              </View>
+            </View>
+          )}
+          persistentBottomBar={(
+            <SecondaryButton
+              disabled={isSubmitting}
+              icon="alert-circle-outline"
+              label="Something feels wrong"
+              onPress={() => void pauseForRoutineMenu(activeRoutine, 'safety')}
+            />
+          )}
+          key={`routine-step-${activeRoutine.currentStepIndex}`}
+        >
           <View style={styles.routineProgressRow}>
             <Text style={styles.eyebrow}>STEP {activeRoutine.currentStepIndex + displayIndexOffset} OF {activeRoutine.totalStepCount}</Text>
-            <Text style={styles.areaBadgeText}>{areaLabels[item.sourceArea]}</Text>
+            <View style={styles.areaBadge}>
+              <Ionicons color={colors.accentDark} name="body-outline" size={layout.smallIconSize} />
+              <Text style={styles.areaBadgeText}>{areaLabels[item.sourceArea]}</Text>
+            </View>
           </View>
           {item.kind === 'movement' ? (
             <RoutineVideo accessibilityLabel={item.accessibleDescription} />
           ) : (
             <View style={styles.mediaPlaceholder} accessibilityLabel="Routine transition">
+              <Ionicons color={colors.accentDark} name="arrow-forward-circle-outline" size={layout.heroIconSize} />
               <Text style={styles.mediaPlaceholderText}>NEXT MOVEMENT</Text>
             </View>
           )}
@@ -678,38 +706,22 @@ export function KineoProductApp({
           <Text style={styles.supporting}>{instruction}</Text>
           {dose === undefined ? null : (
             <View style={styles.routineTimerCard}>
-              <Text style={styles.routineTimerText}>
-                {routineTimerText(activeRoutine, dose)}
-              </Text>
-              <Text style={styles.cardBody}>
-                {dose.kind === 'timed'
-                  ? `${dose.activeSeconds} seconds planned`
-                  : `${dose.repetitionCount} repetitions`}
-              </Text>
+              <View style={styles.routineTimerIcon}>
+                <Ionicons color={colors.forest} name="timer-outline" size={layout.iconSize} />
+              </View>
+              <View style={styles.routineTimerContent}>
+                <Text style={styles.routineTimerText}>
+                  {routineTimerText(activeRoutine, dose)}
+                </Text>
+                <Text style={styles.cardBody}>
+                  {dose.kind === 'timed'
+                    ? `${dose.activeSeconds} seconds planned`
+                    : `${dose.repetitionCount} repetitions`}
+                </Text>
+              </View>
             </View>
           )}
           {safetyCue === undefined ? null : <Text style={styles.safetyCue}>{safetyCue}</Text>}
-          <PrimaryButton
-            label="Continue"
-            disabled={isSubmitting || !routineStepCanAdvance(activeRoutine, dose)}
-            onPress={() => void updateRoutine(() => service.advanceRoutine(
-              activeRoutine.sessionId,
-              activeRoutine.currentStepIndex,
-            ))}
-          />
-          <SecondaryButton
-            label="Pause"
-            disabled={isSubmitting}
-            onPress={() => void updateRoutine(() => service.pauseRoutine(activeRoutine.sessionId))}
-          />
-          <SecondaryButton
-            label="Something feels wrong"
-            onPress={() => void pauseForRoutineMenu(activeRoutine, 'safety')}
-          />
-          <SecondaryButton
-            label="More options"
-            onPress={() => void pauseForRoutineMenu(activeRoutine, 'options')}
-          />
         </Shell>
       );
     }
@@ -768,43 +780,73 @@ export function KineoProductApp({
     };
     const gentlerLevel = activePlan.gentlerLevel;
     return (
-      <Shell key="plan">
+      <Shell
+        bottomBar={(
+          <View style={styles.actionStack}>
+            <PlanDurationSelector
+              activeDuration={activePlan.duration}
+              onSelect={(duration) => void revise(duration)}
+            />
+            <PrimaryButton
+              icon="play"
+              label="Begin routine"
+              disabled={isSubmitting}
+              onPress={() => void (async () => {
+                const result = await submit(() => service.startRoutine(activePlan.decisionId));
+                if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
+              })()}
+            />
+            <NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />
+          </View>
+        )}
+        key="plan"
+      >
         <PageHeader eyebrow="READY WHEN YOU ARE" title="Your plan for today" />
         <View style={styles.planHero}>
+          <View style={styles.planHeroTopRow}>
+            <View style={styles.planLevelIcon}>
+              <Ionicons
+                color={colors.forest}
+                name={planLevelIcon(activePlan.deliveredLevel)}
+                size={layout.iconSize}
+              />
+            </View>
+            <View style={styles.planDurationBadge}>
+              <Ionicons color={colors.accent} name="time-outline" size={layout.smallIconSize} />
+              <Text style={styles.planDurationBadgeText}>{durationLabel(activePlan.duration)}</Text>
+            </View>
+          </View>
+          <Text style={styles.planKicker}>YOUR ROUTINE LEVEL</Text>
           <Text style={styles.planLevel}>{levelLabel(activePlan.deliveredLevel)}</Text>
           <Text style={styles.planMeta}>
-            {durationLabel(activePlan.duration)} · {activePlan.itemCount} steps · {Math.round(activePlan.nominalSeconds / secondsPerMinute)} min
+            {activePlan.itemCount} guided steps · {Math.round(activePlan.nominalSeconds / secondsPerMinute)} min
           </Text>
         </View>
-        <Text style={styles.supporting}>
-          Included today: {areaListLabel(activePlan.includedAreas)}.
-        </Text>
-        {planExplanationLines(activePlan).map((line) => (
-          <Text key={line} style={styles.supporting}>{line}</Text>
-        ))}
-        {activePlan.omittedSecondary === undefined ? null : (
-          <Text style={styles.supporting}>
-            {omittedAreaExplanation(
-              activePlan.omittedSecondary.area,
-              activePlan.omittedSecondary.reason,
-            )}
-          </Text>
-        )}
-        <View style={styles.segmentedControl} accessibilityRole="radiogroup">
-          {(['quick', 'standard'] as const).map((duration) => (
-            <Pressable
-              accessibilityRole="radio"
-              accessibilityState={{ checked: activePlan.duration === duration }}
-              key={duration}
-              onPress={() => void revise(duration)}
-              style={[
-                styles.segment,
-                activePlan.duration === duration && styles.segmentSelected,
-              ]}
-            >
-              <Text style={styles.segmentText}>{durationLabel(duration)}</Text>
-            </Pressable>
+        <View style={styles.planReasonCard}>
+          <Text style={styles.cardTitle}>Why this routine</Text>
+          <View style={styles.planReasonRow}>
+            <Ionicons color={colors.accentDark} name="body-outline" size={layout.smallIconSize} />
+            <Text style={styles.planReasonText}>
+              Included today: {areaListLabel(activePlan.includedAreas)}.
+            </Text>
+          </View>
+          {planExplanationLines(activePlan).map((line) => (
+            <View key={line} style={styles.planReasonRow}>
+              <Ionicons color={colors.accentDark} name="checkmark-circle-outline" size={layout.smallIconSize} />
+              <Text style={styles.planReasonText}>{line}</Text>
+            </View>
           ))}
+          {activePlan.omittedSecondary === undefined ? null : (
+            <View style={styles.planReasonRow}>
+              <Ionicons color={colors.attentionInk} name="information-circle-outline" size={layout.smallIconSize} />
+              <Text style={styles.planReasonText}>
+                {omittedAreaExplanation(
+                  activePlan.omittedSecondary.area,
+                  activePlan.omittedSecondary.reason,
+                )}
+              </Text>
+            </View>
+          )}
         </View>
         {gentlerLevel === undefined ? null : (
           <SecondaryButton
@@ -812,14 +854,6 @@ export function KineoProductApp({
             onPress={() => void revise(activePlan.duration, gentlerLevel)}
           />
         )}
-        <PrimaryButton
-          label="Begin routine"
-          disabled={isSubmitting}
-          onPress={() => void (async () => {
-            const result = await submit(() => service.startRoutine(activePlan.decisionId));
-            if (result?.ok) setScreen({ kind: 'routine', routine: result.value });
-          })()}
-        />
         {activePlan.pauseTodayAvailable ? (
           <SecondaryButton
             label="Pause Today"
@@ -832,7 +866,6 @@ export function KineoProductApp({
             })()}
           />
         ) : null}
-        <NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />
       </Shell>
     );
   }
@@ -840,14 +873,15 @@ export function KineoProductApp({
   if (screen.kind === 'progress') {
     const hasHistory = screen.progress.areas.some(({ checkInCount }) => checkInCount > 0);
     return (
-      <Shell key="progress">
+      <Shell
+        bottomBar={<NavigationBar active="progress" onSelect={(tab) => void openTab(tab)} />}
+        key="progress"
+      >
         <PageHeader eyebrow="YOUR HISTORY" title="Progress without pressure" />
-        <View style={styles.metricCard}>
-          <Text style={styles.metricValue}>
-            {screen.progress.weeklyParticipationDayCount} of {screen.progress.weeklyGoalDays}
-          </Text>
-          <Text style={styles.metricLabel}>consistency days this week</Text>
-        </View>
+        <ConsistencyMeter
+          current={screen.progress.weeklyParticipationDayCount}
+          goal={screen.progress.weeklyGoalDays}
+        />
         <Text style={styles.cardBody}>
           {screen.progress.participationDayCount} total participation days. Completed routines, intentional stops, and eligible Pause Today choices count equally.
         </Text>
@@ -881,7 +915,6 @@ export function KineoProductApp({
             ))}
           </>
         )}
-        <NavigationBar active="progress" onSelect={(tab) => void openTab(tab)} />
       </Shell>
     );
   }
@@ -900,7 +933,10 @@ export function KineoProductApp({
       );
     }
     return (
-      <Shell key="progress-area">
+      <Shell
+        bottomBar={<NavigationBar active="progress" onSelect={(tab) => void openTab(tab)} />}
+        key="progress-area"
+      >
         <PageHeader eyebrow="AREA DETAIL" title={areaLabels[area.area]} />
         <View style={styles.historyCard}>
           <Text style={styles.cardTitle}>{area.participationCount} participation choices</Text>
@@ -933,7 +969,6 @@ export function KineoProductApp({
           label="Back to Progress"
           onPress={() => setScreen({ kind: 'progress', progress: screen.progress })}
         />
-        <NavigationBar active="progress" onSelect={(tab) => void openTab(tab)} />
       </Shell>
     );
   }
@@ -1047,7 +1082,10 @@ export function KineoProductApp({
       if (result?.ok) setScreen({ kind: 'profile', profile: result.value });
     };
     return (
-      <Shell key="profile">
+      <Shell
+        bottomBar={<NavigationBar active="profile" onSelect={(tab) => void openTab(tab)} />}
+        key="profile"
+      >
         <PageHeader eyebrow="SETTINGS" title="Profile" />
         <View style={styles.historyCard}>
           <Text style={styles.cardTitle}>Areas</Text>
@@ -1153,7 +1191,6 @@ export function KineoProductApp({
           <Text style={styles.cardBody}>Kineo internal prototype · Expo build</Text>
           <Text style={styles.cardBody}>No account, telemetry, or remote synchronization is enabled.</Text>
         </View>
-        <NavigationBar active="profile" onSelect={(tab) => void openTab(tab)} />
       </Shell>
     );
   }
@@ -1214,21 +1251,36 @@ export function KineoProductApp({
 
   if (onboarding?.step === 'welcome') {
     return (
-      <Shell key="welcome">
-        <View style={styles.brandPill}><Text style={styles.brandPillText}>KINEO</Text></View>
-        <PageHeader
-          eyebrow="MOVE WITH TODAY IN MIND"
-          title="A routine shaped around how you feel now."
-        />
-        <Text style={styles.supporting}>
-          A short check-in guides a private, on-device movement routine for your neck and back.
-        </Text>
-        <View style={styles.featureCard}>
-          <FeatureRow number="01" text="Quick daily check-in" />
-          <FeatureRow number="02" text="A routine matched to your answers" />
-          <FeatureRow number="03" text="Progress without pressure" />
+      <Shell
+        bottomBar={(
+          <View style={styles.actionStack}>
+            <PrimaryButton
+              icon="arrow-forward"
+              label="Get started"
+              onPress={() => setScreen({ kind: 'ageConfirmation' })}
+            />
+          </View>
+        )}
+        key="welcome"
+      >
+        <View style={styles.welcomeHero}>
+          <BrandMark inverse />
+          <Text style={styles.welcomeEyebrow}>MOVE WITH TODAY IN MIND</Text>
+          <Text accessibilityRole="header" style={styles.welcomeTitle}>
+            A routine shaped around how you feel now.
+          </Text>
+          <Text style={styles.welcomeBody}>
+            A short check-in guides a private, on-device movement routine for your neck and back.
+          </Text>
+          <HeroArtwork />
         </View>
-        <PrimaryButton label="Get started" onPress={() => setScreen({ kind: 'ageConfirmation' })} />
+        <View style={styles.infoPillRow}>
+          <InfoPill icon="shield-checkmark-outline" label="Private by design" />
+          <InfoPill icon="options-outline" label="No routine browsing" />
+        </View>
+        <Text style={styles.welcomeFootnote}>
+          For adults managing recurring neck or back discomfort. Wellness guidance, not medical care.
+        </Text>
       </Shell>
     );
   }
@@ -1326,7 +1378,10 @@ export function KineoProductApp({
   if (screen.kind === 'start' && screen.state.kind === 'attentionRequired') {
     const attentionPrompt = screen.state.prompt;
     return (
-      <Shell key="attention-required">
+      <Shell
+        bottomBar={<NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />}
+        key="attention-required"
+      >
         <PageHeader eyebrow="ATTENTION REQUIRED" title="Pause before another routine." />
         <Text style={styles.supporting}>
           Your earlier answer for {areaLabels[attentionPrompt.area].toLowerCase()} needs a fresh safety check before Kineo can continue.
@@ -1335,14 +1390,16 @@ export function KineoProductApp({
           label="Review now"
           onPress={() => setScreen({ kind: 'attentionReturn', prompt: attentionPrompt })}
         />
-        <NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />
       </Shell>
     );
   }
 
   if (screen.kind === 'attentionGuidance') {
     return (
-      <Shell key="attention-guidance">
+      <Shell
+        bottomBar={<NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />}
+        key="attention-guidance"
+      >
         <PageHeader eyebrow="ATTENTION REQUIRED" title="Kineo cannot guide this change." />
         <Text style={styles.supporting}>
           Your answer for {areaLabels[screen.prompt.area].toLowerCase()} described a new, sudden, unusual, or uncertain change. Kineo will not provide another routine right now.
@@ -1353,7 +1410,6 @@ export function KineoProductApp({
         <Text style={styles.supporting}>
           On your next visit, Kineo will ask whether this area has returned to its usual recurring pattern.
         </Text>
-        <NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />
       </Shell>
     );
   }
@@ -1362,26 +1418,51 @@ export function KineoProductApp({
     ? screen.state.primaryArea
     : undefined;
   return (
-    <Shell key="today">
+    <Shell
+      bottomBar={<NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />}
+      key="today"
+    >
       <View style={styles.todayTopRow}>
-        <View>
-          <Text style={styles.eyebrow}>TODAY</Text>
-          <Text style={styles.todayTitle}>How are you moving?</Text>
+        <BrandMark />
+        <View style={styles.areaBadge}>
+          <Ionicons color={colors.accentDark} name="location-outline" size={layout.smallIconSize} />
+          <Text style={styles.areaBadgeText}>{primaryArea ? areaLabels[primaryArea] : 'Kineo'}</Text>
         </View>
-        <View style={styles.areaBadge}><Text style={styles.areaBadgeText}>{primaryArea ? areaLabels[primaryArea] : 'Kineo'}</Text></View>
+      </View>
+      <View style={styles.todayIntro}>
+        <Text style={styles.eyebrow}>TODAY</Text>
+        <Text accessibilityRole="header" style={styles.todayTitle}>How are you moving?</Text>
+        <Text style={styles.supporting}>Take a moment, then let today’s answers shape what comes next.</Text>
       </View>
       <View style={styles.todayCard}>
+        <View style={styles.todayCardTopRow}>
+          <View style={styles.todayCardIcon}>
+            <Ionicons color={colors.forest} name="sparkles" size={layout.iconSize} />
+          </View>
+          <View style={styles.todayCardPill}>
+            <Ionicons color={colors.accentDeep} name="time-outline" size={layout.smallIconSize} />
+            <Text style={styles.todayCardPillText}>Brief check-in</Text>
+          </View>
+        </View>
         <Text style={styles.todayCardEyebrow}>YOUR NEXT ROUTINE</Text>
-        <Text style={styles.todayCardTitle}>Start with a quick check-in.</Text>
-        <Text style={styles.todayCardBody}>Three focused answers. No long daily questionnaire.</Text>
-        <PrimaryButton label="Check in" disabled={isSubmitting} onPress={() => void startCheckIn()} />
+        <Text style={styles.todayCardTitle}>Start with how today feels.</Text>
+        <Text style={styles.todayCardBody}>Short, focused, and shaped by your answers—not a library to search.</Text>
+        <PrimaryButton
+          disabled={isSubmitting}
+          icon="arrow-forward"
+          label="Check in"
+          onPress={() => void startCheckIn()}
+        />
       </View>
       <View style={styles.testSection}>
-        <Text style={styles.testLabel}>TESTING</Text>
+        <View style={styles.testHeading}>
+          <Ionicons color={colors.secondaryInk} name="flask-outline" size={layout.smallIconSize} />
+          <Text style={styles.testLabel}>INTERNAL TESTING</Text>
+        </View>
         <SecondaryButton
+          icon="refresh-outline"
           label="Reset demo to first use"
           disabled={isSubmitting}
-          danger
           onPress={() => void (async () => {
             const result = await submit(() => service.deleteAllData());
             if (result?.ok || result?.error.code === 'persistence') {
@@ -1390,17 +1471,46 @@ export function KineoProductApp({
           })()}
         />
       </View>
-      <NavigationBar active="today" onSelect={(tab) => void openTab(tab)} />
     </Shell>
   );
 }
 
-function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
+type KineoIconName = keyof typeof Ionicons.glyphMap;
+
+function Shell({
+  children,
+  bottomBar,
+  persistentBottomBar,
+}: Readonly<{
+  children: ReactNode;
+  bottomBar?: ReactNode;
+  persistentBottomBar?: ReactNode;
+}>) {
+  const { fontScale } = useWindowDimensions();
+  const shouldInlineBottomBar = bottomBar !== undefined &&
+    fontScale > layout.fixedBottomBarMaximumFontScale;
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
-        <View style={styles.readable}>{children}</View>
-      </ScrollView>
+      <View style={styles.shell}>
+        <ScrollView
+          contentContainerStyle={styles.page}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.readable}>
+            {children}
+            {shouldInlineBottomBar ? (
+              <View style={styles.inlineBottomBar}>{bottomBar}</View>
+            ) : null}
+          </View>
+        </ScrollView>
+        {bottomBar === undefined && persistentBottomBar === undefined ? null : (
+          <View style={styles.bottomBar}>
+            {shouldInlineBottomBar ? null : bottomBar}
+            {persistentBottomBar}
+          </View>
+        )}
+      </View>
     </SafeAreaView>
   );
 }
@@ -1410,6 +1520,82 @@ function PageHeader({ eyebrow, title }: Readonly<{ eyebrow: string; title: strin
     <View style={styles.header}>
       <Text style={styles.eyebrow}>{eyebrow}</Text>
       <Text accessibilityRole="header" style={styles.title}>{title}</Text>
+    </View>
+  );
+}
+
+function BrandMark({ inverse = false }: Readonly<{ inverse?: boolean }>) {
+  return (
+    <View style={styles.brandMark}>
+      <View style={[styles.brandGlyph, inverse && styles.brandGlyphInverse]}>
+        <Ionicons
+          color={inverse ? colors.forest : colors.accentDark}
+          name="pulse"
+          size={layout.smallIconSize}
+        />
+      </View>
+      <Text style={[styles.brandName, inverse && styles.brandNameInverse]}>KINEO</Text>
+    </View>
+  );
+}
+
+function HeroArtwork() {
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={styles.heroArtwork}
+    >
+      <View style={styles.heroPath} />
+      <View style={[styles.heroPath, styles.heroPathTrailing]} />
+      <View style={styles.heroOrb}>
+        <View style={styles.heroOrbInner}>
+          <Ionicons color={colors.forest} name="body-outline" size={layout.heroIconSize} />
+        </View>
+      </View>
+      <View style={styles.heroFloatBadge}>
+        <Ionicons color={colors.accentDeep} name="sparkles" size={layout.smallIconSize} />
+        <Text style={styles.heroFloatBadgeText}>Shaped by today</Text>
+      </View>
+    </View>
+  );
+}
+
+function InfoPill({ icon, label }: Readonly<{ icon: KineoIconName; label: string }>) {
+  return (
+    <View style={styles.infoPill}>
+      <Ionicons color={colors.accentDeep} name={icon} size={layout.smallIconSize} />
+      <Text style={styles.infoPillText}>{label}</Text>
+    </View>
+  );
+}
+
+function ConsistencyMeter({ current, goal }: Readonly<{ current: number; goal: number }>) {
+  const days = Array.from({ length: goal }, (_, index) => index < current);
+  return (
+    <View
+      accessibilityLabel={`${current} of ${goal} consistency days this week`}
+      style={styles.consistencyMeter}
+    >
+      <View style={styles.metricHeader}>
+        <View style={styles.metricIcon}>
+          <Ionicons color={colors.forest} name="calendar-clear-outline" size={layout.iconSize} />
+        </View>
+        <Text style={styles.metricEyebrow}>THIS WEEK</Text>
+      </View>
+      <View style={styles.metricValueRow}>
+        <Text style={styles.metricValue}>{current}</Text>
+        <Text style={styles.metricGoal}>of {goal} consistency days</Text>
+      </View>
+      <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={styles.consistencyDots}
+      >
+        {days.map((isComplete, index) => (
+          <View key={index} style={[styles.consistencyDot, isComplete && styles.consistencyDotComplete]} />
+        ))}
+      </View>
     </View>
   );
 }
@@ -1466,14 +1652,18 @@ function RoutineVideo({ accessibilityLabel }: Readonly<{ accessibilityLabel: str
 }
 
 function ProgressLabel({ current, total }: Readonly<{ current: number; total: number }>) {
-  return <Text style={styles.progress}>STEP {current} OF {total}</Text>;
-}
-
-function FeatureRow({ number, text }: Readonly<{ number: string; text: string }>) {
+  const progressSegments = Array.from({ length: total }, (_, index) => index < current);
   return (
-    <View style={styles.featureRow}>
-      <Text style={styles.featureNumber}>{number}</Text>
-      <Text style={styles.featureText}>{text}</Text>
+    <View accessibilityLabel={`Step ${current} of ${total}`} style={styles.progressHeader}>
+      <Text style={styles.progress}>STEP {current} OF {total}</Text>
+      <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.progressTrack}>
+        {progressSegments.map((isComplete, index) => (
+          <View
+            key={index}
+            style={[styles.progressSegment, isComplete && styles.progressSegmentComplete]}
+          />
+        ))}
+      </View>
     </View>
   );
 }
@@ -1502,14 +1692,30 @@ function AreaSelection({
       <View accessibilityRole="radiogroup" style={styles.optionList}>
         {options.map((area) => (
           <Pressable
+            accessibilityLabel={areaLabels[area]}
             accessibilityRole="radio"
             accessibilityState={{ checked: selected === area }}
             key={area}
             onPress={() => onSelect(area)}
             style={[styles.option, selected === area && styles.optionSelected]}
           >
-            <Text style={[styles.optionText, selected === area && styles.optionTextSelected]}>{areaLabels[area]}</Text>
-            <View style={[styles.radio, selected === area && styles.radioSelected]} />
+            <View style={styles.optionContent}>
+              <View style={[styles.optionIcon, selected === area && styles.optionIconSelected]}>
+                <Ionicons
+                  color={selected === area ? colors.inverseInk : colors.accentDark}
+                  name="body-outline"
+                  size={layout.iconSize}
+                />
+              </View>
+              <Text style={[styles.optionText, selected === area && styles.optionTextSelected]}>{areaLabels[area]}</Text>
+            </View>
+            <Ionicons
+              accessibilityElementsHidden
+              color={selected === area ? colors.accentDark : colors.border}
+              importantForAccessibility="no-hide-descendants"
+              name={selected === area ? 'checkmark-circle' : 'ellipse-outline'}
+              size={layout.iconSize}
+            />
           </Pressable>
         ))}
       </View>
@@ -1519,71 +1725,215 @@ function AreaSelection({
   );
 }
 
-function PrimaryButton({ label, onPress, disabled = false }: Readonly<{
+function PrimaryButton({ label, onPress, disabled = false, icon }: Readonly<{
   label: string;
   onPress: () => void;
   disabled?: boolean;
+  icon?: KineoIconName;
 }>) {
   return (
     <Pressable
+      accessibilityLabel={label}
       accessibilityRole="button"
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [styles.primaryButton, disabled && styles.buttonDisabled, pressed && styles.buttonPressed]}
     >
-      <Text style={styles.primaryButtonText}>{label}</Text>
+      <View style={styles.buttonContent}>
+        {icon === undefined ? null : (
+          <Ionicons color={colors.inverseInk} name={icon} size={layout.smallIconSize} />
+        )}
+        <Text style={styles.primaryButtonText}>{label}</Text>
+      </View>
     </Pressable>
   );
 }
 
-function SecondaryButton({ label, onPress, disabled = false, danger = false }: Readonly<{
+function SecondaryButton({ label, onPress, disabled = false, danger = false, icon }: Readonly<{
   label: string;
   onPress: () => void;
   disabled?: boolean;
   danger?: boolean;
+  icon?: KineoIconName;
 }>) {
   return (
     <Pressable
+      accessibilityLabel={label}
       accessibilityRole="button"
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.secondaryButton, pressed && styles.buttonPressed]}
+      style={({ pressed }) => [
+        styles.secondaryButton,
+        danger && styles.secondaryButtonDanger,
+        disabled && styles.buttonDisabled,
+        pressed && styles.buttonPressed,
+      ]}
     >
-      <Text style={[styles.secondaryButtonText, danger && styles.dangerText]}>{label}</Text>
+      <View style={styles.buttonContent}>
+        {icon === undefined ? null : (
+          <Ionicons
+            color={danger ? colors.danger : colors.accentDark}
+            name={icon}
+            size={layout.smallIconSize}
+          />
+        )}
+        <Text style={[styles.secondaryButtonText, danger && styles.dangerText]}>{label}</Text>
+      </View>
     </Pressable>
   );
 }
 
 function ChoiceButton({ label, onPress }: Readonly<{ label: string; onPress: () => void }>) {
+  const icon = choiceIcon(label);
   return (
-    <Pressable accessibilityLabel={label} accessibilityRole="button" onPress={onPress} style={styles.choiceButton}>
-      <Text style={styles.choiceButtonText}>{label}</Text>
-      <Text accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.choiceArrow}>›</Text>
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.choiceButton, pressed && styles.choiceButtonPressed]}
+    >
+      <View style={styles.choiceContent}>
+        <View style={styles.choiceIcon}>
+          <Ionicons color={colors.accentDark} name={icon} size={layout.iconSize} />
+        </View>
+        <Text style={styles.choiceButtonText}>{label}</Text>
+      </View>
+      <Ionicons
+        accessibilityElementsHidden
+        color={colors.secondaryInk}
+        importantForAccessibility="no-hide-descendants"
+        name="chevron-forward"
+        size={layout.smallIconSize}
+      />
     </Pressable>
   );
+}
+
+function PlanDurationSelector({
+  activeDuration,
+  onSelect,
+}: Readonly<{
+  activeDuration: PlanPresentation['duration'];
+  onSelect: (duration: PlanPresentation['duration']) => void;
+}>) {
+  return (
+    <View style={styles.durationSelector}>
+      <Text style={styles.sectionLabel}>CHOOSE A DURATION</Text>
+      <View accessibilityRole="radiogroup" style={styles.segmentedControl}>
+        {(['quick', 'standard'] as const).map((duration) => (
+          <Pressable
+            accessibilityLabel={durationLabel(duration)}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: activeDuration === duration }}
+            key={duration}
+            onPress={() => onSelect(duration)}
+            style={[
+              styles.segment,
+              activeDuration === duration && styles.segmentSelected,
+            ]}
+          >
+            <Ionicons
+              color={activeDuration === duration ? colors.accentDeep : colors.secondaryInk}
+              name={duration === 'quick' ? 'flash-outline' : 'layers-outline'}
+              size={layout.smallIconSize}
+            />
+            <Text style={styles.segmentText}>{durationLabel(duration)}</Text>
+            {activeDuration === duration ? (
+              <Ionicons
+                accessibilityElementsHidden
+                color={colors.accentDeep}
+                importantForAccessibility="no-hide-descendants"
+                name="checkmark-circle"
+                size={layout.smallIconSize}
+              />
+            ) : null}
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function RoutineActionButton({
+  accessibilityLabel,
+  disabled = false,
+  icon,
+  label,
+  onPress,
+}: Readonly<{
+  accessibilityLabel?: string;
+  disabled?: boolean;
+  icon: KineoIconName;
+  label: string;
+  onPress: () => void;
+}>) {
+  return (
+    <Pressable
+      accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.routineAction,
+        disabled && styles.buttonDisabled,
+        pressed && styles.buttonPressed,
+      ]}
+    >
+      <Ionicons color={colors.accentDark} name={icon} size={layout.smallIconSize} />
+      <Text style={styles.routineActionText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function choiceIcon(label: string): KineoIconName {
+  switch (label) {
+    case 'Better': return 'arrow-up-circle-outline';
+    case 'Similar':
+    case 'About the same': return 'remove-circle-outline';
+    case 'Worse': return 'arrow-down-circle-outline';
+    case 'Limited': return 'contract-outline';
+    case 'Okay': return 'ellipse-outline';
+    case 'Good': return 'sparkles-outline';
+    case 'No': return 'checkmark-circle-outline';
+    case 'Yes': return 'alert-circle-outline';
+    case 'Not sure': return 'help-circle-outline';
+    default: return 'arrow-forward-circle-outline';
+  }
 }
 
 function NavigationBar({
   active,
   onSelect,
 }: Readonly<{ active: MainTab; onSelect: (tab: MainTab) => void }>) {
-  const tabs: readonly Readonly<{ id: MainTab; label: string }>[] = [
-    { id: 'today', label: 'Today' },
-    { id: 'progress', label: 'Progress' },
-    { id: 'profile', label: 'Profile' },
+  const tabs: readonly Readonly<{
+    id: MainTab;
+    label: string;
+    icon: KineoIconName;
+    selectedIcon: KineoIconName;
+  }>[] = [
+    { id: 'today', label: 'Today', icon: 'sparkles-outline', selectedIcon: 'sparkles' },
+    { id: 'progress', label: 'Progress', icon: 'stats-chart-outline', selectedIcon: 'stats-chart' },
+    { id: 'profile', label: 'Profile', icon: 'person-outline', selectedIcon: 'person' },
   ];
   return (
     <View accessibilityRole="tablist" style={styles.navigationBar}>
       {tabs.map((tab) => (
         <Pressable
+          accessibilityLabel={tab.label}
           accessibilityRole="tab"
           accessibilityState={{ selected: active === tab.id }}
           key={tab.id}
           onPress={() => onSelect(tab.id)}
-          style={styles.navigationItem}
+          style={({ pressed }) => [styles.navigationItem, pressed && styles.navigationItemPressed]}
         >
+          <Ionicons
+            color={active === tab.id ? colors.accentDark : colors.secondaryInk}
+            name={active === tab.id ? tab.selectedIcon : tab.icon}
+            size={layout.iconSize}
+          />
           <Text style={[
             styles.navigationText,
             active === tab.id && styles.navigationTextSelected,
@@ -1603,6 +1953,14 @@ const displayIndexOffset = 1;
 
 function levelLabel(level: PlanPresentation['deliveredLevel']): string {
   return level[0].toUpperCase() + level.slice(1);
+}
+
+function planLevelIcon(level: PlanPresentation['deliveredLevel']): KineoIconName {
+  switch (level) {
+    case 'gentle': return 'leaf-outline';
+    case 'balanced': return 'scale-outline';
+    case 'active': return 'flash-outline';
+  }
 }
 
 function durationLabel(duration: PlanPresentation['duration']): string {
@@ -1715,74 +2073,138 @@ function screenForAttentionResolution(resolution: AttentionResolution): LocalScr
     : { kind: 'attentionGuidance', prompt: resolution.prompt };
 }
 
+const raisedSurfaceShadow = {
+  elevation: layout.elevation,
+  shadowColor: colors.shadow,
+  shadowOffset: { height: layout.shadowOffsetY, width: 0 },
+  shadowOpacity: layout.shadowOpacity,
+  shadowRadius: layout.shadowRadius,
+} as const;
+
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: colors.canvas },
-  page: { flexGrow: 1, paddingHorizontal: spacing.screenHorizontal, paddingVertical: spacing.screenVertical },
-  readable: { alignSelf: 'center', flex: 1, gap: spacing.roomy, maxWidth: layout.readableWidth, width: '100%' },
+  safeArea: { backgroundColor: colors.canvas, flex: 1 },
+  shell: { flex: 1 },
+  page: { flexGrow: 1, paddingBottom: spacing.roomy, paddingHorizontal: spacing.screenHorizontal, paddingTop: spacing.screenVertical },
+  readable: { alignSelf: 'center', flexGrow: 1, gap: spacing.large, maxWidth: layout.readableWidth, width: '100%' },
+  bottomBar: { backgroundColor: colors.canvas, borderTopColor: colors.border, borderTopWidth: layout.borderWidth, gap: spacing.compact, paddingBottom: spacing.micro, paddingHorizontal: spacing.screenHorizontal, paddingTop: spacing.compact },
+  inlineBottomBar: { borderTopColor: colors.border, borderTopWidth: layout.borderWidth, marginTop: spacing.standard, paddingTop: spacing.standard },
+  actionStack: { gap: spacing.compact },
   centered: { alignItems: 'center', flex: 1, gap: spacing.standard, justifyContent: 'center' },
   header: { gap: spacing.compact },
   eyebrow: { color: colors.accentDark, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   progress: { color: colors.secondaryInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  progressHeader: { gap: spacing.compact },
+  progressTrack: { flexDirection: 'row', gap: spacing.micro },
+  progressSegment: { backgroundColor: colors.mutedSurface, borderRadius: radius.status, flex: 1, height: spacing.micro },
+  progressSegmentComplete: { backgroundColor: colors.accentDark },
   title: { color: colors.ink, fontSize: typography.titleSize, fontWeight: typography.displayWeight, lineHeight: typography.titleLineHeight },
   supporting: { color: colors.secondaryInk, fontSize: typography.bodySize, lineHeight: typography.bodyLineHeight },
-  brandPill: { alignSelf: 'flex-start', backgroundColor: colors.accentDark, borderRadius: radius.status, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
-  brandPillText: { color: colors.inverseInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
-  featureCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, padding: spacing.roomy },
-  featureRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.standard, minHeight: layout.controlMinimumHeight },
-  featureNumber: { color: colors.accentDark, fontSize: typography.detailSize, fontWeight: typography.strongWeight },
-  featureText: { color: colors.ink, flex: 1, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
-  primaryButton: { alignItems: 'center', backgroundColor: colors.accentDark, borderRadius: radius.button, justifyContent: 'center', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.roomy, paddingVertical: spacing.controlVertical },
+  brandMark: { alignItems: 'center', flexDirection: 'row', gap: spacing.compact },
+  brandGlyph: { alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: radius.icon, height: spacing.section, justifyContent: 'center', width: spacing.section },
+  brandGlyphInverse: { backgroundColor: colors.accent },
+  brandName: { color: colors.ink, fontSize: typography.detailSize, fontWeight: typography.displayWeight, letterSpacing: typography.eyebrowTracking },
+  brandNameInverse: { color: colors.onDark },
+  welcomeHero: { ...raisedSurfaceShadow, backgroundColor: colors.forest, borderRadius: radius.hero, gap: spacing.large, overflow: 'hidden', padding: spacing.roomy },
+  welcomeEyebrow: { color: colors.accent, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  welcomeTitle: { color: colors.onDark, fontSize: typography.heroSize, fontWeight: typography.displayWeight, lineHeight: typography.heroLineHeight },
+  welcomeBody: { color: colors.onDark, fontSize: typography.bodySize, lineHeight: typography.bodyLineHeight, opacity: layout.subtleOpacity },
+  heroArtwork: { alignItems: 'center', height: layout.heroArtworkHeight, justifyContent: 'center', position: 'relative' },
+  heroPath: { backgroundColor: colors.accent, borderRadius: radius.status, height: layout.heroPathHeight, position: 'absolute', transform: [{ rotate: layout.heroPathRotation }], width: layout.heroPathWidth },
+  heroPathTrailing: { opacity: layout.subtleOpacity, transform: [{ rotate: layout.heroPathTrailingRotation }] },
+  heroOrb: { alignItems: 'center', backgroundColor: colors.accent, borderRadius: radius.status, height: layout.heroOrbSize, justifyContent: 'center', width: layout.heroOrbSize },
+  heroOrbInner: { alignItems: 'center', backgroundColor: colors.onDark, borderRadius: radius.status, height: layout.heroOrbInnerSize, justifyContent: 'center', width: layout.heroOrbInnerSize },
+  heroFloatBadge: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.status, bottom: spacing.compact, flexDirection: 'row', gap: spacing.compact, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact, position: 'absolute', right: spacing.micro },
+  heroFloatBadgeText: { color: colors.accentDeep, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
+  infoPillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.compact },
+  infoPill: { alignItems: 'center', backgroundColor: colors.elevatedSurface, borderColor: colors.border, borderRadius: radius.status, borderWidth: layout.borderWidth, flexDirection: 'row', gap: spacing.compact, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
+  infoPillText: { color: colors.accentDeep, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
+  welcomeFootnote: { color: colors.secondaryInk, fontSize: typography.captionSize, lineHeight: typography.captionLineHeight, textAlign: 'center' },
+  primaryButton: { ...raisedSurfaceShadow, alignItems: 'center', backgroundColor: colors.accentDark, borderRadius: radius.button, justifyContent: 'center', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.roomy, paddingVertical: spacing.controlVertical },
   primaryButtonText: { color: colors.inverseInk, fontSize: typography.bodySize, fontWeight: typography.buttonWeight },
-  secondaryButton: { alignItems: 'center', borderRadius: radius.button, justifyContent: 'center', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.roomy, paddingVertical: spacing.controlVertical },
+  secondaryButton: { alignItems: 'center', borderColor: colors.border, borderRadius: radius.button, borderWidth: layout.borderWidth, justifyContent: 'center', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.roomy, paddingVertical: spacing.controlVertical },
+  secondaryButtonDanger: { borderColor: colors.danger },
   secondaryButtonText: { color: colors.accentDark, fontSize: typography.bodySize, fontWeight: typography.buttonWeight },
   dangerText: { color: colors.danger },
+  buttonContent: { alignItems: 'center', flexDirection: 'row', gap: spacing.compact, justifyContent: 'center' },
   buttonDisabled: { opacity: layout.disabledOpacity },
   buttonPressed: { opacity: layout.pressedOpacity },
   optionList: { gap: spacing.compact },
-  choiceButton: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.option, borderWidth: layout.borderWidth, flexDirection: 'row', justifyContent: 'space-between', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.roomy, paddingVertical: spacing.controlVertical },
-  choiceButtonText: { color: colors.ink, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
-  choiceArrow: { color: colors.accentDark, fontSize: typography.titleSize },
-  option: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.option, borderWidth: layout.borderWidth, flexDirection: 'row', justifyContent: 'space-between', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.standard, paddingVertical: spacing.controlVertical },
-  optionSelected: { backgroundColor: colors.accentSoft, borderColor: colors.accentDark },
-  optionText: { color: colors.ink, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
+  choiceButton: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.option, borderWidth: layout.borderWidth, flexDirection: 'row', gap: spacing.standard, justifyContent: 'space-between', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.standard, paddingVertical: spacing.controlVertical },
+  choiceButtonPressed: { backgroundColor: colors.accentSoft, borderColor: colors.accentDark },
+  choiceContent: { alignItems: 'center', flex: 1, flexDirection: 'row', gap: spacing.standard },
+  choiceIcon: { alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: radius.icon, height: spacing.hero, justifyContent: 'center', width: spacing.hero },
+  choiceButtonText: { color: colors.ink, flex: 1, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
+  option: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.option, borderWidth: layout.borderWidth, flexDirection: 'row', gap: spacing.standard, justifyContent: 'space-between', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.standard, paddingVertical: spacing.controlVertical },
+  optionSelected: { backgroundColor: colors.accentSoft, borderColor: colors.accentDark, borderWidth: layout.selectedBorderWidth },
+  optionContent: { alignItems: 'center', flex: 1, flexDirection: 'row', gap: spacing.standard },
+  optionIcon: { alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: radius.icon, height: spacing.hero, justifyContent: 'center', width: spacing.hero },
+  optionIconSelected: { backgroundColor: colors.accentDark },
+  optionText: { color: colors.ink, flex: 1, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
   optionTextSelected: { color: colors.accentDark },
-  radio: { borderColor: colors.border, borderRadius: radius.status, borderWidth: layout.borderWidth, height: spacing.roomy, width: spacing.roomy },
-  radioSelected: { backgroundColor: colors.accentDark, borderColor: colors.accentDark },
-  safetyCard: { backgroundColor: colors.surface, borderLeftColor: colors.accent, borderLeftWidth: spacing.compact, borderRadius: radius.card, gap: spacing.compact, padding: spacing.roomy },
+  safetyCard: { backgroundColor: colors.attentionSurface, borderLeftColor: colors.attentionInk, borderLeftWidth: spacing.compact, borderRadius: radius.card, gap: spacing.compact, padding: spacing.roomy },
   cardTitle: { color: colors.ink, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
   cardBody: { color: colors.secondaryInk, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight },
-  todayTopRow: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between' },
+  todayTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  todayIntro: { gap: spacing.compact },
   todayTitle: { color: colors.ink, fontSize: typography.titleSize, fontWeight: typography.displayWeight, lineHeight: typography.titleLineHeight },
-  areaBadge: { backgroundColor: colors.accentSoft, borderRadius: radius.status, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
-  areaBadgeText: { color: colors.accentDark, fontSize: typography.detailSize, fontWeight: typography.strongWeight },
-  todayCard: { backgroundColor: colors.surface, borderRadius: radius.card, gap: spacing.standard, padding: spacing.roomy },
-  planHero: { backgroundColor: colors.accentSoft, borderRadius: radius.card, gap: spacing.compact, padding: spacing.roomy },
-  planLevel: { color: colors.accentDark, fontSize: typography.titleSize, fontWeight: typography.displayWeight },
-  planMeta: { color: colors.secondaryInk, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight },
-  segmentedControl: { backgroundColor: colors.surface, borderRadius: radius.button, flexDirection: 'row', padding: spacing.compact },
-  segment: { alignItems: 'center', borderRadius: radius.button, flex: 1, minHeight: layout.controlMinimumHeight, justifyContent: 'center', paddingHorizontal: spacing.standard },
-  segmentSelected: { backgroundColor: colors.accentSoft },
+  areaBadge: { alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: radius.status, flexDirection: 'row', gap: spacing.compact, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
+  areaBadgeText: { color: colors.accentDark, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
+  todayCard: { ...raisedSurfaceShadow, backgroundColor: colors.accentSoft, borderRadius: radius.card, gap: spacing.standard, padding: spacing.roomy },
+  todayCardTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  todayCardIcon: { alignItems: 'center', backgroundColor: colors.accent, borderRadius: radius.icon, height: layout.controlMinimumHeight, justifyContent: 'center', width: layout.controlMinimumHeight },
+  todayCardPill: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.status, flexDirection: 'row', gap: spacing.micro, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
+  todayCardPillText: { color: colors.accentDeep, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
+  todayCardEyebrow: { color: colors.accentDeep, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  todayCardTitle: { color: colors.ink, fontSize: typography.subtitleSize, fontWeight: typography.displayWeight, lineHeight: typography.subtitleLineHeight },
+  todayCardBody: { color: colors.secondaryInk, fontSize: typography.bodySize, lineHeight: typography.bodyLineHeight },
+  planHero: { ...raisedSurfaceShadow, backgroundColor: colors.accent, borderRadius: radius.card, gap: spacing.compact, padding: spacing.roomy },
+  planHeroTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  planLevelIcon: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.icon, height: layout.controlMinimumHeight, justifyContent: 'center', width: layout.controlMinimumHeight },
+  planDurationBadge: { alignItems: 'center', backgroundColor: colors.forest, borderRadius: radius.status, flexDirection: 'row', gap: spacing.compact, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
+  planDurationBadgeText: { color: colors.onDark, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
+  planKicker: { color: colors.accentDeep, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  planLevel: { color: colors.forest, fontSize: typography.titleSize, fontWeight: typography.displayWeight },
+  planMeta: { color: colors.accentDeep, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight },
+  planReasonCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.standard, padding: spacing.roomy },
+  planReasonRow: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.standard },
+  planReasonText: { color: colors.secondaryInk, flex: 1, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight },
+  sectionLabel: { color: colors.accentDeep, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  durationSelector: { gap: spacing.micro },
+  segmentedControl: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.button, borderWidth: layout.borderWidth, flexDirection: 'row', padding: spacing.compact },
+  segment: { alignItems: 'center', borderRadius: radius.button, flex: 1, flexDirection: 'row', gap: spacing.compact, justifyContent: 'center', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.standard },
+  segmentSelected: { backgroundColor: colors.accentSoft, borderColor: colors.accentDark, borderWidth: layout.selectedBorderWidth },
   segmentText: { color: colors.accentDark, fontSize: typography.detailSize, fontWeight: typography.strongWeight },
-  metricCard: { backgroundColor: colors.accentDark, borderRadius: radius.card, gap: spacing.compact, padding: spacing.roomy },
-  metricValue: { color: colors.inverseInk, fontSize: typography.titleSize, fontWeight: typography.displayWeight },
-  metricLabel: { color: colors.inverseInk, fontSize: typography.bodySize },
+  consistencyMeter: { ...raisedSurfaceShadow, backgroundColor: colors.forest, borderRadius: radius.card, gap: spacing.standard, padding: spacing.roomy },
+  metricHeader: { alignItems: 'center', flexDirection: 'row', gap: spacing.compact },
+  metricIcon: { alignItems: 'center', backgroundColor: colors.accent, borderRadius: radius.icon, height: spacing.hero, justifyContent: 'center', width: spacing.hero },
+  metricEyebrow: { color: colors.accent, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  metricValueRow: { alignItems: 'flex-end', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.compact },
+  metricValue: { color: colors.onDark, fontSize: typography.heroSize, fontWeight: typography.displayWeight, lineHeight: typography.heroLineHeight },
+  metricGoal: { color: colors.onDark, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight, opacity: layout.subtleOpacity, paddingBottom: spacing.compact },
+  consistencyDots: { flexDirection: 'row', gap: spacing.compact },
+  consistencyDot: { backgroundColor: colors.mutedSurface, borderRadius: radius.status, flex: 1, height: spacing.compact, opacity: layout.subtleOpacity },
+  consistencyDotComplete: { backgroundColor: colors.accent, opacity: 1 },
   historyCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.compact, padding: spacing.roomy },
   routineProgressRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  mediaPlaceholder: { alignItems: 'center', aspectRatio: layout.mediaAspectRatio, backgroundColor: colors.accentSoft, borderRadius: radius.card, justifyContent: 'center' },
+  routineActionRow: { flexDirection: 'row', gap: spacing.compact },
+  routineAction: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.button, borderWidth: layout.borderWidth, flex: 1, gap: spacing.micro, justifyContent: 'center', minHeight: layout.controlMinimumHeight, padding: spacing.compact },
+  routineActionText: { color: colors.accentDark, fontSize: typography.captionSize, fontWeight: typography.strongWeight, textAlign: 'center' },
+  mediaPlaceholder: { ...raisedSurfaceShadow, alignItems: 'center', aspectRatio: layout.mediaAspectRatio, backgroundColor: colors.accentSoft, borderRadius: radius.card, justifyContent: 'center', overflow: 'hidden' },
   mediaPlaceholderText: { color: colors.accentDark, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   routineVideo: { height: '100%', width: '100%' },
-  prototypeMediaBadge: { backgroundColor: colors.accentDark, borderRadius: radius.status, bottom: spacing.compact, left: spacing.compact, paddingHorizontal: spacing.compact, paddingVertical: spacing.compact, position: 'absolute' },
-  prototypeMediaBadgeText: { color: colors.inverseInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
-  safetyCue: { backgroundColor: colors.surface, borderLeftColor: colors.accent, borderLeftWidth: spacing.compact, borderRadius: radius.card, color: colors.secondaryInk, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight, padding: spacing.standard },
-  routineTimerCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.compact, padding: spacing.standard },
+  prototypeMediaBadge: { backgroundColor: colors.forest, borderRadius: radius.status, bottom: spacing.compact, left: spacing.compact, paddingHorizontal: spacing.compact, paddingVertical: spacing.compact, position: 'absolute' },
+  prototypeMediaBadgeText: { color: colors.onDark, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  safetyCue: { backgroundColor: colors.attentionSurface, borderLeftColor: colors.attentionInk, borderLeftWidth: spacing.compact, borderRadius: radius.card, color: colors.attentionInk, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight, padding: spacing.standard },
+  routineTimerCard: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, flexDirection: 'row', gap: spacing.standard, padding: spacing.standard },
+  routineTimerIcon: { alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: radius.icon, height: spacing.hero, justifyContent: 'center', width: spacing.hero },
+  routineTimerContent: { flex: 1, gap: spacing.micro },
   routineTimerText: { color: colors.ink, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
-  todayCardEyebrow: { color: colors.secondaryInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
-  todayCardTitle: { color: colors.ink, fontSize: typography.titleSize, fontWeight: typography.displayWeight, lineHeight: typography.titleLineHeight },
-  todayCardBody: { color: colors.secondaryInk, fontSize: typography.bodySize, lineHeight: typography.bodyLineHeight },
   testSection: { borderTopColor: colors.border, borderTopWidth: layout.borderWidth, gap: spacing.compact, marginTop: spacing.section, paddingTop: spacing.standard },
+  testHeading: { alignItems: 'center', flexDirection: 'row', gap: spacing.compact },
   testLabel: { color: colors.secondaryInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
-  navigationBar: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, flexDirection: 'row', marginTop: 'auto', padding: spacing.compact },
-  navigationItem: { alignItems: 'center', flex: 1, minHeight: layout.controlMinimumHeight, justifyContent: 'center' },
-  navigationText: { color: colors.secondaryInk, fontSize: typography.detailSize, fontWeight: typography.strongWeight },
+  navigationBar: { ...raisedSurfaceShadow, backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, flexDirection: 'row', padding: spacing.compact },
+  navigationItem: { alignItems: 'center', flex: 1, gap: spacing.micro, justifyContent: 'center', minHeight: layout.tabMinimumHeight },
+  navigationItemPressed: { opacity: layout.pressedOpacity },
+  navigationText: { color: colors.secondaryInk, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
   navigationTextSelected: { color: colors.accentDark },
 });

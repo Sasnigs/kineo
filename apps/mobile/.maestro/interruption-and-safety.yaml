@@ -23,10 +23,6 @@ name: Routine interruption, alternative, and safety stop
     visible: "Your place is saved."
     timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
 - tapOn: "Resume routine"
-- scrollUntilVisible:
-    element: "More options"
-    direction: DOWN
-- tapOn: "More options"
 - tapOn: "Try an alternative"
 - assertVisible: "Prototype alternative 1"
 - tapOn: "Use this alternative"
