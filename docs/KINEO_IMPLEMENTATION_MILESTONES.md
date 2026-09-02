@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Expo E0–E4 automated gates complete; E5 UI qualification and E6 cutover pending |
+| Status | Expo E0–E5 automated gates complete; E6 device/archive cutover pending |
 | Platform | Expo/React Native iPhone app, iOS 17 minimum; Swift retained for E6 qualification |
 | Sources | Product design, UX specification, and TD-00 through TD-09 |
 | Last updated | August 28, 2026 |
@@ -235,7 +235,7 @@ flowchart LR
 
 ### Expo migration track — E0 through E6
 
-**Status:** E0–E4 automated gates complete August 28, 2026. E5 implementation and first-screen accessibility launch checks pass; automated common-task UI qualification remains before E6 physical-device, exact-archive, and source removal.
+**Status:** E0–E5 automated gates complete September 1, 2026. Two Release-binary common-task UI journeys pass. E6 remains blocked on physical-device and exact signed-archive evidence before Swift source removal.
 
 The migration stages and cutover gates are defined in `technical/09_EXPO_MIGRATION.md`. They run before further release qualification because the implementation platform changed. Existing Swift milestone evidence remains reference evidence, not proof that the Expo implementation passes.
 

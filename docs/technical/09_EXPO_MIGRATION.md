@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | E0–E4 automated gates complete; E5 UI qualification and E6 cutover pending |
+| Status | E0–E5 automated gates complete; E6 device/archive cutover pending |
 | Target | Expo SDK 57, React Native, strict TypeScript, iOS 17 minimum |
 | Source | Existing product behavior and TD-00 through TD-08 |
-| Last reviewed | August 28, 2026 |
+| Last reviewed | September 1, 2026 |
 
 ## 1. Migration contract
 
@@ -59,7 +59,7 @@ Parity expectations come from product decision tables and stable fixtures captur
 | E5 Platform and UI | Media, reminders, lifecycle, adaptive UI, and accessibility | Automated UI and platform gates pass |
 | E6 Cutover | Expo becomes the sole product implementation | Exact archive and physical-device gates pass; source cutover is recorded |
 
-E0–E4 automated gates pass locally: strict type checking, lint, 22 Jest suites with 183 tests, Expo dependency validation, native storage-path tests, iOS bundling, a Release simulator build, and clean first-screen launch checks at the default and maximum accessibility text sizes in light/dark appearance. E5 still needs automated common-task UI coverage; E6 still needs exact-archive and physical-device evidence before source removal. `npm audit --audit-level=high` passes; 11 moderate transitive Expo build-tool advisories remain because the proposed forced remediation downgrades Expo.
+E0–E5 automated gates pass: strict type checking, lint, 22 Jest suites with 184 tests, Expo dependency validation, native storage-path tests, iOS bundling, a Release simulator build, first-screen accessibility launch checks, and two Maestro common-task journeys. E6 still needs exact signed-archive and physical-device evidence before source removal; the current Mac has neither a connected iPhone nor a valid code-signing identity. `npm audit --audit-level=high` passes; 11 moderate transitive Expo build-tool advisories remain because the proposed forced remediation downgrades Expo.
 
 E1 is delivered in three reviewable slices: domain and Attention safety, Active history eligibility, then the complete plan selector. Each slice must keep Swift and Expo green before the next begins.
 
