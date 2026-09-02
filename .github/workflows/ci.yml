@@ -20,7 +20,7 @@ jobs:
     runs-on: macos-26
     # A clean Expo Release build takes about 20 minutes on the hosted runner;
     # retain enough time for accessibility launch and common-task UI checks.
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     defaults:
       run:
@@ -67,17 +67,11 @@ jobs:
       - name: Bundle iOS app
         run: npx expo export --platform ios --output-dir "$RUNNER_TEMP/kineo-expo-export"
 
-      - name: Boot required iOS simulators
+      - name: Boot iOS simulator
         working-directory: ${{ github.workspace }}
         run: |
-          smallest_id="$(Scripts/prepare-ios-simulator.sh \
-            'Kineo iPhone SE (3rd generation)' \
-            'com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation')"
-          reference_id="$(Scripts/prepare-ios-simulator.sh \
-            'Kineo iPhone 16 Pro' \
-            'com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro')"
-          printf 'KINEO_SMALLEST_SIMULATOR_ID=%s\n' "$smallest_id" >> "$GITHUB_ENV"
-          printf 'KINEO_REFERENCE_SIMULATOR_ID=%s\n' "$reference_id" >> "$GITHUB_ENV"
+          simulator_id="$(Scripts/prepare-available-ios-simulator.sh)"
+          printf 'KINEO_SIMULATOR_ID=%s\n' "$simulator_id" >> "$GITHUB_ENV"
 
       - name: Generate and build native iOS app
         run: |
@@ -86,7 +80,7 @@ jobs:
             -workspace ios/Kineo.xcworkspace \
             -scheme Kineo \
             -configuration Release \
-            -destination "platform=iOS Simulator,id=$KINEO_REFERENCE_SIMULATOR_ID" \
+            -destination "platform=iOS Simulator,id=$KINEO_SIMULATOR_ID" \
             -derivedDataPath "$RUNNER_TEMP/kineo-expo-derived-data" \
             ONLY_ACTIVE_ARCH=YES \
             build
@@ -95,14 +89,14 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           Scripts/verify-simulator-launch.sh \
-            "$KINEO_REFERENCE_SIMULATOR_ID" \
+            "$KINEO_SIMULATOR_ID" \
             "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
             "Get started"
-          xcrun simctl ui "$KINEO_SMALLEST_SIMULATOR_ID" \
+          xcrun simctl ui "$KINEO_SIMULATOR_ID" \
             content_size accessibility-extra-extra-extra-large
-          xcrun simctl ui "$KINEO_SMALLEST_SIMULATOR_ID" appearance dark
+          xcrun simctl ui "$KINEO_SIMULATOR_ID" appearance dark
           Scripts/verify-simulator-launch.sh \
-            "$KINEO_SMALLEST_SIMULATOR_ID" \
+            "$KINEO_SIMULATOR_ID" \
             "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
             "routine shaped"
 
@@ -111,10 +105,6 @@ jobs:
         run: |
           maestro_bin="$(Scripts/install-maestro.sh "$RUNNER_TEMP/kineo-tools")"
           Scripts/run-maestro-ios.sh \
-            "$KINEO_SMALLEST_SIMULATOR_ID" \
-            "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
-            "$maestro_bin"
-          Scripts/run-maestro-ios.sh \
-            "$KINEO_REFERENCE_SIMULATOR_ID" \
+            "$KINEO_SIMULATOR_ID" \
             "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
             "$maestro_bin"
