@@ -674,15 +674,16 @@ export function KineoProductApp({
                   label="Pause"
                   onPress={() => void updateRoutine(() => service.pauseRoutine(activeRoutine.sessionId))}
                 />
-                <RoutineActionButton
-                  accessibilityLabel="Something feels wrong"
-                  disabled={isSubmitting}
-                  icon="alert-circle-outline"
-                  label="Safety"
-                  onPress={() => void pauseForRoutineMenu(activeRoutine, 'safety')}
-                />
               </View>
             </View>
+          )}
+          persistentBottomBar={(
+            <SecondaryButton
+              disabled={isSubmitting}
+              icon="alert-circle-outline"
+              label="Something feels wrong"
+              onPress={() => void pauseForRoutineMenu(activeRoutine, 'safety')}
+            />
           )}
           key={`routine-step-${activeRoutine.currentStepIndex}`}
         >
@@ -1479,9 +1480,11 @@ type KineoIconName = keyof typeof Ionicons.glyphMap;
 function Shell({
   children,
   bottomBar,
+  persistentBottomBar,
 }: Readonly<{
   children: ReactNode;
   bottomBar?: ReactNode;
+  persistentBottomBar?: ReactNode;
 }>) {
   const { fontScale } = useWindowDimensions();
   const shouldInlineBottomBar = bottomBar !== undefined &&
@@ -1501,8 +1504,11 @@ function Shell({
             ) : null}
           </View>
         </ScrollView>
-        {bottomBar === undefined || shouldInlineBottomBar ? null : (
-          <View style={styles.bottomBar}>{bottomBar}</View>
+        {bottomBar === undefined && persistentBottomBar === undefined ? null : (
+          <View style={styles.bottomBar}>
+            {shouldInlineBottomBar ? null : bottomBar}
+            {persistentBottomBar}
+          </View>
         )}
       </View>
     </SafeAreaView>
@@ -2080,7 +2086,7 @@ const styles = StyleSheet.create({
   shell: { flex: 1 },
   page: { flexGrow: 1, paddingBottom: spacing.roomy, paddingHorizontal: spacing.screenHorizontal, paddingTop: spacing.screenVertical },
   readable: { alignSelf: 'center', flexGrow: 1, gap: spacing.large, maxWidth: layout.readableWidth, width: '100%' },
-  bottomBar: { backgroundColor: colors.canvas, borderTopColor: colors.border, borderTopWidth: layout.borderWidth, paddingBottom: spacing.micro, paddingHorizontal: spacing.screenHorizontal, paddingTop: spacing.compact },
+  bottomBar: { backgroundColor: colors.canvas, borderTopColor: colors.border, borderTopWidth: layout.borderWidth, gap: spacing.compact, paddingBottom: spacing.micro, paddingHorizontal: spacing.screenHorizontal, paddingTop: spacing.compact },
   inlineBottomBar: { borderTopColor: colors.border, borderTopWidth: layout.borderWidth, marginTop: spacing.standard, paddingTop: spacing.standard },
   actionStack: { gap: spacing.compact },
   centered: { alignItems: 'center', flex: 1, gap: spacing.standard, justifyContent: 'center' },
