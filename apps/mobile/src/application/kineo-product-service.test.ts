@@ -33,6 +33,7 @@ const followingLocalDay = '2025-06-16';
 const firstElapsedIncrementMilliseconds = 1_500;
 const pausedClockIncrementMilliseconds = 8_000;
 const completedPrototypeStepElapsedMilliseconds = 300_000;
+const maximumExpectedRoutineStepCount = 20;
 const failedRoutineEventInsertFragment = 'INSERT INTO routine_events';
 const failedReminderWriteFragment = 'INSERT INTO reminder_settings';
 const invalidActiveSeconds = -1;
@@ -788,7 +789,6 @@ describe('Kineo product service check-in', () => {
     await expect(
       service.advanceRoutine(routine.value.sessionId, staleStepIndex),
     ).resolves.toEqual({ ok: false, error: { code: 'invalidState' } });
-    const maximumExpectedStepCount = 20;
     let advances = 0;
     while (routine.ok && routine.value.status === 'inProgress') {
       advanceMonotonicClock(completedPrototypeStepElapsedMilliseconds);
@@ -797,11 +797,58 @@ describe('Kineo product service check-in', () => {
         routine.value.currentStepIndex,
       );
       advances += 1;
-      if (advances > maximumExpectedStepCount) {
+      if (advances > maximumExpectedRoutineStepCount) {
         throw new Error('Routine did not reach a terminal state.');
       }
     }
     expect(routine).toMatchObject({ ok: true, value: { status: 'completed' } });
+    await expect(service.loadStartState()).resolves.toEqual({
+      ok: true,
+      value: { kind: 'today', primaryArea: 'neck' },
+    });
+    await database.closeAsync();
+  });
+
+  it('does not restore an older plan revision after completing the revised plan', async () => {
+    const { database, service } = await makeService();
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const draft = await service.beginCheckIn();
+    if (!draft.ok) throw new Error('Revised-plan check-in did not start.');
+    const checkedIn = await service.submitCheckIn(draft.value, {
+      area: 'neck',
+      changeReport: 'similar',
+      movementComfort: 'okay',
+    });
+    if (!checkedIn.ok || checkedIn.value.kind !== 'plan') {
+      throw new Error('Revised-plan fixture was not created.');
+    }
+    const revised = await service.revisePlan(
+      checkedIn.value.plan.checkInId,
+      'quick',
+    );
+    if (!revised.ok) throw new Error('Plan duration was not revised.');
+    let routine = await service.startRoutine(revised.value.decisionId);
+    if (!routine.ok) throw new Error('Revised routine did not start.');
+
+    let skippedStepCount = 0;
+    while (routine.value.status === 'inProgress') {
+      routine = await service.skipRoutineStep(
+        routine.value.sessionId,
+        routine.value.currentStepIndex,
+      );
+      if (!routine.ok) throw new Error('Revised routine step was not skipped.');
+      skippedStepCount += 1;
+      if (skippedStepCount > maximumExpectedRoutineStepCount) {
+        throw new Error('Revised routine did not reach completion.');
+      }
+    }
+    expect(routine.value.status).toBe('completed');
+    await service.submitFeedback(routine.value.sessionId, { neck: 'same' });
+
     await expect(service.loadStartState()).resolves.toEqual({
       ok: true,
       value: { kind: 'today', primaryArea: 'neck' },

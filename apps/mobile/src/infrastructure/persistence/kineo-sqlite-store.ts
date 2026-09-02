@@ -1205,6 +1205,11 @@ export class KineoSqliteStore implements KineoStore {
          LEFT JOIN routine_sessions AS routine ON routine.decision_id = decision.id
          LEFT JOIN pause_today_events AS pause ON pause.check_in_id = decision.check_in_id
          WHERE decision.outcome = 'selected'
+           AND decision.revision = (
+             SELECT MAX(latest.revision)
+             FROM selection_decisions AS latest
+             WHERE latest.check_in_id = decision.check_in_id
+           )
            AND routine.id IS NULL
            AND pause.id IS NULL
          ORDER BY decision.created_at_ms DESC, decision.revision DESC, decision.id DESC
