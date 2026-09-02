@@ -8,7 +8,7 @@ readonly EXPECTED_GRDB_VERSION="7.10.0"
 readonly EXPECTED_GRDB_REVISION="36e30a6f1ef10e4194f6af0cff90888526f0c115"
 readonly EXPECTED_PACKAGE_DECLARATION_COUNT="1"
 readonly RELEASE_CONTENT_GATE_MARKER="KINEO-PRODUCTION-CONTENT-REQUIRED"
-readonly APPROVED_EXPO_RUNTIME_DEPENDENCIES="@noble/hashes expo expo-constants expo-crypto expo-linking expo-notifications expo-router expo-splash-screen expo-sqlite expo-status-bar expo-video react react-native react-native-safe-area-context react-native-screens"
+readonly APPROVED_EXPO_RUNTIME_DEPENDENCIES="@expo/vector-icons @noble/hashes expo expo-constants expo-crypto expo-linking expo-notifications expo-router expo-splash-screen expo-sqlite expo-status-bar expo-video react react-native react-native-safe-area-context react-native-screens"
 
 fail() {
     printf 'Project boundary check failed: %s\n' "$1" >&2
