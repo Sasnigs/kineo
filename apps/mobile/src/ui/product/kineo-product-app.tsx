@@ -794,6 +794,7 @@ export function KineoProductApp({
               onSelect={(duration) => void revise(duration)}
             />
             <PrimaryButton
+              constrainTextScale
               icon="play"
               label="Begin routine"
               disabled={isSubmitting}
@@ -1261,6 +1262,7 @@ export function KineoProductApp({
         bottomBar={(
           <View style={styles.actionStack}>
             <PrimaryButton
+              constrainTextScale
               icon="arrow-forward"
               label="Get started"
               onPress={() => setScreen({ kind: 'ageConfirmation' })}
@@ -1718,11 +1720,12 @@ function AreaSelection({
   );
 }
 
-function PrimaryButton({ label, onPress, disabled = false, icon }: Readonly<{
+function PrimaryButton({ label, onPress, disabled = false, icon, constrainTextScale = false }: Readonly<{
   label: string;
   onPress: () => void;
   disabled?: boolean;
   icon?: KineoIconName;
+  constrainTextScale?: boolean;
 }>) {
   return (
     <Pressable
@@ -1737,7 +1740,10 @@ function PrimaryButton({ label, onPress, disabled = false, icon }: Readonly<{
         {icon === undefined ? null : (
           <Ionicons color={colors.inverseInk} name={icon} size={layout.smallIconSize} />
         )}
-        <Text maxFontSizeMultiplier={layout.controlFontSizeMultiplier} style={styles.primaryButtonText}>{label}</Text>
+        <Text
+          maxFontSizeMultiplier={constrainTextScale ? layout.controlFontSizeMultiplier : undefined}
+          style={styles.primaryButtonText}
+        >{label}</Text>
       </View>
     </Pressable>
   );
@@ -1772,10 +1778,7 @@ function SecondaryButton({ label, onPress, disabled = false, danger = false, ico
             size={layout.smallIconSize}
           />
         )}
-        <Text
-          maxFontSizeMultiplier={layout.controlFontSizeMultiplier}
-          style={[styles.secondaryButtonText, danger && styles.dangerText]}
-        >{label}</Text>
+        <Text style={[styles.secondaryButtonText, danger && styles.dangerText]}>{label}</Text>
       </View>
     </Pressable>
   );
