@@ -30,8 +30,8 @@ fi
 simulator_id="$(
   xcrun simctl list devices available -j | jq -r \
     --arg runtime "$RUNTIME_IDENTIFIER" \
-    --arg name "$SIMULATOR_NAME" \
-    '.devices[$runtime][]? | select(.name == $name) | .udid' | head -n 1
+    --arg device_type "$DEVICE_TYPE_IDENTIFIER" \
+    '.devices[$runtime][]? | select(.deviceTypeIdentifier == $device_type) | .udid' | head -n 1
 )"
 
 if [[ -z "$simulator_id" ]]; then
