@@ -19,8 +19,8 @@ jobs:
     # Expo 57's ExpoModulesJSI package requires Swift 6.2 or newer.
     runs-on: macos-26
     # A clean Expo Release build takes about 20 minutes on the hosted runner;
-    # retain enough time for both post-build accessibility launch checks.
-    timeout-minutes: 35
+    # retain enough time for accessibility launch and common-task UI checks.
+    timeout-minutes: 45
 
     defaults:
       run:
@@ -110,3 +110,12 @@ jobs:
             "$KINEO_SIMULATOR_ID" \
             "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
             "routine shaped"
+
+      - name: Verify Expo common tasks
+        working-directory: ${{ github.workspace }}
+        run: |
+          maestro_bin="$(Scripts/install-maestro.sh "$RUNNER_TEMP/kineo-tools")"
+          Scripts/run-maestro-ios.sh \
+            "$KINEO_SIMULATOR_ID" \
+            "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
+            "$maestro_bin"

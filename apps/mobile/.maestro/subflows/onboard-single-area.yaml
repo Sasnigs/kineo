@@ -1,0 +1,19 @@
+appId: app.kineo.expo.prototype
+---
+- assertVisible: "A routine shaped around how you feel now."
+- tapOn: "Get started"
+- assertVisible: "Are you 18 or older?"
+- tapOn: "Yes, I’m 18 or older"
+- assertVisible: "Where would you like to start?"
+- tapOn: "Neck"
+- tapOn: "Continue"
+- assertVisible: "Anything else to include?"
+- tapOn: "Just focus on my main area"
+- assertVisible: "You stay in control."
+- scrollUntilVisible:
+    element: "I understand"
+    direction: DOWN
+- tapOn: "I understand"
+- assertVisible: "Let’s make this useful."
+- tapOn: "Continue to Today"
+- assertVisible: "How are you moving?"

@@ -1,0 +1,68 @@
+appId: app.kineo.expo.prototype
+name: First use through routine feedback and deletion
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "A routine shaped around how you feel now."
+    timeout: 15000
+- runFlow: subflows/onboard-single-area.yaml
+- tapOn: "Check in"
+- assertVisible: "Compared with your usual pattern…"
+- tapOn: "Similar"
+- assertVisible: "How does movement feel?"
+- tapOn: "Okay"
+- assertVisible: "Your plan for today"
+- assertVisible: "Balanced"
+- assertVisible: "Included today: Neck."
+- tapOn: "Quick"
+- tapOn: "Begin routine"
+- assertVisible: "Prototype movement 1"
+- scrollUntilVisible:
+    element: "More options"
+    direction: DOWN
+- tapOn: "More options"
+- tapOn: "Skip this step"
+- assertVisible: "Prototype content"
+- tapOn: "Continue"
+- assertVisible: "Prototype movement 4"
+- scrollUntilVisible:
+    element: "More options"
+    direction: DOWN
+- tapOn: "More options"
+- tapOn: "Skip this step"
+- assertVisible: "Prototype content"
+- tapOn: "Continue"
+- assertVisible: "Prototype movement 2"
+- scrollUntilVisible:
+    element: "More options"
+    direction: DOWN
+- tapOn: "More options"
+- tapOn: "Skip this step"
+- assertVisible: "How did neck feel afterward?"
+- tapOn: "About the same"
+- assertVisible: "You made a choice for today."
+- tapOn: "Done"
+- assertVisible: "How are you moving?"
+- scrollUntilVisible:
+    element: "Progress"
+    direction: DOWN
+- tapOn: "Progress"
+- assertVisible: "Progress without pressure"
+- scrollUntilVisible:
+    element: "Profile"
+    direction: DOWN
+- tapOn: "Profile"
+- assertVisible: "Profile"
+- scrollUntilVisible:
+    element: "Delete All Data"
+    direction: DOWN
+- tapOn: "Delete All Data"
+- assertVisible: "Delete all Kineo data?"
+- scrollUntilVisible:
+    element: "Delete all data"
+    direction: DOWN
+- tapOn: "Delete all data"
+- extendedWaitUntil:
+    visible: "A routine shaped around how you feel now."
+    timeout: 15000

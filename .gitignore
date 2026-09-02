@@ -3,4 +3,5 @@
 DerivedData/
 *.xcuserstate
 xcuserdata/
-
+**/* 2
+**/* 2.*
