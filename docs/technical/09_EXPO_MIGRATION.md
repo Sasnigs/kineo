@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | E0–E5 automated gates complete; E6 device/archive cutover pending |
+| Status | E0–E4 complete; E5 qualification in progress; E6 cutover blocked |
 | Target | Expo SDK 57, React Native, strict TypeScript, iOS 17 minimum |
 | Source | Existing product behavior and TD-00 through TD-08 |
 | Last reviewed | September 1, 2026 |
@@ -59,7 +59,7 @@ Parity expectations come from product decision tables and stable fixtures captur
 | E5 Platform and UI | Media, reminders, lifecycle, adaptive UI, and accessibility | Automated UI and platform gates pass |
 | E6 Cutover | Expo becomes the sole product implementation | Exact archive and physical-device gates pass; source cutover is recorded |
 
-E0–E5 automated gates pass: strict type checking, lint, 22 Jest suites with 184 tests, Expo dependency validation, native storage-path tests, iOS bundling, a Release simulator build, first-screen accessibility launch checks, and two Maestro common-task journeys. E6 still needs exact signed-archive and physical-device evidence before source removal; the current Mac has neither a connected iPhone nor a valid code-signing identity. `npm audit --audit-level=high` passes; 11 moderate transitive Expo build-tool advisories remain because the proposed forced remediation downgrades Expo.
+E0–E4 pass. Current E5 evidence includes strict type checking, lint, 22 Jest suites with 184 tests, Expo dependency validation, native storage-path tests, iOS bundling, a Release simulator build, real-binary common-task journeys on two viewports, and a complete first-use journey at the largest Dynamic Type size in dark mode with increased contrast. E5 remains open until the remaining adaptive/accessibility audit and true airplane-mode journey pass. E6 then needs exact signed-archive and physical-device evidence before source removal; the current Mac has neither a connected iPhone nor a valid code-signing identity. `npm audit --audit-level=high` passes; 14 moderate transitive Expo build-tool advisories remain because the proposed forced remediation downgrades Expo.
 
 E1 is delivered in three reviewable slices: domain and Attention safety, Active history eligibility, then the complete plan selector. Each slice must keep Swift and Expo green before the next begins.
 
