@@ -1,0 +1,7 @@
+appId: app.kineo.expo.prototype
+---
+- scrollUntilVisible:
+    element: ${ELEMENT_LABEL}
+    direction: DOWN
+    speed: ${UI_SCROLL_SPEED}
+    timeout: ${UI_SCROLL_TIMEOUT_MILLISECONDS}

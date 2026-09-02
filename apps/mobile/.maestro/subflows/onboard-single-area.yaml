@@ -1,0 +1,37 @@
+appId: app.kineo.expo.prototype
+---
+- assertVisible: "A routine shaped around how you feel now."
+- runFlow:
+    file: tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Get started"
+- assertVisible: "Are you 18 or older?"
+- runFlow:
+    file: tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Yes, I’m 18 or older"
+- assertVisible: "Where would you like to start?"
+- runFlow:
+    file: tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Neck"
+- runFlow:
+    file: tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Continue"
+- assertVisible: "Anything else to include?"
+- runFlow:
+    file: tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Just focus on my main area"
+- assertVisible: "You stay in control."
+- runFlow:
+    file: tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "I understand"
+- assertVisible: "Let’s make this useful."
+- runFlow:
+    file: tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Continue to Today"
+- assertVisible: "How are you moving?"

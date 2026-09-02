@@ -353,7 +353,7 @@ export function KineoProductApp({
     };
     if (activeCheckIn.stage === 'change') {
       return (
-        <Shell>
+        <Shell key={`${activeCheckIn.currentArea}-change`}>
           <ProgressLabel current={1} total={2} />
           <PageHeader eyebrow={areaName.toUpperCase()} title="Compared with your usual pattern…" />
           <Text style={styles.supporting}>Choose the closest answer for right now.</Text>
@@ -384,7 +384,7 @@ export function KineoProductApp({
         continueWithAnswer({ area: activeCheckIn.currentArea, changeReport, movementComfort });
       };
       return (
-        <Shell>
+        <Shell key={`${activeCheckIn.currentArea}-comfort`}>
           <ProgressLabel current={2} total={2} />
           <PageHeader eyebrow={areaName.toUpperCase()} title="How does movement feel?" />
           <ChoiceButton label="Limited" onPress={() => selectComfort('limited')} />
@@ -403,7 +403,7 @@ export function KineoProductApp({
       });
     };
     return (
-      <Shell>
+      <Shell key={`${activeCheckIn.currentArea}-safety`}>
         <PageHeader eyebrow="ONE SAFETY CHECK" title="Is this new, sudden, or unusual for you?" />
         <Text style={styles.supporting}>Your answer may pause Kineo routines so you can decide what support you need.</Text>
         <ChoiceButton label="No" onPress={() => answerSafety('no')} />
@@ -429,7 +429,7 @@ export function KineoProductApp({
       : undefined;
     const alternative = movement?.availableAlternatives[0];
     return (
-      <Shell>
+      <Shell key="routine-options">
         <PageHeader eyebrow="ROUTINE OPTIONS" title="What do you need?" />
         {alternative === undefined ? null : (
           <ChoiceButton
@@ -468,7 +468,7 @@ export function KineoProductApp({
 
   if (screen.kind === 'alternativePreview') {
     return (
-      <Shell>
+      <Shell key="alternative-preview">
         <PageHeader eyebrow="ALTERNATIVE" title={screen.alternative.localizedTitle} />
         <Text style={styles.supporting}>{screen.alternative.localizedInstruction}</Text>
         <Text style={styles.safetyCue}>{screen.alternative.localizedSafetyCue}</Text>
@@ -494,7 +494,7 @@ export function KineoProductApp({
 
   if (screen.kind === 'endConfirmation') {
     return (
-      <Shell>
+      <Shell key="end-confirmation">
         <PageHeader eyebrow="END ROUTINE" title="End this routine now?" />
         <Text style={styles.supporting}>Your intentional stop will remain in Progress as participation.</Text>
         <SecondaryButton
@@ -524,7 +524,7 @@ export function KineoProductApp({
 
   if (screen.kind === 'safetyGuidance') {
     return (
-      <Shell>
+      <Shell key="safety-guidance">
         <PageHeader eyebrow="PAUSE AND CHECK IN" title="Stop if something feels wrong." />
         <Text style={styles.supporting}>
           Kineo cannot assess a new or concerning change. End the routine and seek appropriate professional support if needed.
@@ -550,7 +550,7 @@ export function KineoProductApp({
 
   if (screen.kind === 'completion') {
     return (
-      <Shell>
+      <Shell key="completion">
         <PageHeader eyebrow="ROUTINE SAVED" title="You made a choice for today." />
         <Text style={styles.supporting}>
           {levelLabel(screen.routine.deliveredLevel)} · {durationLabel(screen.routine.duration)} · {screen.routine.includedAreas.map((area) => areaLabels[area]).join(' + ')}
@@ -567,7 +567,7 @@ export function KineoProductApp({
       if (result?.ok) setScreen(screenForAttentionResolution(result.value));
     };
     return (
-      <Shell>
+      <Shell key="attention-return">
         <PageHeader
           eyebrow="ATTENTION CHECK"
           title={`Has ${areaLabels[screen.prompt.area].toLowerCase()} returned to its usual pattern?`}
@@ -612,7 +612,7 @@ export function KineoProductApp({
     };
     if (activeRoutine.status === 'prepared') {
       return (
-        <Shell>
+        <Shell key="routine-prepared">
           <PageHeader eyebrow="ROUTINE READY" title="Begin when you’re ready." />
           <Text style={styles.supporting}>Kineo did not start this routine while the app was interrupted.</Text>
           <PrimaryButton
@@ -629,7 +629,7 @@ export function KineoProductApp({
     }
     if (activeRoutine.status === 'paused') {
       return (
-        <Shell>
+        <Shell key="routine-paused">
           <PageHeader eyebrow="ROUTINE PAUSED" title="Your place is saved." />
           <Text style={styles.supporting}>Resume when you’re ready. Kineo won’t infer progress while paused.</Text>
           <PrimaryButton
@@ -662,7 +662,7 @@ export function KineoProductApp({
         ? alternative?.scheduledDose ?? item.scheduledDose
         : undefined;
       return (
-        <Shell>
+        <Shell key={`routine-step-${activeRoutine.currentStepIndex}`}>
           <View style={styles.routineProgressRow}>
             <Text style={styles.eyebrow}>STEP {activeRoutine.currentStepIndex + displayIndexOffset} OF {activeRoutine.totalStepCount}</Text>
             <Text style={styles.areaBadgeText}>{areaLabels[item.sourceArea]}</Text>
@@ -735,7 +735,7 @@ export function KineoProductApp({
       if (result?.ok) setScreen({ kind: 'completion', routine: activeRoutine });
     };
     return (
-      <Shell>
+      <Shell key={`feedback-${feedbackAreaIndex}`}>
         <PageHeader
           eyebrow="OPTIONAL RESPONSE"
           title={feedbackArea === undefined
@@ -768,7 +768,7 @@ export function KineoProductApp({
     };
     const gentlerLevel = activePlan.gentlerLevel;
     return (
-      <Shell>
+      <Shell key="plan">
         <PageHeader eyebrow="READY WHEN YOU ARE" title="Your plan for today" />
         <View style={styles.planHero}>
           <Text style={styles.planLevel}>{levelLabel(activePlan.deliveredLevel)}</Text>
@@ -840,7 +840,7 @@ export function KineoProductApp({
   if (screen.kind === 'progress') {
     const hasHistory = screen.progress.areas.some(({ checkInCount }) => checkInCount > 0);
     return (
-      <Shell>
+      <Shell key="progress">
         <PageHeader eyebrow="YOUR HISTORY" title="Progress without pressure" />
         <View style={styles.metricCard}>
           <Text style={styles.metricValue}>
@@ -890,7 +890,7 @@ export function KineoProductApp({
     const area = screen.progress.areas.find(({ area }) => area === screen.area);
     if (area === undefined) {
       return (
-        <Shell>
+        <Shell key="progress-unavailable">
           <PageHeader eyebrow="PROGRESS" title="Area history unavailable" />
           <PrimaryButton
             label="Back to Progress"
@@ -900,7 +900,7 @@ export function KineoProductApp({
       );
     }
     return (
-      <Shell>
+      <Shell key="progress-area">
         <PageHeader eyebrow="AREA DETAIL" title={areaLabels[area.area]} />
         <View style={styles.historyCard}>
           <Text style={styles.cardTitle}>{area.participationCount} participation choices</Text>
@@ -944,7 +944,7 @@ export function KineoProductApp({
       ? undefined
       : selectedSecondaryArea ?? screen.profile.profile.secondaryArea;
     return (
-      <Shell>
+      <Shell key="profile-areas">
         <PageHeader eyebrow="PROFILE" title="Choose your areas" />
         <Text style={styles.cardTitle}>Primary area</Text>
         {bodyAreas.map((area) => (
@@ -980,7 +980,7 @@ export function KineoProductApp({
 
   if (screen.kind === 'confirmReset') {
     return (
-      <Shell>
+      <Shell key="confirm-reset">
         <PageHeader eyebrow="PRIVACY & DATA" title="Reset history?" />
         <Text style={styles.supporting}>
           This removes check-ins, plans, routines, feedback, and Progress history.
@@ -1010,7 +1010,7 @@ export function KineoProductApp({
 
   if (screen.kind === 'confirmDelete') {
     return (
-      <Shell>
+      <Shell key="confirm-delete">
         <PageHeader eyebrow="PRIVACY & DATA" title="Delete all Kineo data?" />
         <Text style={styles.supporting}>
           This removes your profile, all local history, current Attention Required areas, and Kineo reminders. It cannot be undone.
@@ -1047,7 +1047,7 @@ export function KineoProductApp({
       if (result?.ok) setScreen({ kind: 'profile', profile: result.value });
     };
     return (
-      <Shell>
+      <Shell key="profile">
         <PageHeader eyebrow="SETTINGS" title="Profile" />
         <View style={styles.historyCard}>
           <Text style={styles.cardTitle}>Areas</Text>
@@ -1160,7 +1160,7 @@ export function KineoProductApp({
 
   if (screen.kind === 'loading') {
     return (
-      <Shell>
+      <Shell key="loading">
         <View style={styles.centered}>
           <ActivityIndicator color={colors.accentDark} />
           <Text style={styles.supporting}>Preparing your private Kineo space…</Text>
@@ -1171,7 +1171,7 @@ export function KineoProductApp({
 
   if (screen.kind === 'error') {
     return (
-      <Shell>
+      <Shell key="error">
         <PageHeader eyebrow="LET'S TRY THAT AGAIN" title="Your data stayed put." />
         <Text style={styles.supporting}>{errorMessage(screen.error)}</Text>
         <PrimaryButton label="Retry" disabled={isSubmitting} onPress={() => void load()} />
@@ -1181,7 +1181,7 @@ export function KineoProductApp({
 
   if (screen.kind === 'ageConfirmation') {
     return (
-      <Shell>
+      <Shell key="age-confirmation">
         <ProgressLabel current={1} total={4} />
         <PageHeader eyebrow="BEFORE WE BEGIN" title="Are you 18 or older?" />
         <Text style={styles.supporting}>
@@ -1202,7 +1202,7 @@ export function KineoProductApp({
 
   if (screen.kind === 'ageUnavailable') {
     return (
-      <Shell>
+      <Shell key="age-unavailable">
         <PageHeader eyebrow="NOT AVAILABLE YET" title="Kineo is for adults right now." />
         <Text style={styles.supporting}>
           We can’t continue with setup. No movement plan has been created.
@@ -1214,7 +1214,7 @@ export function KineoProductApp({
 
   if (onboarding?.step === 'welcome') {
     return (
-      <Shell>
+      <Shell key="welcome">
         <View style={styles.brandPill}><Text style={styles.brandPillText}>KINEO</Text></View>
         <PageHeader
           eyebrow="MOVE WITH TODAY IN MIND"
@@ -1280,7 +1280,7 @@ export function KineoProductApp({
 
   if (onboarding?.step === 'safetyBoundary') {
     return (
-      <Shell>
+      <Shell key="safety-boundary">
         <ProgressLabel current={4} total={4} />
         <PageHeader eyebrow="A CLEAR BOUNDARY" title="You stay in control." />
         <View style={styles.safetyCard}>
@@ -1306,7 +1306,7 @@ export function KineoProductApp({
 
   if (onboarding?.step === 'firstCheckIn') {
     return (
-      <Shell>
+      <Shell key="first-check-in">
         <PageHeader eyebrow="SETUP COMPLETE" title="Let’s make this useful." />
         <Text style={styles.supporting}>
           Your first short check-in will shape a routine for {areaLabels[onboarding.primaryArea].toLowerCase()}.
@@ -1326,7 +1326,7 @@ export function KineoProductApp({
   if (screen.kind === 'start' && screen.state.kind === 'attentionRequired') {
     const attentionPrompt = screen.state.prompt;
     return (
-      <Shell>
+      <Shell key="attention-required">
         <PageHeader eyebrow="ATTENTION REQUIRED" title="Pause before another routine." />
         <Text style={styles.supporting}>
           Your earlier answer for {areaLabels[attentionPrompt.area].toLowerCase()} needs a fresh safety check before Kineo can continue.
@@ -1342,7 +1342,7 @@ export function KineoProductApp({
 
   if (screen.kind === 'attentionGuidance') {
     return (
-      <Shell>
+      <Shell key="attention-guidance">
         <PageHeader eyebrow="ATTENTION REQUIRED" title="Kineo cannot guide this change." />
         <Text style={styles.supporting}>
           Your answer for {areaLabels[screen.prompt.area].toLowerCase()} described a new, sudden, unusual, or uncertain change. Kineo will not provide another routine right now.
@@ -1362,7 +1362,7 @@ export function KineoProductApp({
     ? screen.state.primaryArea
     : undefined;
   return (
-    <Shell>
+    <Shell key="today">
       <View style={styles.todayTopRow}>
         <View>
           <Text style={styles.eyebrow}>TODAY</Text>
@@ -1495,7 +1495,7 @@ function AreaSelection({
   onOptional?: () => void;
 }>) {
   return (
-    <Shell>
+    <Shell key={title}>
       <ProgressLabel current={progressCurrent} total={4} />
       <PageHeader eyebrow={eyebrow} title={title} />
       <Text style={styles.supporting}>{supporting}</Text>

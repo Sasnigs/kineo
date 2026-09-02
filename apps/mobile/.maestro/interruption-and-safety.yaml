@@ -1,0 +1,53 @@
+appId: app.kineo.expo.prototype
+name: Routine interruption, alternative, and safety stop
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "A routine shaped around how you feel now."
+    timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
+- runFlow: subflows/onboard-single-area.yaml
+- tapOn: "Check in"
+- tapOn: "Similar"
+- tapOn: "Okay"
+- tapOn: "Quick"
+- tapOn: "Begin routine"
+- assertVisible: "Prototype movement 1"
+- scrollUntilVisible:
+    element: "Pause"
+    direction: DOWN
+- tapOn: "Pause"
+- assertVisible: "Your place is saved."
+- launchApp
+- extendedWaitUntil:
+    visible: "Your place is saved."
+    timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
+- tapOn: "Resume routine"
+- scrollUntilVisible:
+    element: "More options"
+    direction: DOWN
+- tapOn: "More options"
+- tapOn: "Try an alternative"
+- assertVisible: "Prototype alternative 1"
+- tapOn: "Use this alternative"
+- assertVisible: "Your place is saved."
+- tapOn: "Resume routine"
+- assertVisible: "Prototype alternative 1"
+- scrollUntilVisible:
+    element: "Something feels wrong"
+    direction: DOWN
+- tapOn: "Something feels wrong"
+- assertVisible: "Stop if something feels wrong."
+- tapOn: "I tapped this by mistake"
+- assertVisible: "Your place is saved."
+- tapOn: "Resume routine"
+- scrollUntilVisible:
+    element: "Something feels wrong"
+    direction: DOWN
+- tapOn: "Something feels wrong"
+- tapOn: "End routine"
+- assertVisible: "How did neck feel afterward?"
+- tapOn: "Skip response"
+- assertVisible: "You made a choice for today."
+- tapOn: "Done"
+- assertVisible: "How are you moving?"
