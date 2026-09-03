@@ -3,7 +3,12 @@ import type { ReauthenticationGrant } from './auth-module';
 
 export type ExportStatus =
   | Readonly<{ kind: 'pending'; requestedAtMilliseconds: number }>
-  | Readonly<{ kind: 'ready'; expiresAtMilliseconds: number; downloadToken: string }>;
+  | Readonly<{
+      kind: 'ready';
+      jobId: string;
+      expiresAtMilliseconds: number;
+      downloadToken: string;
+    }>;
 
 export type DeletionStatus =
   | Readonly<{ kind: 'pending' }>

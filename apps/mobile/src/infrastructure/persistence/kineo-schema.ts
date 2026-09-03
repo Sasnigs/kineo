@@ -8,13 +8,15 @@ import type {
   SqliteExecutor,
 } from '../../core/persistence/persistence-contract';
 
-export const kineoSchemaVersion = 2;
+export const kineoSchemaVersion = 3;
 export const kineoInitialMigrationName = 'v1_initial';
 export const kineoV2MigrationName = 'v2_account_sync';
+export const kineoV3MigrationName = 'v3_account_hydration';
 
 const unmigratedSchemaVersion = 0;
 const initialSchemaVersion = 1;
 const accountSyncSchemaVersion = 2;
+const accountHydrationSchemaVersion = 3;
 const singletonProfileId = 1;
 const minimumWeeklyGoalDays = 1;
 const maximumWeeklyGoalDays = 7;
@@ -336,6 +338,34 @@ export const kineoV2MigrationChecksum = bytesToHex(
   sha256(utf8ToBytes(kineoV2MigrationStatements.join('\n'))),
 );
 
+export const kineoV3MigrationStatements = Object.freeze([
+  `CREATE UNIQUE INDEX local_account_owner
+    ON local_account_state(account_id)`,
+  `CREATE TABLE local_legal_acceptances (
+    account_id TEXT NOT NULL,
+    document_kind TEXT NOT NULL CHECK (document_kind IN ('termsOfService', 'privacyPolicy')),
+    document_version TEXT NOT NULL CHECK (length(document_version) > 0),
+    locale TEXT NOT NULL CHECK (length(locale) > 0),
+    accepted_at_ms INTEGER NOT NULL,
+    PRIMARY KEY(account_id, document_kind, document_version),
+    FOREIGN KEY(account_id) REFERENCES local_account_state(account_id) ON DELETE CASCADE
+  )`,
+  `CREATE TABLE synchronized_entities (
+    account_id TEXT NOT NULL,
+    entity_kind TEXT NOT NULL CHECK (length(entity_kind) > 0),
+    entity_id TEXT NOT NULL CHECK (length(entity_id) > 0),
+    payload_json TEXT,
+    cursor TEXT NOT NULL CHECK (length(cursor) > 0),
+    PRIMARY KEY(account_id, entity_kind, entity_id),
+    FOREIGN KEY(account_id) REFERENCES local_account_state(account_id) ON DELETE CASCADE,
+    CHECK (payload_json IS NULL OR json_valid(payload_json))
+  )`,
+] as const);
+
+export const kineoV3MigrationChecksum = bytesToHex(
+  sha256(utf8ToBytes(kineoV3MigrationStatements.join('\n'))),
+);
+
 type KineoMigration = Readonly<{
   version: number;
   name: string;
@@ -355,6 +385,12 @@ const kineoMigrations: readonly KineoMigration[] = Object.freeze([
     name: kineoV2MigrationName,
     checksum: kineoV2MigrationChecksum,
     statements: kineoV2MigrationStatements,
+  },
+  {
+    version: accountHydrationSchemaVersion,
+    name: kineoV3MigrationName,
+    checksum: kineoV3MigrationChecksum,
+    statements: kineoV3MigrationStatements,
   },
 ]);
 

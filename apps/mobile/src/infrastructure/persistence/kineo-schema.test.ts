@@ -8,13 +8,14 @@ import {
   kineoV1MigrationStatements,
   kineoV2MigrationChecksum,
   kineoV2MigrationName,
+  kineoV3MigrationChecksum,
   migrateKineoDatabase,
   preflightKineoSchema,
 } from './kineo-schema';
 import { NodeSqliteTestDatabase } from './testing/node-sqlite-test-database';
 
 const appliedAtMilliseconds = 1_750_000_000_000;
-const expectedUserTableCount = 18;
+const expectedUserTableCount = 20;
 const futureVersionIncrement = 1;
 const changedChecksum = '0'.repeat(kineoV1MigrationChecksum.length);
 const injectedFailureStatement = 'CREATE TABLE safety_events';
@@ -150,6 +151,7 @@ describe('Kineo SQLite schema', () => {
     expect(migrations).toEqual([
       { version: 1, checksum: kineoV1MigrationChecksum },
       { version: 2, checksum: kineoV2MigrationChecksum },
+      { version: 3, checksum: kineoV3MigrationChecksum },
     ]);
     await database.closeAsync();
   });

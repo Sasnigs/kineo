@@ -1,0 +1,137 @@
+import { describe, expect, it } from '@jest/globals';
+
+import type {
+  AccountPrivacyTransport,
+  DeletionResumeCredential,
+  DeletionResumeStore,
+  LocalPrivacyStore,
+} from './kineo-account-privacy-module';
+import { KineoAccountPrivacyModule } from './kineo-account-privacy-module';
+import type { PrivacyResult } from '../../core/account/account-privacy-module';
+
+const nowMilliseconds = 1_788_300_000_000;
+const currentGrant = {
+  value: 'grant',
+  expiresAtMilliseconds: nowMilliseconds + 1,
+};
+const credential = { jobId: 'job', resumeToken: 'resume' };
+
+class FakeResumeStore implements DeletionResumeStore {
+  value?: DeletionResumeCredential;
+  async load() { return { ok: true as const, value: this.value }; }
+  async save(value: DeletionResumeCredential) {
+    this.value = value;
+    return { ok: true as const, value: undefined };
+  }
+  async clear() {
+    this.value = undefined;
+    return { ok: true as const, value: undefined };
+  }
+}
+
+class FakeLocalStore implements LocalPrivacyStore {
+  resets = 0;
+  wipes = 0;
+  async resetHistory(_historyEpoch: number): Promise<PrivacyResult<void>> {
+    this.resets += 1;
+    return { ok: true, value: undefined };
+  }
+  async wipeAccount(): Promise<PrivacyResult<void>> {
+    this.wipes += 1;
+    return { ok: true, value: undefined };
+  }
+}
+
+class FakeTransport implements AccountPrivacyTransport {
+  deletionKind: 'pending' | 'complete' = 'complete';
+  async resetHistory() {
+    return { ok: true as const, value: { historyEpoch: 2 } };
+  }
+  async requestExport() {
+    return {
+      ok: true as const,
+      value: {
+        kind: 'ready' as const,
+        jobId: 'job',
+        expiresAtMilliseconds: nowMilliseconds + 1,
+        downloadToken: 'download',
+      },
+    };
+  }
+  async deleteAccount() {
+    return {
+      ok: true as const,
+      value: {
+        status: { kind: this.deletionKind },
+        resumeCredential: credential,
+      },
+    };
+  }
+  async deletionStatus() {
+    return {
+      ok: true as const,
+      value: { kind: this.deletionKind },
+    };
+  }
+}
+
+describe('KineoAccountPrivacyModule', () => {
+  it('requires a current reauthentication grant for sensitive actions', async () => {
+    const module = new KineoAccountPrivacyModule(
+      new FakeTransport(),
+      new FakeResumeStore(),
+      new FakeLocalStore(),
+      () => nowMilliseconds,
+    );
+    await expect(module.requestExport({
+      value: 'expired',
+      expiresAtMilliseconds: nowMilliseconds,
+    })).resolves.toEqual({
+      ok: false,
+      error: { code: 'reauthenticationRequired' },
+    });
+  });
+
+  it('resets the local history only after the server succeeds', async () => {
+    const local = new FakeLocalStore();
+    const module = new KineoAccountPrivacyModule(
+      new FakeTransport(),
+      new FakeResumeStore(),
+      local,
+      () => nowMilliseconds,
+    );
+    await expect(module.resetHistory(currentGrant)).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(local.resets).toBe(1);
+  });
+
+  it('persists deletion recovery before wiping local data', async () => {
+    const transport = new FakeTransport();
+    transport.deletionKind = 'pending';
+    const resume = new FakeResumeStore();
+    const local = new FakeLocalStore();
+    const module = new KineoAccountPrivacyModule(
+      transport,
+      resume,
+      local,
+      () => nowMilliseconds,
+    );
+
+    await expect(module.deleteAccount(currentGrant)).resolves.toEqual({
+      ok: true,
+      value: { kind: 'pending' },
+    });
+    expect(resume.value).toEqual(credential);
+    expect(local.wipes).toBe(0);
+
+    transport.deletionKind = 'complete';
+    await expect(module.resumeDeletion()).resolves.toEqual({
+      ok: true,
+      value: { kind: 'complete' },
+    });
+    expect(local.wipes).toBe(1);
+    expect(resume.value).toBeUndefined();
+  });
+});

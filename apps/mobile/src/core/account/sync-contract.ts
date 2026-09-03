@@ -17,7 +17,14 @@ export type SyncCommand =
         weeklyGoalDays: number;
       }>;
     }>
-  | Readonly<{ kind: 'submitCheckIn'; checkIn: unknown }>
+  | Readonly<{
+      kind: 'submitCheckIn';
+      checkIn: unknown;
+      decisionId: string;
+      decisionRevision: number;
+      durationVariant: 'quick' | 'standard';
+      requestedOverride?: 'gentle' | 'balanced' | 'active';
+    }>
   | Readonly<{ kind: 'applyAttentionTransition'; transition: unknown }>
   | Readonly<{ kind: 'startRoutine'; decisionId: string }>
   | Readonly<{ kind: 'recordRoutineEvent'; event: unknown }>
