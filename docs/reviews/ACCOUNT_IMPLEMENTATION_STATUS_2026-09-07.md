@@ -1,0 +1,56 @@
+# Account implementation checkpoint — September 7, 2026
+
+Status: **in progress; not qualified for merge or release**. Approved scope remains TD-10–12. Passing unit tests does not close the account milestones.
+
+## Verified in this pass
+
+- App: 40 Jest suites, 271 tests pass; TypeScript, ESLint, project boundaries, and whitespace checks pass.
+- PostgreSQL: all five migrations apply on a fresh local Supabase database. Two pgTAP files, 241 assertions pass. Coverage includes all private-table client grants/RLS, public command grants, duplicate receipts, reset epochs, installation/account mismatch, and one-time export consumption.
+- Supabase CLI 2.117.0 configuration parses. Replaced deprecated local mail configuration. Removed a repeated constraint drop that would have broken migration 004.
+- Added database migration/pgTAP verification to CI; the new CI job has not run on GitHub yet.
+
+Regression fixes: refreshed JWT issuance no longer counts as recent authentication; social reauthentication checks identity in an isolated client before replacing the product session; logout targets only the current Auth session; signup carries its verification redirect; callback routes return to the single account-entry host; server approvals cannot be supplied by clients; invalid sync pagination is rejected before local writes; offline queues are batched; non-network sync failures remain failures; export cleanup exceptions stay typed; absent deletion credentials no longer falsely report completion.
+
+Database mutation processing now locks the account before receipt/epoch handling. Check-in feed records precede their dependent safety events. This does not yet solve the separate pre-transaction plan-history race.
+
+## Standards review
+
+Compared account commits and working changes with baseline `0ee5861`, using AGENTS.md and CONTRIBUTING.md.
+
+1. Resolved: optional-online writes silently reported success for every sync failure. Only durable offline-pending writes may now succeed offline; rejection/conflict/storage failure propagates.
+2. **Open, major:** product writes and outbox insertion are separate transactions in `account-aware-kineo-store.ts`. An interrupted or failed enqueue can leave a committed local change without sync intent. Implement one protected transaction and test rollback, crash/retry, and protected-data failures.
+3. Resolved: export file-existence checks could throw outside the typed result boundary.
+4. Heuristic, not a hard violation: `kineo-sqlite-sync-repository.ts` mixes account/outbox mechanics with extensive product projections and lifecycle reconstruction. Separate responsibilities only as needed to fix projection correctness; avoid a speculative rewrite.
+
+## Spec review
+
+Independent review against TD-10–12 identified four major open gaps:
+
+1. **Server authority:** the server approves levels/metadata, but still accepts client-composed exercises, doses, decisions, and fingerprints. Share canonical versioned selection/composition code; enforce attention state and exact server composition under a coherent account-state version. A client checksum is not authorization.
+2. **Offline session lifecycle:** cold launch still needs a network token refresh before reaching cached hydration. Persist protected account identity bound to the refresh credential; permit only the documented cached experience offline. Also qualify serialized refresh during long-running sessions and retries.
+3. **Deletion recovery:** deletion can finish remotely before its recovery credential reaches local storage. Persist recovery intent before irreversible remote work; resume before ordinary authentication, including after Auth identity removal. The missing-credential false-success fix alone does not close this gap.
+4. **Logout/relogin:** the revoked installation identifier is reused, and explicit offline discard still requires online revocation. Implement durable logout recovery and new installation identity without bypassing revocation or silently losing pending work.
+
+Review totals: three documented standards findings (two resolved, one open) plus one heuristic; four open spec findings. Worst standards issue: split local/outbox commit. Worst spec issue: non-authoritative routine composition.
+
+## Additional qualification work
+
+- Verify remote routine ownership, event ordering, local pending checkpoints, conflict resolution, epoch resets, and paginated projections with real SQLite and server commands—not only transport fakes.
+- Complete export contents, expiry cleanup, protected temporary files, and deletion session revocation/idempotency.
+- Qualify callback and recovery links, provider cancellation/revocation, legal-document access, abuse settings, and generic email responses with local Auth/mail plus configured provider credentials.
+- Run native rebuild, simulator account flows, accessibility, network/log inspection, and load/concurrency tests. Physical-device and production credential/privacy review remain release gates.
+
+## Local database environment
+
+Colima 0.10.3 and Docker CLI 29.8.0 are installed. Dedicated VM: `kineo` (2 CPUs, 4 GiB RAM, 30 GiB data disk). Docker context: `colima-kineo`. Network: `kineo-local-tests`, host binding `127.0.0.1`. Only the database was started, not the complete Auth/mail/Edge stack. No cloud project was deployed or modified.
+
+With Docker configured for that context/socket:
+
+```sh
+npx --yes supabase@2.117.0 db start --network-id kineo-local-tests
+npx --yes supabase@2.117.0 test db --network-id kineo-local-tests
+```
+
+Use the same network flag for both commands. CLI-generated `.temp` files and environment files are ignored under `supabase/.gitignore`.
+
+No account PR exists at this checkpoint. Do not merge this branch on unit-test results alone.
