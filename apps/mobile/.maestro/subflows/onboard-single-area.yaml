@@ -30,7 +30,9 @@ appId: app.kineo.expo.prototype
     file: tap-visible-control.yaml
     env:
       CONTROL_LABEL: "Continue"
-- assertVisible: "Anything else to include?"
+- extendedWaitUntil:
+    visible: "Anything else to include?"
+    timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
 - runFlow:
     file: tap-visible-control.yaml
     env:
