@@ -250,6 +250,7 @@ export class DevelopmentSyncTransport implements SyncTransport {
               mutation.command.requestedOverride,
             );
         if (!hasAttention) {
+          const entries = mutation.command.checkIn.entries;
           changes.push({
             cursor: String(this.cursor),
             entityKind: 'selectionDecision',
@@ -261,10 +262,33 @@ export class DevelopmentSyncTransport implements SyncTransport {
               revision: mutation.command.decisionRevision,
               rulesVersion: 'selection-v1.0.0-prototype',
               catalogVersion: '0.1.0',
+              catalogVersionDelivered: '0.1.0',
+              outcome: 'selected',
               recommendedLevel,
+              requestedOverride: mutation.command.requestedOverride,
+              overrideDisposition: mutation.command.requestedOverride === undefined
+                ? 'none'
+                : mutation.command.requestedOverride === recommendedLevel
+                  ? 'sameAsRecommended'
+                  : 'rejectedHigher',
               selectedLevel,
               deliveredLevel: selectedLevel,
               durationVariant: mutation.command.durationVariant,
+              validationResult: 'fallback',
+              primaryTemplateId: 'kineo.primary.prototype',
+              primaryTemplateRevision: 1,
+              compositionFingerprint: 'a'.repeat(64),
+              areaInputs: entries.map((entry, index) => ({
+                area: entry.area,
+                role: entry.role,
+                checkInEntryId: entry.id,
+                baseLevel: selectedLevel,
+                activeUnlocked: false,
+                qualifyingCount: 0,
+                included: index === 0,
+              })),
+              reasons: [],
+              notices: [],
             },
           });
         }
