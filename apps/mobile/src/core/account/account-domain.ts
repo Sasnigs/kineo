@@ -64,6 +64,14 @@ export function validateEmailCredentials(
   };
 }
 
+export function validatePassword(
+  password: string,
+): Result<string, AccountValidationError> {
+  return [...password].length >= minimumPasswordCharacterCount
+    ? { ok: true, value: password }
+    : { ok: false, error: { code: 'passwordTooShort' } };
+}
+
 export function validateLegalAcceptance(
   input: LegalAcceptance,
 ): Result<LegalAcceptance, AccountValidationError> {

@@ -48,6 +48,9 @@ class FakeAuth implements SupabaseAuthPort {
     error: null,
   };
   passwordCredentials?: Readonly<{ email: string; password: string }>;
+  updatedPassword?: string;
+  adoptedSessionCount = 0;
+  logoutScope?: string;
 
   async refreshSession() {
     return this.response;
@@ -74,16 +77,75 @@ class FakeAuth implements SupabaseAuthPort {
     return { data: {}, error: null };
   }
 
+  async setSession() {
+    this.adoptedSessionCount += 1;
+    return this.response;
+  }
+
+  async exchangeCodeForSession() {
+    return this.response;
+  }
+
+  async updateUser(input: Readonly<{ password: string }>) {
+    this.updatedPassword = input.password;
+    return { data: { user: session.user }, error: null };
+  }
+
   async getUser() {
     return { data: { user: session.user }, error: null };
   }
 
-  async signOut() {
+  async signOut(input?: Readonly<{ scope: 'local' }>) {
+    this.logoutScope = input?.scope;
     return { error: null };
   }
 }
 
 describe('SupabaseAuthGateway', () => {
+  it('does not switch the product session when social reauthentication selects another account', async () => {
+    const auth = new FakeAuth();
+    const isolated = new FakeAuth();
+    isolated.response = {
+      data: {
+        session: { ...session, user: { ...session.user, id: 'another-account' } },
+        user: { ...session.user, id: 'another-account' },
+      },
+      error: null,
+    };
+    const vault = new FakeVault();
+    vault.token = 'original-refresh';
+    const gateway = new SupabaseAuthGateway(
+      auth, vault, () => 'grant-id', () => nowMilliseconds,
+      undefined, undefined, () => isolated,
+    );
+
+    await expect(gateway.signInWithIdentityToken('google', 'identity', undefined, 'reauthenticate'))
+      .resolves.toEqual({ ok: false, error: { code: 'reauthenticationRequired' } });
+    expect(auth.adoptedSessionCount).toBe(0);
+    expect(vault.token).toBe('original-refresh');
+  });
+
+  it('adopts a matching reauthenticated session only after checking account identity', async () => {
+    const auth = new FakeAuth();
+    const gateway = new SupabaseAuthGateway(
+      auth, new FakeVault(), () => 'grant-id', () => nowMilliseconds,
+      undefined, undefined, () => new FakeAuth(),
+    );
+    expect((await gateway.signInWithIdentityToken('apple', 'identity', undefined, 'reauthenticate')).ok)
+      .toBe(true);
+    expect(auth.adoptedSessionCount).toBe(1);
+  });
+
+  it('logs out only the current authentication session', async () => {
+    const auth = new FakeAuth();
+    const vault = new FakeVault();
+    vault.token = 'refresh';
+    const gateway = new SupabaseAuthGateway(auth, vault, () => 'grant-id', () => nowMilliseconds);
+    expect((await gateway.logout()).ok).toBe(true);
+    expect(auth.logoutScope).toBe('local');
+    expect(vault.token).toBeUndefined();
+  });
+
   it('restores by rotating only the refresh token from SecureStore', async () => {
     const auth = new FakeAuth();
     const vault = new FakeVault();
@@ -192,5 +254,61 @@ describe('SupabaseAuthGateway', () => {
       email: 'person@example.com',
       password: 'correct horse battery staple',
     })).resolves.toEqual({ ok: false, error: { code: 'rateLimited' } });
+  });
+
+  it('consumes a recovery redirect and updates the password', async () => {
+    const auth = new FakeAuth();
+    const vault = new FakeVault();
+    const gateway = new SupabaseAuthGateway(
+      auth,
+      vault,
+      () => 'grant-id',
+      () => nowMilliseconds,
+    );
+    const recoveryUrl =
+      'kineo://auth/reset#type=recovery&access_token=access&refresh_token=refresh';
+
+    await expect(gateway.completePasswordReset(
+      recoveryUrl,
+      'new correct horse battery staple',
+    )).resolves.toEqual({
+      ok: true,
+      value: { kind: 'authenticated', accountId, provider: 'email' },
+    });
+    expect(auth.updatedPassword).toBe('new correct horse battery staple');
+    expect(vault.token).toBe('rotated-refresh');
+  });
+
+  it('consumes a verified-email callback into the secure session', async () => {
+    const vault = new FakeVault();
+    const gateway = new SupabaseAuthGateway(
+      new FakeAuth(),
+      vault,
+      () => 'grant-id',
+      () => nowMilliseconds,
+    );
+    await expect(gateway.completeEmailVerification(
+      'kineo://auth/callback#type=signup&access_token=access&refresh_token=refresh',
+    )).resolves.toEqual({
+      ok: true,
+      value: { kind: 'authenticated', accountId, provider: 'email' },
+    });
+    expect(vault.token).toBe('rotated-refresh');
+  });
+
+  it('rejects unrelated deep links as recovery credentials', async () => {
+    const gateway = new SupabaseAuthGateway(
+      new FakeAuth(),
+      new FakeVault(),
+      () => 'grant-id',
+      () => nowMilliseconds,
+    );
+    await expect(gateway.completePasswordReset(
+      'https://example.com/reset#access_token=secret',
+      'new correct horse battery staple',
+    )).resolves.toEqual({
+      ok: false,
+      error: { code: 'invalidCredentials' },
+    });
   });
 });

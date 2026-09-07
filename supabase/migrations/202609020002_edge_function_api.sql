@@ -145,9 +145,13 @@ declare
   entry jsonb;
   submission jsonb;
   event_data jsonb;
+  decision_data jsonb;
   receipt jsonb;
   current_version bigint;
   generated_session_id uuid;
+  routine_snapshot jsonb;
+  routine_snapshot_text text;
+  routine_payload jsonb;
 begin
   if jsonb_typeof(p_command) <> 'object' or command_kind is null then
     return jsonb_build_object(
@@ -155,25 +159,16 @@ begin
     );
   end if;
 
-  if exists (
-    select 1 from kineo_private.mutation_receipts
-    where account_id = p_account_id and mutation_id = p_mutation_id
-  ) then
-    return jsonb_build_object('mutationId', p_mutation_id, 'kind', 'duplicate');
-  end if;
-
-  select * into strict account_row
+  -- Serialize mutations, receipts and epoch changes for one account. A retry
+  -- must observe the first transaction's receipt after acquiring this lock.
+  select * into account_row
   from kineo_private.accounts
-  where id = p_account_id;
+  where id = p_account_id
+  for update;
 
-  if account_row.status <> 'active' then
+  if not found or account_row.status <> 'active' then
     return jsonb_build_object(
       'mutationId', p_mutation_id, 'kind', 'rejected', 'code', 'accountDeleting'
-    );
-  end if;
-  if account_row.history_epoch <> p_history_epoch then
-    return jsonb_build_object(
-      'mutationId', p_mutation_id, 'kind', 'rejected', 'code', 'staleHistoryEpoch'
     );
   end if;
   if not exists (
@@ -184,6 +179,18 @@ begin
   ) then
     return jsonb_build_object(
       'mutationId', p_mutation_id, 'kind', 'rejected', 'code', 'installationRevoked'
+    );
+  end if;
+
+  if exists (
+    select 1 from kineo_private.mutation_receipts
+    where account_id = p_account_id and mutation_id = p_mutation_id
+  ) then
+    return jsonb_build_object('mutationId', p_mutation_id, 'kind', 'duplicate');
+  end if;
+  if account_row.history_epoch <> p_history_epoch then
+    return jsonb_build_object(
+      'mutationId', p_mutation_id, 'kind', 'rejected', 'code', 'staleHistoryEpoch'
     );
   end if;
 
@@ -224,11 +231,19 @@ begin
         );
       end if;
       insert into kineo_private.user_profiles(
-        account_id, version, adult_acknowledged, primary_area, secondary_area,
-        safety_boundary_version, safety_acknowledged_at, weekly_goal_days
+        account_id, version, onboarding_completed_at, adult_acknowledged,
+        primary_area, secondary_area, safety_boundary_version,
+        safety_acknowledged_at, routine_preference, weekly_goal_days,
+        telemetry_choice, created_at, updated_at
       ) values (
         p_account_id,
         coalesce(current_version + 1, 1),
+        case when p_command#>>'{profile,onboardingCompletedAtMilliseconds}' is null
+          then null
+          else to_timestamp(
+            (p_command#>>'{profile,onboardingCompletedAtMilliseconds}')::double precision / 1000
+          )
+        end,
         coalesce((p_command#>>'{profile,adultAcknowledged}')::boolean, false),
         p_command#>>'{profile,primaryArea}',
         p_command#>>'{profile,secondaryArea}',
@@ -239,17 +254,24 @@ begin
             (p_command#>>'{profile,safetyAcknowledgedAtMilliseconds}')::double precision / 1000
           )
         end,
-        (p_command#>>'{profile,weeklyGoalDays}')::smallint
+        p_command#>>'{profile,routinePreference}',
+        (p_command#>>'{profile,weeklyGoalDays}')::smallint,
+        p_command#>>'{profile,telemetryChoice}',
+        to_timestamp((p_command#>>'{profile,createdAtMilliseconds}')::double precision / 1000),
+        to_timestamp((p_command#>>'{profile,updatedAtMilliseconds}')::double precision / 1000)
       )
       on conflict (account_id) do update set
         version = excluded.version,
+        onboarding_completed_at = excluded.onboarding_completed_at,
         adult_acknowledged = excluded.adult_acknowledged,
         primary_area = excluded.primary_area,
         secondary_area = excluded.secondary_area,
         safety_boundary_version = excluded.safety_boundary_version,
         safety_acknowledged_at = excluded.safety_acknowledged_at,
+        routine_preference = excluded.routine_preference,
         weekly_goal_days = excluded.weekly_goal_days,
-        updated_at = clock_timestamp();
+        telemetry_choice = excluded.telemetry_choice,
+        updated_at = excluded.updated_at;
       insert into kineo_private.account_changes(
         account_id, entity_kind, entity_id, operation, payload
       ) values (
@@ -258,6 +280,32 @@ begin
           'version', coalesce(current_version + 1, 1)
         )
       );
+      if p_command->'reminderSettings' is not null then
+        insert into kineo_private.reminder_settings(
+          account_id, version, enabled, window_start_minutes,
+          window_end_minutes, time_zone_id
+        ) values (
+          p_account_id,
+          coalesce(current_version + 1, 1),
+          coalesce((p_command#>>'{reminderSettings,enabled}')::boolean, false),
+          (p_command#>>'{reminderSettings,window,startMinutes}')::smallint,
+          (p_command#>>'{reminderSettings,window,endMinutes}')::smallint,
+          p_command#>>'{reminderSettings,timeZoneId}'
+        )
+        on conflict (account_id) do update set
+          version = excluded.version,
+          enabled = excluded.enabled,
+          window_start_minutes = excluded.window_start_minutes,
+          window_end_minutes = excluded.window_end_minutes,
+          time_zone_id = excluded.time_zone_id,
+          updated_at = clock_timestamp();
+        insert into kineo_private.account_changes(
+          account_id, entity_kind, entity_id, operation, payload
+        ) values (
+          p_account_id, 'reminderSettings', p_account_id::text, 'upsert',
+          p_command->'reminderSettings'
+        );
+      end if;
 
     when 'submitCheckIn' then
       check_in := p_command->'checkIn';
@@ -298,11 +346,45 @@ begin
           to_timestamp((entry->>'submittedAtMilliseconds')::double precision / 1000)
         ) on conflict (account_id, id) do nothing;
       end loop;
+      -- Feed parents before children, including across page boundaries.
       insert into kineo_private.account_changes(
         account_id, entity_kind, entity_id, operation, payload
       ) values (
         p_account_id, 'checkIn', check_in->>'id', 'upsert', check_in
       );
+      for event_data in select value from jsonb_array_elements(
+        coalesce(p_command->'attentionTransitions', '[]'::jsonb)
+      )
+      loop
+        insert into kineo_private.safety_events(
+          account_id, id, area, kind, source_check_in_entry_id,
+          occurred_at, payload
+        ) values (
+          p_account_id,
+          (event_data->>'id')::uuid,
+          event_data->>'area',
+          event_data->>'kind',
+          (event_data->>'sourceCheckInEntryId')::uuid,
+          to_timestamp((event_data->>'occurredAtMilliseconds')::double precision / 1000),
+          event_data
+        );
+        if event_data->>'statusAfter' = 'attentionRequired' then
+          insert into kineo_private.attention_states(account_id, area, updated_at)
+          values (
+            p_account_id,
+            event_data->>'area',
+            to_timestamp((event_data->>'occurredAtMilliseconds')::double precision / 1000)
+          )
+          on conflict (account_id, area) do update set
+            version = kineo_private.attention_states.version + 1,
+            updated_at = excluded.updated_at;
+        end if;
+        insert into kineo_private.account_changes(
+          account_id, entity_kind, entity_id, operation, payload
+        ) values (
+          p_account_id, 'safetyEvent', event_data->>'id', 'upsert', event_data
+        );
+      end loop;
       if plan is not null and jsonb_typeof(plan) = 'object' then
         insert into kineo_private.selection_decisions(
           account_id, id, check_in_id, revision, rules_version,
@@ -363,7 +445,28 @@ begin
         p_account_id, 'safetyEvent', event_data->>'id', 'upsert', event_data
       );
 
+    when 'recordPauseToday' then
+      event_data := p_command->'event';
+      insert into kineo_private.pause_today_events(
+        account_id, id, check_in_id, chosen_at, local_day
+      ) values (
+        p_account_id,
+        (event_data->>'id')::uuid,
+        (event_data->>'checkInId')::uuid,
+        to_timestamp((event_data->>'chosenAtMilliseconds')::double precision / 1000),
+        (event_data#>>'{dayContext,localDay}')::date
+      );
+      insert into kineo_private.account_changes(
+        account_id, entity_kind, entity_id, operation, payload
+      ) values (
+        p_account_id, 'pauseToday', event_data->>'id', 'upsert', event_data
+      );
+
     when 'startRoutine' then
+      event_data := p_command->'routine';
+      decision_data := p_command->'decision';
+      routine_snapshot_text := event_data#>>'{snapshot,json}';
+      routine_snapshot := routine_snapshot_text::jsonb;
       select decision_payload into plan
       from kineo_private.selection_decisions
       where account_id = p_account_id
@@ -373,19 +476,66 @@ begin
           'mutationId', p_mutation_id, 'kind', 'rejected', 'code', 'invalidCommand'
         );
       end if;
-      generated_session_id := extensions.gen_random_uuid();
+      if jsonb_typeof(routine_snapshot) <> 'object' or
+         encode(extensions.digest(routine_snapshot_text, 'sha256'), 'hex') <>
+           event_data#>>'{snapshot,checksum}' or
+         routine_snapshot->>'sessionId' <> event_data->>'id' or
+         routine_snapshot->>'decisionId' <> p_command->>'decisionId' or
+         routine_snapshot->>'catalogVersion' <> plan->>'catalogVersion' or
+         routine_snapshot->>'rulesVersion' <> plan->>'rulesVersion' or
+         routine_snapshot->>'selectedLevel' <> plan->>'selectedLevel' or
+         routine_snapshot->>'deliveredLevel' <> plan->>'deliveredLevel' or
+         routine_snapshot->>'duration' <> plan->>'durationVariant' or
+         routine_snapshot->'includedAreas' <> plan->'includedAreas' or
+         decision_data->>'id' <> plan->>'decisionId' or
+         decision_data->>'checkInId' <> plan->>'checkInId' or
+         decision_data->>'revision' <> plan->>'revision' or
+         decision_data->>'rulesVersion' <> plan->>'rulesVersion' or
+         decision_data->>'catalogVersionRequested' <> plan->>'catalogVersion' or
+         decision_data->>'catalogVersionDelivered' <> plan->>'catalogVersion' or
+         decision_data->>'recommendedLevel' <> plan->>'recommendedLevel' or
+         decision_data->>'selectedLevel' <> plan->>'selectedLevel' or
+         decision_data->>'deliveredLevel' <> plan->>'deliveredLevel' or
+         decision_data->>'duration' <> plan->>'durationVariant' or
+         decision_data->>'compositionFingerprint' <> routine_snapshot->>'fingerprint' then
+        return jsonb_build_object(
+          'mutationId', p_mutation_id, 'kind', 'rejected', 'code', 'invalidCommand'
+        );
+      end if;
+      update kineo_private.selection_decisions
+      set decision_payload = decision_data
+      where account_id = p_account_id
+        and id = (p_command->>'decisionId')::uuid;
+      insert into kineo_private.account_changes(
+        account_id, entity_kind, entity_id, operation, payload
+      ) values (
+        p_account_id, 'selectionDecision', p_command->>'decisionId',
+        'upsert', decision_data
+      );
+      generated_session_id := (event_data->>'id')::uuid;
       insert into kineo_private.routine_sessions(
         account_id, id, decision_id, check_in_id, owner_installation_id,
-        status, routine_snapshot, snapshot_checksum
+        status, routine_snapshot, session_payload, snapshot_checksum, current_step_index,
+        step_elapsed_ms, started_at, updated_at, ended_at
       ) select
         p_account_id,
         generated_session_id,
         id,
         check_in_id,
         p_installation_id,
-        'prepared',
-        plan->'routineSnapshot',
-        encode(extensions.digest((plan->'routineSnapshot')::text, 'sha256'), 'hex')
+        event_data->>'status',
+        routine_snapshot,
+        event_data,
+        event_data#>>'{snapshot,checksum}',
+        (event_data->>'currentStepIndex')::integer,
+        (event_data->>'stepElapsedMilliseconds')::bigint,
+        case when event_data->>'startedAtMilliseconds' is null then null
+          else to_timestamp((event_data->>'startedAtMilliseconds')::double precision / 1000)
+        end,
+        to_timestamp((event_data->>'updatedAtMilliseconds')::double precision / 1000),
+        case when event_data->>'endedAtMilliseconds' is null then null
+          else to_timestamp((event_data->>'endedAtMilliseconds')::double precision / 1000)
+        end
       from kineo_private.selection_decisions
       where account_id = p_account_id
         and id = (p_command->>'decisionId')::uuid;
@@ -399,8 +549,8 @@ begin
           'checkInId', check_in_id,
           'ownerInstallationId', p_installation_id,
           'version', 1,
-          'status', 'prepared',
-          'routineSnapshot', plan->'routineSnapshot'
+          'status', event_data->>'status',
+          'routine', event_data
         )
       from kineo_private.selection_decisions
       where account_id = p_account_id
@@ -442,19 +592,57 @@ begin
           status = event_data->>'resultingStatus',
           current_step_index = (event_data->>'resultingStepIndex')::integer,
           step_elapsed_ms = (event_data->>'resultingStepElapsedMilliseconds')::bigint,
-          updated_at = clock_timestamp(),
+          started_at = coalesce(
+            started_at,
+            case when event_data->>'resultingStartedAtMilliseconds' is null
+              then null
+              else to_timestamp(
+                (event_data->>'resultingStartedAtMilliseconds')::double precision / 1000
+              )
+            end
+          ),
+          updated_at = to_timestamp(
+            (event_data->>'resultingUpdatedAtMilliseconds')::double precision / 1000
+          ),
           ended_at = case when event_data->>'resultingEndedAtMilliseconds' is null
             then null
             else to_timestamp(
               (event_data->>'resultingEndedAtMilliseconds')::double precision / 1000
             )
-          end
+          end,
+          session_payload = session_payload || jsonb_strip_nulls(jsonb_build_object(
+            'status', event_data->>'resultingStatus',
+            'currentStepIndex', (event_data->>'resultingStepIndex')::integer,
+            'stepElapsedMilliseconds',
+              (event_data->>'resultingStepElapsedMilliseconds')::bigint,
+            'updatedAtMilliseconds',
+              (event_data->>'resultingUpdatedAtMilliseconds')::bigint,
+            'startedAtMilliseconds', coalesce(
+              session_payload->'startedAtMilliseconds',
+              event_data->'resultingStartedAtMilliseconds'
+            ),
+            'endedAtMilliseconds', event_data->'resultingEndedAtMilliseconds'
+          ))
+      where account_id = p_account_id
+        and id = (event_data->>'routineSessionId')::uuid;
+      select session_payload into routine_payload
+      from kineo_private.routine_sessions
       where account_id = p_account_id
         and id = (event_data->>'routineSessionId')::uuid;
       insert into kineo_private.account_changes(
         account_id, entity_kind, entity_id, operation, payload
       ) values (
         p_account_id, 'routineEvent', event_data->>'id', 'upsert', event_data
+      );
+      insert into kineo_private.account_changes(
+        account_id, entity_kind, entity_id, operation, payload
+      ) values (
+        p_account_id, 'routineSession', event_data->>'routineSessionId', 'upsert',
+        jsonb_build_object(
+          'id', event_data->>'routineSessionId',
+          'ownerInstallationId', p_installation_id,
+          'routine', routine_payload
+        )
       );
 
     when 'submitFeedback' then
@@ -501,7 +689,6 @@ begin
       delete from kineo_private.selection_decisions where account_id = p_account_id;
       delete from kineo_private.pause_today_events where account_id = p_account_id;
       delete from kineo_private.safety_events where account_id = p_account_id;
-      delete from kineo_private.attention_states where account_id = p_account_id;
       delete from kineo_private.check_in_entries where account_id = p_account_id;
       delete from kineo_private.check_ins where account_id = p_account_id;
       delete from kineo_private.account_changes where account_id = p_account_id;

@@ -6,6 +6,7 @@ import type {
 import type {
   DeletionStatus,
   ExportStatus,
+  PersonalDataExport,
   PrivacyResult,
 } from '../../core/account/account-privacy-module';
 import type { SupabaseFunctionsPort } from './supabase-sync-transport';
@@ -61,6 +62,19 @@ implements AccountPrivacyTransport {
             expiresAtMilliseconds: value.expiresAtMilliseconds,
           },
         }
+      : workflowFailure();
+  }
+
+  async downloadExport(
+    status: Extract<ExportStatus, { kind: 'ready' }>,
+  ): Promise<PrivacyResult<PersonalDataExport>> {
+    const response = await this.invoke('export-download', {
+      jobId: status.jobId,
+      downloadToken: status.downloadToken,
+    });
+    if (!response.ok) return response;
+    return isRecord(response.value) && isRecord(response.value.export)
+      ? { ok: true, value: response.value.export }
       : workflowFailure();
   }
 

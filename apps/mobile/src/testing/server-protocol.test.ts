@@ -14,6 +14,16 @@ const entryId = '50000000-0000-4000-8000-000000000001';
 const decisionId = '60000000-0000-4000-8000-000000000001';
 
 describe('server sync protocol', () => {
+  it('rejects client-supplied server approval fields', () => {
+    expect(validateSyncRequest({
+      installationId,
+      mutations: [{
+        mutationId, installationId, historyEpoch: 1, createdAtMilliseconds: 1,
+        command: { kind: 'resetHistory', authoritativePlan: { selectedLevel: 'active' } },
+      }],
+    })).toBeUndefined();
+  });
+
   it('rejects reordered and installation-mismatched mutations', () => {
     const mutation = (id: string, createdAtMilliseconds: number) => ({
       mutationId: id,
@@ -34,6 +44,23 @@ describe('server sync protocol', () => {
       mutations: [{
         ...mutation(mutationId, 1),
         installationId: '20000000-0000-4000-8000-000000000099',
+      }],
+    })).toBeUndefined();
+  });
+
+  it('rejects malformed commands before they reach PostgreSQL', () => {
+    expect(validateSyncRequest({
+      installationId,
+      mutations: [{
+        mutationId,
+        installationId,
+        historyEpoch: 1,
+        createdAtMilliseconds: 1,
+        command: {
+          kind: 'saveProfile',
+          expectedVersion: 0,
+          profile: { adultAcknowledged: true, weeklyGoalDays: 99 },
+        },
       }],
     })).toBeUndefined();
   });
@@ -86,6 +113,24 @@ describe('server sync protocol', () => {
           changeReport: 'worse',
           movementComfort: 'limited',
           conditionalSafetyAnswer: 'notSure',
+        }],
+      },
+      decisionId,
+    }, {})).toBeUndefined();
+  });
+
+  it('does not create a plan for an attention correction', () => {
+    expect(createAuthoritativePlan({
+      kind: 'submitCheckIn',
+      suppressPlan: true,
+      checkIn: {
+        id: checkInId,
+        primaryArea: 'neck',
+        entries: [{
+          id: entryId,
+          area: 'neck',
+          changeReport: 'similar',
+          movementComfort: 'okay',
         }],
       },
       decisionId,

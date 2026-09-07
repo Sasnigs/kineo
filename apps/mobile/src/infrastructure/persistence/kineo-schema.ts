@@ -8,15 +8,17 @@ import type {
   SqliteExecutor,
 } from '../../core/persistence/persistence-contract';
 
-export const kineoSchemaVersion = 3;
+export const kineoSchemaVersion = 4;
 export const kineoInitialMigrationName = 'v1_initial';
 export const kineoV2MigrationName = 'v2_account_sync';
 export const kineoV3MigrationName = 'v3_account_hydration';
+export const kineoV4MigrationName = 'v4_complete_sync_outbox';
 
 const unmigratedSchemaVersion = 0;
 const initialSchemaVersion = 1;
 const accountSyncSchemaVersion = 2;
 const accountHydrationSchemaVersion = 3;
+const completeSyncOutboxSchemaVersion = 4;
 const singletonProfileId = 1;
 const minimumWeeklyGoalDays = 1;
 const maximumWeeklyGoalDays = 7;
@@ -366,6 +368,46 @@ export const kineoV3MigrationChecksum = bytesToHex(
   sha256(utf8ToBytes(kineoV3MigrationStatements.join('\n'))),
 );
 
+export const kineoV4MigrationStatements = Object.freeze([
+  'ALTER TABLE sync_outbox RENAME TO sync_outbox_v3',
+  `CREATE TABLE sync_outbox (
+    mutation_id TEXT PRIMARY KEY CHECK (length(mutation_id) > 0),
+    account_id TEXT NOT NULL,
+    installation_id TEXT NOT NULL,
+    history_epoch INTEGER NOT NULL CHECK (history_epoch >= ${firstRevision}),
+    command_kind TEXT NOT NULL CHECK (command_kind IN (
+      'acceptLegal', 'saveProfile', 'submitCheckIn', 'applyAttentionTransition',
+      'recordPauseToday', 'startRoutine', 'recordRoutineEvent',
+      'submitFeedback', 'resetHistory'
+    )),
+    payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
+    created_at_ms INTEGER NOT NULL,
+    attempt_count INTEGER NOT NULL CHECK (attempt_count >= ${unmigratedSchemaVersion}),
+    next_attempt_at_ms INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'sending', 'conflict')),
+    last_error_code TEXT,
+    FOREIGN KEY(account_id, installation_id)
+      REFERENCES local_account_state(account_id, installation_id)
+      ON DELETE CASCADE
+  )`,
+  `INSERT INTO sync_outbox(
+    mutation_id, account_id, installation_id, history_epoch, command_kind,
+    payload_json, created_at_ms, attempt_count, next_attempt_at_ms, state,
+    last_error_code
+  )
+  SELECT mutation_id, account_id, installation_id, history_epoch, command_kind,
+    payload_json, created_at_ms, attempt_count, next_attempt_at_ms, state,
+    last_error_code
+  FROM sync_outbox_v3`,
+  'DROP TABLE sync_outbox_v3',
+  `CREATE INDEX sync_outbox_delivery
+    ON sync_outbox(state, next_attempt_at_ms, created_at_ms)`,
+] as const);
+
+export const kineoV4MigrationChecksum = bytesToHex(
+  sha256(utf8ToBytes(kineoV4MigrationStatements.join('\n'))),
+);
+
 type KineoMigration = Readonly<{
   version: number;
   name: string;
@@ -391,6 +433,12 @@ const kineoMigrations: readonly KineoMigration[] = Object.freeze([
     name: kineoV3MigrationName,
     checksum: kineoV3MigrationChecksum,
     statements: kineoV3MigrationStatements,
+  },
+  {
+    version: completeSyncOutboxSchemaVersion,
+    name: kineoV4MigrationName,
+    checksum: kineoV4MigrationChecksum,
+    statements: kineoV4MigrationStatements,
   },
 ]);
 

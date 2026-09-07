@@ -9,6 +9,7 @@ import { migrateKineoDatabase } from '../infrastructure/persistence/kineo-schema
 import { ProtectedKineoStore } from '../infrastructure/persistence/protected-kineo-store';
 import { NodeSqliteTestDatabase } from '../infrastructure/persistence/testing/node-sqlite-test-database';
 import { KineoProductService } from './kineo-product-service';
+import type { PlanAuthority } from './account/kineo-plan-authority';
 import type {
   ReminderAuthorization,
   ReminderScheduling,
@@ -96,7 +97,7 @@ class FakeReminderScheduler implements ReminderScheduling {
   }
 }
 
-async function makeService() {
+async function makeService(planAuthority?: PlanAuthority) {
   const database = new NodeSqliteTestDatabase();
   const migrated = await migrateKineoDatabase(database, initialTimestamp);
   if (!migrated.ok) throw new Error('Product-service migration failed.');
@@ -138,6 +139,7 @@ async function makeService() {
         }),
       },
       reminderScheduler,
+      planAuthority,
     ),
     reminderScheduler,
     advanceClock: () => {
@@ -467,6 +469,39 @@ describe('Kineo product service reminders', () => {
 });
 
 describe('Kineo product service check-in', () => {
+  it('does not commit a submitted check-in before server authorization', async () => {
+    const authority: PlanAuthority = {
+      async authorize() {
+        return {
+          ok: false,
+          error: { code: 'onlineValidationRequired' },
+        };
+      },
+    };
+    const { database, service, store } = await makeService(authority);
+    await service.confirmAdultEligibility();
+    await service.savePrimaryArea('neck');
+    await service.saveSecondaryArea();
+    await service.acknowledgeSafetyBoundary();
+    await service.completeOnboarding();
+    const started = await service.beginCheckIn();
+    if (!started.ok) throw new Error('Check-in fixture did not start.');
+
+    await expect(service.submitCheckIn(started.value, {
+      area: 'neck',
+      changeReport: 'similar',
+      movementComfort: 'okay',
+    })).resolves.toEqual({
+      ok: false,
+      error: { code: 'onlineValidationRequired' },
+    });
+    await expect(store.loadCheckIn(started.value.checkInId)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'draft' },
+    });
+    await database.closeAsync();
+  });
+
   it('creates and restores the same durable two-area draft', async () => {
     const { database, service } = await makeService();
     await service.confirmAdultEligibility();

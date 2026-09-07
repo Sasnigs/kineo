@@ -12,10 +12,16 @@ export type SyncCommand =
         adultAcknowledged: boolean;
         primaryArea?: 'neck' | 'upperMidBack' | 'lowerBack';
         secondaryArea?: 'neck' | 'upperMidBack' | 'lowerBack';
+        onboardingCompletedAtMilliseconds?: number;
         safetyBoundaryVersion?: string;
         safetyAcknowledgedAtMilliseconds?: number;
+        routinePreference?: string;
         weeklyGoalDays: number;
+        telemetryChoice: 'notOffered' | 'declined' | 'optedIn';
+        createdAtMilliseconds: number;
+        updatedAtMilliseconds: number;
       }>;
+      reminderSettings?: unknown;
     }>
   | Readonly<{
       kind: 'submitCheckIn';
@@ -24,9 +30,17 @@ export type SyncCommand =
       decisionRevision: number;
       durationVariant: 'quick' | 'standard';
       requestedOverride?: 'gentle' | 'balanced' | 'active';
+      suppressPlan?: boolean;
+      attentionTransitions?: readonly unknown[];
     }>
   | Readonly<{ kind: 'applyAttentionTransition'; transition: unknown }>
-  | Readonly<{ kind: 'startRoutine'; decisionId: string }>
+  | Readonly<{ kind: 'recordPauseToday'; event: unknown }>
+  | Readonly<{
+      kind: 'startRoutine';
+      decisionId: string;
+      decision: unknown;
+      routine: unknown;
+    }>
   | Readonly<{ kind: 'recordRoutineEvent'; event: unknown }>
   | Readonly<{ kind: 'submitFeedback'; submission: unknown }>
   | Readonly<{ kind: 'resetHistory' }>;

@@ -58,6 +58,12 @@ class FakeTransport implements AccountPrivacyTransport {
       },
     };
   }
+  async downloadExport() {
+    return {
+      ok: true as const,
+      value: { formatVersion: 'kineo-export-v1' },
+    };
+  }
   async deleteAccount() {
     return {
       ok: true as const,
@@ -76,6 +82,17 @@ class FakeTransport implements AccountPrivacyTransport {
 }
 
 describe('KineoAccountPrivacyModule', () => {
+  it('does not report deletion complete without a recovery credential', async () => {
+    const local = new FakeLocalStore();
+    const module = new KineoAccountPrivacyModule(
+      new FakeTransport(), new FakeResumeStore(), local, () => nowMilliseconds,
+    );
+    await expect(module.resumeDeletion()).resolves.toEqual({
+      ok: false, error: { code: 'workflowFailed' },
+    });
+    expect(local.wipes).toBe(0);
+  });
+
   it('requires a current reauthentication grant for sensitive actions', async () => {
     const module = new KineoAccountPrivacyModule(
       new FakeTransport(),
@@ -105,6 +122,23 @@ describe('KineoAccountPrivacyModule', () => {
       value: undefined,
     });
     expect(local.resets).toBe(1);
+  });
+
+  it('downloads a prepared one-time export', async () => {
+    const module = new KineoAccountPrivacyModule(
+      new FakeTransport(),
+      new FakeResumeStore(),
+      new FakeLocalStore(),
+      () => nowMilliseconds,
+    );
+    const prepared = await module.requestExport(currentGrant);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok || prepared.value.kind !== 'ready') return;
+
+    await expect(module.downloadExport(prepared.value)).resolves.toEqual({
+      ok: true,
+      value: { formatVersion: 'kineo-export-v1' },
+    });
   });
 
   it('persists deletion recovery before wiping local data', async () => {

@@ -14,6 +14,7 @@ import {
 } from '../../core/account/sync-contract';
 
 export const maximumSyncPageCount = 1_000;
+export const maximumSyncMutationCount = 100;
 
 export class KineoSyncModule implements SyncModule {
   private operationInFlight?: Promise<SyncResult<BootstrapState | SyncState>>;
@@ -99,27 +100,37 @@ export class KineoSyncModule implements SyncModule {
     let remainingMutations = mutations;
     let finalResponse: SyncResponse | undefined;
 
+    // Validate the complete outbox before partitioning so duplicates and ordering
+    // violations across batch boundaries cannot be hidden by pagination.
+    const validated = createSyncRequest({
+      expectedAccountId: this.accountId,
+      installationId: this.installationId,
+      mutations,
+    });
+    if (!validated.ok) return invalidResponse();
+
     for (let pageIndex = 0; pageIndex < maximumSyncPageCount; pageIndex += 1) {
+      const batch = remainingMutations.slice(0, maximumSyncMutationCount);
       const request = createSyncRequest({
         expectedAccountId: this.accountId,
         installationId: this.installationId,
         ...(cursor === undefined ? {} : { cursor }),
-        mutations: remainingMutations,
+        mutations: batch,
       });
       if (!request.ok) return invalidResponse();
       const response = await this.transport.synchronize(request.value);
       if (!response.ok) return response;
-      if (!validDispositions(response.value, remainingMutations)) {
+      if (!validDispositions(response.value, batch)) {
         return invalidResponse();
       }
+      const nextCursor = validatedNextCursor(cursor, response.value);
+      if (!nextCursor.ok) return nextCursor;
       const applied = await this.repository.applySyncPage(
         response.value,
-        remainingMutations,
+        batch,
       );
       if (!applied.ok) return applied;
       finalResponse = response.value;
-      const nextCursor = validatedNextCursor(cursor, response.value);
-      if (!nextCursor.ok) return nextCursor;
       cursor = nextCursor.value;
 
       const rejected = response.value.dispositions.find(
@@ -131,11 +142,11 @@ export class KineoSyncModule implements SyncModule {
       if (response.value.dispositions.some(({ kind }) => kind === 'conflict')) {
         return { ok: false, error: { code: 'conflict' } };
       }
-      if (!response.value.hasMore) break;
-      remainingMutations = [];
+      remainingMutations = remainingMutations.slice(batch.length);
+      if (!response.value.hasMore && remainingMutations.length === 0) break;
     }
 
-    if (finalResponse === undefined || finalResponse.hasMore) {
+    if (finalResponse === undefined || finalResponse.hasMore || remainingMutations.length > 0) {
       return invalidResponse();
     }
     const pending = await this.repository.pendingMutationCount();

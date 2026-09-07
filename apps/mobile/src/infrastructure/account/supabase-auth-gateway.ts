@@ -44,6 +44,11 @@ type SessionResponse = Readonly<{
   error: SupabaseAuthError | null;
 }>;
 
+type UserResponse = Readonly<{
+  data: Readonly<{ user: SupabaseUser | null }>;
+  error: SupabaseAuthError | null;
+}>;
+
 export interface SupabaseAuthPort {
   refreshSession(input: Readonly<{ refresh_token: string }>): Promise<SessionResponse>;
   signInWithIdToken(input: Readonly<{
@@ -51,7 +56,9 @@ export interface SupabaseAuthPort {
     token: string;
     nonce?: string;
   }>): Promise<SessionResponse>;
-  signUp(input: EmailCredentials): Promise<SessionResponse>;
+  signUp(input: EmailCredentials & Readonly<{
+    options?: Readonly<{ emailRedirectTo: string }>;
+  }>): Promise<SessionResponse>;
   signInWithPassword(input: EmailCredentials): Promise<SessionResponse>;
   resend(input: Readonly<{
     type: 'signup';
@@ -65,11 +72,20 @@ export interface SupabaseAuthPort {
     data: object | null;
     error: SupabaseAuthError | null;
   }>>;
+  setSession(input: Readonly<{
+    access_token: string;
+    refresh_token: string;
+  }>): Promise<SessionResponse>;
+  exchangeCodeForSession(code: string): Promise<SessionResponse>;
+  updateUser(input: Readonly<{
+    password: string;
+    current_password?: string;
+  }>): Promise<UserResponse>;
   getUser(): Promise<Readonly<{
     data: Readonly<{ user: SupabaseUser | null }>;
     error: SupabaseAuthError | null;
   }>>;
-  signOut(input?: Readonly<{ scope: 'global' }>): Promise<
+  signOut(input?: Readonly<{ scope: 'local' }>): Promise<
     Readonly<{ error: SupabaseAuthError | null }>
   >;
 }
@@ -118,6 +134,8 @@ export class SupabaseAuthGateway implements AuthGateway {
     private readonly nowMilliseconds: () => number,
     private readonly emailRedirectUrl?: string,
     private readonly passwordResetRedirectUrl?: string,
+    private readonly isolatedIdentityAuth?: () =>
+      Pick<SupabaseAuthPort, 'signInWithIdToken'> | undefined,
   ) {}
 
   async restoreSession(): Promise<AuthResult<AuthState>> {
@@ -152,13 +170,44 @@ export class SupabaseAuthGateway implements AuthGateway {
     provider: Extract<AuthProvider, 'apple' | 'google'>,
     token: string,
     nonce?: string,
+    purpose: 'signIn' | 'reauthenticate' = 'signIn',
   ): Promise<AuthResult<AuthState>> {
     try {
-      const response = await this.auth.signInWithIdToken({
+      let expectedAccountId: string | undefined;
+      if (purpose === 'reauthenticate') {
+        const current = await this.auth.getUser();
+        if (current.error !== null || current.data.user === null ||
+            this.isolatedIdentityAuth === undefined) {
+          return { ok: false, error: { code: 'reauthenticationRequired' } };
+        }
+        expectedAccountId = current.data.user.id;
+      }
+      // A provider account picker may return a different person. Authenticate in
+      // an isolated, nonpersistent client before replacing the product session.
+      const identityAuth = purpose === 'reauthenticate'
+        ? this.isolatedIdentityAuth?.()
+        : this.auth;
+      if (identityAuth === undefined) {
+        return { ok: false, error: { code: 'reauthenticationRequired' } };
+      }
+      let response = await identityAuth.signInWithIdToken({
         provider,
         token,
         ...(nonce === undefined ? {} : { nonce }),
       });
+      if (response.error !== null) {
+        return { ok: false, error: stableAuthError(response.error) };
+      }
+      if (purpose === 'reauthenticate') {
+        const session = response.data.session;
+        if (session === null || session.user.id !== expectedAccountId) {
+          return { ok: false, error: { code: 'reauthenticationRequired' } };
+        }
+        response = await this.auth.setSession({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+        });
+      }
       return response.error === null
         ? this.persistSession(response, provider)
         : { ok: false, error: stableAuthError(response.error) };
@@ -171,7 +220,12 @@ export class SupabaseAuthGateway implements AuthGateway {
     credentials: EmailCredentials,
   ): Promise<AuthResult<AuthState>> {
     try {
-      const response = await this.auth.signUp(credentials);
+      const response = await this.auth.signUp({
+        ...credentials,
+        ...(this.emailRedirectUrl === undefined ? {} : {
+          options: { emailRedirectTo: this.emailRedirectUrl },
+        }),
+      });
       if (response.error !== null) {
         return { ok: false, error: stableAuthError(response.error) };
       }
@@ -236,6 +290,52 @@ export class SupabaseAuthGateway implements AuthGateway {
     }
   }
 
+  async completeEmailVerification(
+    callbackUrl: string,
+  ): Promise<AuthResult<AuthState>> {
+    const credential = parseRedirectCredential(callbackUrl, '/callback');
+    return credential === undefined
+      ? { ok: false, error: { code: 'invalidCredentials' } }
+      : this.consumeRedirectCredential(credential);
+  }
+
+  async completePasswordReset(
+    recoveryUrl: string,
+    newPassword: string,
+  ): Promise<AuthResult<AuthState>> {
+    const credential = parseRedirectCredential(recoveryUrl, '/reset', 'recovery');
+    if (credential === undefined) {
+      return { ok: false, error: { code: 'invalidCredentials' } };
+    }
+    try {
+      const session = await this.consumeRedirectCredential(credential);
+      if (!session.ok) return session;
+      const updated = await this.auth.updateUser({ password: newPassword });
+      return updated.error === null
+        ? session
+        : { ok: false, error: stableAuthError(updated.error) };
+    } catch {
+      return { ok: false, error: { code: 'offline' } };
+    }
+  }
+
+  async updatePassword(
+    newPassword: string,
+    currentPassword: string,
+  ): Promise<AuthResult<void>> {
+    try {
+      const updated = await this.auth.updateUser({
+        password: newPassword,
+        current_password: currentPassword,
+      });
+      return updated.error === null
+        ? { ok: true, value: undefined }
+        : { ok: false, error: stableAuthError(updated.error) };
+    } catch {
+      return { ok: false, error: { code: 'offline' } };
+    }
+  }
+
   async reauthenticate(
     method: ReauthenticationMethod,
   ): Promise<AuthResult<ReauthenticationGrant>> {
@@ -287,7 +387,7 @@ export class SupabaseAuthGateway implements AuthGateway {
 
   async logout(): Promise<AuthResult<void>> {
     try {
-      const response = await this.auth.signOut({ scope: 'global' });
+      const response = await this.auth.signOut({ scope: 'local' });
       if (
         response.error !== null &&
         response.error.name !== missingSessionErrorName
@@ -318,5 +418,61 @@ export class SupabaseAuthGateway implements AuthGateway {
         provider: providerFor(session.user, fallbackProvider),
       },
     };
+  }
+
+  private async consumeRedirectCredential(
+    credential: RecoveryCredential,
+  ): Promise<AuthResult<AuthState>> {
+    try {
+      const response = credential.kind === 'code'
+        ? await this.auth.exchangeCodeForSession(credential.code)
+        : await this.auth.setSession({
+            access_token: credential.accessToken,
+            refresh_token: credential.refreshToken,
+          });
+      return response.error === null
+        ? this.persistSession(response, 'email')
+        : { ok: false, error: stableAuthError(response.error) };
+    } catch {
+      return { ok: false, error: { code: 'offline' } };
+    }
+  }
+}
+
+type RecoveryCredential =
+  | Readonly<{ kind: 'code'; code: string }>
+  | Readonly<{
+      kind: 'tokens';
+      accessToken: string;
+      refreshToken: string;
+    }>;
+
+function parseRedirectCredential(
+  url: string,
+  expectedPath: '/callback' | '/reset',
+  expectedType?: string,
+): RecoveryCredential | undefined {
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.protocol !== 'kineo:' ||
+      parsed.hostname !== 'auth' ||
+      parsed.pathname !== expectedPath
+    ) return undefined;
+    const code = parsed.searchParams.get('code');
+    if (code !== null && code.length > 0) return { kind: 'code', code };
+    const fragment = new URLSearchParams(parsed.hash.slice(1));
+    const accessToken = fragment.get('access_token');
+    const refreshToken = fragment.get('refresh_token');
+    if (
+      (expectedType !== undefined && fragment.get('type') !== expectedType) ||
+      accessToken === null ||
+      accessToken.length === 0 ||
+      refreshToken === null ||
+      refreshToken.length === 0
+    ) return undefined;
+    return { kind: 'tokens', accessToken, refreshToken };
+  } catch {
+    return undefined;
   }
 }

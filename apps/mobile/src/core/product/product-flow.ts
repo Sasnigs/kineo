@@ -178,6 +178,9 @@ export type ProductFlowError =
   | Readonly<{ code: 'invalidData' }>
   | Readonly<{ code: 'contentUnavailable' }>
   | Readonly<{ code: 'reminderUnavailable' }>
+  | Readonly<{ code: 'onlineValidationRequired' }>
+  | Readonly<{ code: 'accountUnavailable' }>
+  | Readonly<{ code: 'serverRejected' }>
   | Readonly<{ code: 'attentionRequired'; areas: readonly BodyArea[] }>
   | Readonly<{ code: 'persistence'; cause: PersistenceError }>;
 

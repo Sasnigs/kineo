@@ -4,6 +4,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import type { PendingMutation } from '../../core/account/sync-contract';
 import { migrateKineoDatabase } from '../persistence/kineo-schema';
+import { KineoSqliteStore } from '../persistence/kineo-sqlite-store';
 import { NodeSqliteTestDatabase } from '../persistence/testing/node-sqlite-test-database';
 import { KineoSqliteSyncRepository } from './kineo-sqlite-sync-repository';
 
@@ -19,6 +20,9 @@ const mutation: PendingMutation = {
   createdAtMilliseconds: nowMilliseconds,
   command: { kind: 'resetHistory' },
 };
+const checkInId = '40000000-0000-4000-8000-000000000001';
+const entryId = '50000000-0000-4000-8000-000000000001';
+const safetyEventId = '60000000-0000-4000-8000-000000000001';
 
 async function fixture() {
   const database = new NodeSqliteTestDatabase();
@@ -59,7 +63,12 @@ describe('KineoSqliteSyncRepository', () => {
     });
     await expect(repository.enqueue({
       ...mutation,
-      command: { kind: 'startRoutine', decisionId: 'decision' },
+      command: {
+        kind: 'startRoutine',
+        decisionId: 'decision',
+        decision: {},
+        routine: {},
+      },
     })).resolves.toEqual({
       ok: false,
       error: { code: 'localPersistence' },
@@ -86,7 +95,13 @@ describe('KineoSqliteSyncRepository', () => {
         entityKind: 'profile',
         entityId: accountId,
         operation: 'upsert',
-        payload: { weeklyGoalDays: 3 },
+        payload: {
+          adultAcknowledged: false,
+          weeklyGoalDays: 3,
+          telemetryChoice: 'notOffered',
+          createdAtMilliseconds: nowMilliseconds,
+          updatedAtMilliseconds: nowMilliseconds,
+        },
       }],
       nextCursor: '12',
       hasMore: false,
@@ -115,6 +130,95 @@ describe('KineoSqliteSyncRepository', () => {
       ok: true,
       value: 0,
     });
+    await database.closeAsync();
+  });
+
+  it('projects hydrated profile, check-in, and attention state locally', async () => {
+    const { database, repository } = await fixture();
+    const dayContext = {
+      localDay: '2026-09-02',
+      timeZoneId: 'America/Chicago',
+      calendarId: 'gregorian',
+    };
+    const checkIn = {
+      id: checkInId,
+      status: 'completed',
+      kind: 'normal',
+      primaryArea: 'neck',
+      startedAtMilliseconds: nowMilliseconds,
+      completedAtMilliseconds: nowMilliseconds,
+      dayContext,
+      entries: [{
+        id: entryId,
+        area: 'neck',
+        role: 'primary',
+        changeReport: 'worse',
+        movementComfort: 'limited',
+        conditionalSafetyAnswer: 'notSure',
+        submittedAtMilliseconds: nowMilliseconds,
+      }],
+    };
+    await expect(repository.applyBootstrapPage({
+      account: {
+        accountId,
+        status: 'active',
+        historyEpoch: 1,
+        legalAcceptances: [],
+      },
+      changes: [
+        {
+          cursor: '1',
+          entityKind: 'profile',
+          entityId: accountId,
+          operation: 'upsert',
+          payload: {
+            onboardingCompletedAtMilliseconds: nowMilliseconds,
+            adultAcknowledged: true,
+            safetyBoundaryVersion: 'safety-v1',
+            safetyAcknowledgedAtMilliseconds: nowMilliseconds,
+            primaryArea: 'neck',
+            weeklyGoalDays: 3,
+            telemetryChoice: 'notOffered',
+            createdAtMilliseconds: nowMilliseconds,
+            updatedAtMilliseconds: nowMilliseconds,
+          },
+        },
+        {
+          cursor: '2',
+          entityKind: 'checkIn',
+          entityId: checkInId,
+          operation: 'upsert',
+          payload: checkIn,
+        },
+        {
+          cursor: '3',
+          entityKind: 'safetyEvent',
+          entityId: safetyEventId,
+          operation: 'upsert',
+          payload: {
+            id: safetyEventId,
+            area: 'neck',
+            kind: 'attentionEntered',
+            sourceCheckInEntryId: entryId,
+            occurredAtMilliseconds: nowMilliseconds,
+            dayContext,
+            statusAfter: 'attentionRequired',
+          },
+        },
+      ],
+      nextCursor: '3',
+      hasMore: false,
+    })).resolves.toEqual({ ok: true, value: undefined });
+
+    const store = new KineoSqliteStore(database);
+    const profile = await store.loadProfileState();
+    const loadedCheckIn = await store.loadCheckIn(checkInId as never);
+    const attention = await store.loadAttentionStates();
+    expect(profile.ok && profile.value?.profile.primaryArea).toBe('neck');
+    expect(loadedCheckIn.ok && loadedCheckIn.value?.entries).toHaveLength(1);
+    expect(attention.ok && attention.value).toEqual([
+      { area: 'neck', updatedAtMilliseconds: nowMilliseconds },
+    ]);
     await database.closeAsync();
   });
 

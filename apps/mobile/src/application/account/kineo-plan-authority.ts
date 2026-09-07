@@ -3,7 +3,10 @@ import type {
   RoutineLevel,
   SelectionDecisionId,
 } from '../../core/domain/selection-domain';
-import type { CheckIn } from '../../core/persistence/persistence-domain';
+import type {
+  CheckIn,
+  SafetyMutation,
+} from '../../core/persistence/persistence-domain';
 import type { ProductResult } from '../../core/product/product-flow';
 import { createPendingMutation } from '../../core/account/sync-contract';
 import type {
@@ -33,6 +36,7 @@ export interface PlanAuthority {
     decisionRevision: number,
     duration: DurationVariant,
     requestedOverride?: RoutineLevel,
+    safetyMutations?: readonly SafetyMutation[],
   ): Promise<ProductResult<PlanAuthorization>>;
 }
 
@@ -52,6 +56,7 @@ export class KineoCloudPlanAuthority implements PlanAuthority {
     decisionRevision: number,
     duration: DurationVariant,
     requestedOverride?: RoutineLevel,
+    safetyMutations: readonly SafetyMutation[] = [],
   ): Promise<ProductResult<PlanAuthorization>> {
     const account = await this.repository.loadAccount();
     if (!account.ok || account.value === undefined) {
@@ -83,6 +88,10 @@ export class KineoCloudPlanAuthority implements PlanAuthority {
           ...(requestedOverride === undefined
             ? {}
             : { requestedOverride }),
+          attentionTransitions: safetyMutations.map((mutation) => ({
+            ...mutation.event,
+            statusAfter: mutation.statusAfter,
+          })),
         },
       });
       if (!created.ok) {

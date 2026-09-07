@@ -11,9 +11,11 @@ import {
 import { KineoSyncModule } from '../../application/account/kineo-sync-module';
 import type {
   AuthModule,
+  AuthProvider,
   AuthResult,
 } from '../../core/account/auth-module';
 import type { SyncResult } from '../../core/account/sync-module';
+import type { PersonalDataExportSharer } from '../../core/account/account-privacy-module';
 import type { OpenedKineoLocalRuntime } from '../persistence/open-protected-kineo-store';
 import {
   DevelopmentAuthGateway,
@@ -22,6 +24,7 @@ import {
   DevelopmentSyncTransport,
 } from './development-account-services';
 import { InstallationIdentity } from './installation-identity';
+import { ExpoPersonalDataExportSharer } from './expo-personal-data-export-sharer';
 import { KineoLocalPrivacyStore } from './local-privacy-store';
 import {
   AppleIdentityTokenProvider,
@@ -48,8 +51,12 @@ export type AccountRuntimeResult<Value> =
 
 export type KineoAccountRuntime = Readonly<{
   auth: AuthModule;
+  exportSharer: PersonalDataExportSharer;
   usesDevelopmentServices: boolean;
-  connect(accountId: string): Promise<AccountRuntimeResult<KineoAccountSession>>;
+  connect(
+    accountId: string,
+    provider: AuthProvider,
+  ): Promise<AccountRuntimeResult<KineoAccountSession>>;
 }>;
 
 class RuntimeLogoutCoordinator implements LogoutCoordinator {
@@ -118,7 +125,9 @@ export async function createKineoAccountRuntime(
     return { ok: false, error: { code: 'localPersistence' } };
   }
   const configured = createConfiguredSupabaseClient();
-  const development = !configured.ok && __DEV__;
+  const internalTestMode =
+    process.env.EXPO_PUBLIC_KINEO_ACCOUNT_MODE === 'internal-test';
+  const development = !configured.ok && (__DEV__ || internalTestMode);
   if (!configured.ok && !development) {
     return { ok: false, error: { code: 'configurationMissing' } };
   }
@@ -140,6 +149,12 @@ export async function createKineoAccountRuntime(
         Date.now,
         'kineo://auth/callback',
         'kineo://auth/reset',
+        () => {
+          const isolated = createConfiguredSupabaseClient();
+          return isolated.ok
+            ? isolated.value.auth as unknown as SupabaseAuthPort
+            : undefined;
+        },
       );
   const auth = new KineoAuthModule(
     gateway,
@@ -157,8 +172,9 @@ export async function createKineoAccountRuntime(
     ok: true,
     value: {
       auth,
+      exportSharer: new ExpoPersonalDataExportSharer(),
       usesDevelopmentServices: development,
-      async connect(accountId) {
+      async connect(accountId, provider) {
         const repository = local.syncRepository(
           accountId,
           installation.value,
@@ -203,6 +219,7 @@ export async function createKineoAccountRuntime(
         const session = new KineoAccountSession(
           accountId,
           installation.value,
+          provider,
           sync,
           repository,
           privacy,

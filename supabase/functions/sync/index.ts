@@ -36,7 +36,7 @@ Deno.serve(async (request) => {
       );
       command = {
         ...command,
-        ...(plan === undefined ? {} : { authoritativePlan: plan }),
+        authoritativePlan: plan ?? null,
       };
     }
     const applied = await authorized.service.rpc(

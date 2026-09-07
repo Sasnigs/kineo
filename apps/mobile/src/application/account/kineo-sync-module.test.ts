@@ -11,7 +11,7 @@ import type {
   SyncRequest,
   SyncResponse,
 } from '../../core/account/sync-contract';
-import { KineoSyncModule } from './kineo-sync-module';
+import { KineoSyncModule, maximumSyncMutationCount } from './kineo-sync-module';
 
 const accountId = '10000000-0000-4000-8000-000000000001';
 const installationId = '20000000-0000-4000-8000-000000000002';
@@ -90,6 +90,29 @@ const mutation: PendingMutation = {
 };
 
 describe('KineoSyncModule', () => {
+  it('batches a large offline outbox without losing or resending mutations', async () => {
+    const mutations = Array.from({ length: maximumSyncMutationCount + 1 }, (_, index) => ({
+      ...mutation,
+      mutationId: `30000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    }));
+    const transport = new FakeTransport();
+    transport.syncPages = [
+      mutations.slice(0, maximumSyncMutationCount),
+      mutations.slice(maximumSyncMutationCount),
+    ].map((batch) => ({
+      accountStatus: 'active', historyEpoch: 1,
+      dispositions: batch.map(({ mutationId }) => ({ mutationId, kind: 'applied' })),
+      changes: [], hasMore: false,
+    }));
+    const module = new KineoSyncModule(accountId, installationId, transport, new FakeRepository());
+
+    expect((await module.synchronize(mutations)).ok).toBe(true);
+    expect(transport.requests.map(({ mutations }) => mutations.length))
+      .toEqual([maximumSyncMutationCount, 1]);
+    expect(transport.requests.flatMap(({ mutations }) => mutations.map(({ mutationId }) => mutationId)))
+      .toEqual(mutations.map(({ mutationId }) => mutationId));
+  });
+
   it('hydrates every bootstrap page in cursor order', async () => {
     const transport = new FakeTransport();
     transport.bootstrapPages = [
@@ -171,5 +194,22 @@ describe('KineoSyncModule', () => {
       error: { code: 'conflict' },
     });
     expect(repository.pages).toHaveLength(1);
+  });
+
+  it('rejects malformed sync pagination before writing any local state', async () => {
+    const transport = new FakeTransport();
+    transport.syncPages = [{
+      accountStatus: 'active', historyEpoch: 1,
+      dispositions: [{ mutationId: mutation.mutationId, kind: 'applied' }],
+      changes: [{ cursor: '20', entityKind: 'history', entityId: accountId, operation: 'reset' }],
+      nextCursor: '19', hasMore: false,
+    }];
+    const repository = new FakeRepository();
+    const module = new KineoSyncModule(accountId, installationId, transport, repository);
+
+    await expect(module.synchronize([mutation])).resolves.toEqual({
+      ok: false, error: { code: 'invalidResponse' },
+    });
+    expect(repository.pages).toHaveLength(0);
   });
 });

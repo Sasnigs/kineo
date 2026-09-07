@@ -1,6 +1,7 @@
 import {
   validateEmailAddress,
   validateEmailCredentials,
+  validatePassword,
   type EmailCredentials,
 } from '../../core/account/account-domain';
 import {
@@ -26,6 +27,7 @@ export interface AuthGateway {
     provider: Extract<AuthProvider, 'apple' | 'google'>,
     token: string,
     nonce?: string,
+    purpose?: 'signIn' | 'reauthenticate',
   ): Promise<AuthResult<AuthState>>;
   signUpWithEmail(
     credentials: EmailCredentials,
@@ -35,6 +37,17 @@ export interface AuthGateway {
   ): Promise<AuthResult<AuthState>>;
   resendVerification(email: string): Promise<AuthResult<void>>;
   requestPasswordReset(email: string): Promise<AuthResult<void>>;
+  completeEmailVerification(
+    callbackUrl: string,
+  ): Promise<AuthResult<AuthState>>;
+  completePasswordReset(
+    recoveryUrl: string,
+    newPassword: string,
+  ): Promise<AuthResult<AuthState>>;
+  updatePassword(
+    newPassword: string,
+    currentPassword: string,
+  ): Promise<AuthResult<void>>;
   reauthenticate(
     method: ReauthenticationMethod,
   ): Promise<AuthResult<ReauthenticationGrant>>;
@@ -111,6 +124,39 @@ export class KineoAuthModule implements AuthModule {
       : invalidInput();
   }
 
+  completeEmailVerification(
+    callbackUrl: string,
+  ): Promise<AuthResult<AuthState>> {
+    return callbackUrl.length > 0
+      ? this.gateway.completeEmailVerification(callbackUrl)
+      : Promise.resolve(invalidInput());
+  }
+
+  async completePasswordReset(
+    recoveryUrl: string,
+    newPassword: string,
+  ): Promise<AuthResult<AuthState>> {
+    const password = validatePassword(newPassword);
+    return password.ok && recoveryUrl.length > 0
+      ? this.gateway.completePasswordReset(recoveryUrl, password.value)
+      : invalidInput();
+  }
+
+  async changePassword(
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<AuthResult<void>> {
+    const password = validatePassword(newPassword);
+    if (!password.ok || currentPassword.length === 0) return invalidInput();
+    const verified = await this.gateway.reauthenticate({
+      kind: 'password',
+      password: currentPassword,
+    });
+    return verified.ok
+      ? this.gateway.updatePassword(password.value, currentPassword)
+      : verified;
+  }
+
   async reauthenticate(
     method: ReauthenticationMethod,
   ): Promise<AuthResult<ReauthenticationGrant>> {
@@ -127,6 +173,7 @@ export class KineoAuthModule implements AuthModule {
       provider,
       acquired.value.token,
       acquired.value.nonce,
+      'reauthenticate',
     );
     return authenticated.ok
       ? this.gateway.createReauthenticationGrant()

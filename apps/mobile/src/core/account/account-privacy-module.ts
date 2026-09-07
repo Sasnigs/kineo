@@ -26,6 +26,11 @@ export type PrivacyError =
   | Readonly<{ code: 'unexpected' }>;
 
 export type PrivacyResult<Value> = Result<Value, PrivacyError>;
+export type PersonalDataExport = Readonly<Record<string, unknown>>;
+
+export interface PersonalDataExportSharer {
+  share(data: PersonalDataExport): Promise<PrivacyResult<void>>;
+}
 
 export interface AccountPrivacyModule {
   resetHistory(
@@ -34,6 +39,9 @@ export interface AccountPrivacyModule {
   requestExport(
     grant: ReauthenticationGrant,
   ): Promise<PrivacyResult<ExportStatus>>;
+  downloadExport(
+    status: Extract<ExportStatus, { kind: 'ready' }>,
+  ): Promise<PrivacyResult<PersonalDataExport>>;
   deleteAccount(
     grant: ReauthenticationGrant,
   ): Promise<PrivacyResult<DeletionStatus>>;

@@ -71,6 +71,24 @@ class FakeGateway implements AuthGateway {
     return { ok: true, value: undefined };
   }
 
+  async completePasswordReset(): Promise<AuthResult<AuthState>> {
+    return {
+      ok: true,
+      value: { kind: 'authenticated', accountId, provider: 'email' },
+    };
+  }
+
+  async completeEmailVerification(): Promise<AuthResult<AuthState>> {
+    return {
+      ok: true,
+      value: { kind: 'authenticated', accountId, provider: 'email' },
+    };
+  }
+
+  async updatePassword(): Promise<AuthResult<void>> {
+    return { ok: true, value: undefined };
+  }
+
   async reauthenticate(
     _method: ReauthenticationMethod,
   ): Promise<AuthResult<{ value: string; expiresAtMilliseconds: number }>> {
@@ -217,6 +235,17 @@ describe('KineoAuthModule', () => {
       provider: 'google',
       token: 'google-token',
     });
+  });
+
+  it('rejects a short replacement password before calling the gateway', async () => {
+    const { module, gateway } = makeModule();
+    const update = jest.spyOn(gateway, 'updatePassword');
+
+    await expect(module.changePassword('current password', 'short')).resolves.toEqual({
+      ok: false,
+      error: { code: 'invalidInput' },
+    });
+    expect(update).not.toHaveBeenCalled();
   });
 
   it.each<Readonly<{ policy: LogoutPolicy; expectedAction: string }>>([

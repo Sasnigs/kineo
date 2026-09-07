@@ -93,6 +93,26 @@ export class DevelopmentAuthGateway implements AuthGateway {
     return { ok: true, value: undefined };
   }
 
+  completeEmailVerification(
+    _callbackUrl: string,
+  ): Promise<AuthResult<AuthState>> {
+    return this.signIn();
+  }
+
+  completePasswordReset(
+    _recoveryUrl: string,
+    _newPassword: string,
+  ): Promise<AuthResult<AuthState>> {
+    return this.signIn();
+  }
+
+  async updatePassword(
+    _newPassword: string,
+    _currentPassword: string,
+  ): Promise<AuthResult<void>> {
+    return { ok: true, value: undefined };
+  }
+
   async reauthenticate(
     _method: ReauthenticationMethod,
   ): Promise<AuthResult<ReauthenticationGrant>> {
@@ -275,6 +295,20 @@ export class DevelopmentPrivacyTransport implements AccountPrivacyTransport {
         downloadToken: 'development-download-token',
       },
     };
+  }
+
+  async downloadExport() {
+    const account = await this.repository.loadAccount();
+    return account.ok && account.value !== undefined
+      ? {
+          ok: true as const,
+          value: {
+            formatVersion: 'kineo-export-v1',
+            generatedForInternalTesting: true,
+            account: account.value,
+          },
+        }
+      : { ok: false as const, error: { code: 'workflowFailed' as const } };
   }
 
   async deleteAccount(): Promise<PrivacyResult<DeleteAccountResponse>> {

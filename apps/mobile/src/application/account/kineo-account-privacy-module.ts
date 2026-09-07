@@ -2,6 +2,7 @@ import type {
   AccountPrivacyModule,
   DeletionStatus,
   ExportStatus,
+  PersonalDataExport,
   PrivacyResult,
 } from '../../core/account/account-privacy-module';
 import type { ReauthenticationGrant } from '../../core/account/auth-module';
@@ -19,6 +20,9 @@ export type DeleteAccountResponse = Readonly<{
 export interface AccountPrivacyTransport {
   resetHistory(): Promise<PrivacyResult<Readonly<{ historyEpoch: number }>>>;
   requestExport(): Promise<PrivacyResult<ExportStatus>>;
+  downloadExport(
+    status: Extract<ExportStatus, { kind: 'ready' }>,
+  ): Promise<PrivacyResult<PersonalDataExport>>;
   deleteAccount(): Promise<PrivacyResult<DeleteAccountResponse>>;
   deletionStatus(
     credential: DeletionResumeCredential,
@@ -61,6 +65,12 @@ export class KineoAccountPrivacyModule implements AccountPrivacyModule {
       : Promise.resolve(reauthenticationRequired());
   }
 
+  downloadExport(
+    status: Extract<ExportStatus, { kind: 'ready' }>,
+  ): Promise<PrivacyResult<PersonalDataExport>> {
+    return this.transport.downloadExport(status);
+  }
+
   async deleteAccount(
     grant: ReauthenticationGrant,
   ): Promise<PrivacyResult<DeletionStatus>> {
@@ -79,7 +89,8 @@ export class KineoAccountPrivacyModule implements AccountPrivacyModule {
     const credential = await this.resumeStore.load();
     if (!credential.ok) return credential;
     if (credential.value === undefined) {
-      return { ok: true, value: { kind: 'complete' } };
+      // Missing local evidence cannot prove the server deleted this account.
+      return { ok: false, error: { code: 'workflowFailed' } };
     }
     const status = await this.transport.deletionStatus(credential.value);
     if (!status.ok || status.value.kind !== 'complete') return status;

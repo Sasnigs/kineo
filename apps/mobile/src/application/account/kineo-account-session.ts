@@ -4,6 +4,7 @@ import type {
   LegalDocumentKind,
 } from '../../core/account/account-domain';
 import type { AccountPrivacyModule } from '../../core/account/account-privacy-module';
+import type { AuthProvider } from '../../core/account/auth-module';
 import {
   createPendingMutation,
   type PendingMutation,
@@ -27,6 +28,7 @@ export class KineoAccountSession {
   constructor(
     readonly accountId: string,
     readonly installationId: string,
+    readonly provider: AuthProvider,
     readonly sync: SyncModule,
     readonly outbox: SyncOutbox & SyncLocalRepository,
     readonly privacy: AccountPrivacyModule,
@@ -36,6 +38,22 @@ export class KineoAccountSession {
 
   bootstrap(): Promise<SyncResult<BootstrapState>> {
     return this.sync.bootstrap();
+  }
+
+  async synchronizePending(): Promise<SyncResult<BootstrapState>> {
+    const pending = await this.outbox.pendingMutations();
+    if (!pending.ok) return pending;
+    const synchronized = await this.sync.synchronize(pending.value);
+    if (!synchronized.ok) return synchronized;
+    return {
+      ok: true,
+      value: {
+        account: synchronized.value.account,
+        ...(synchronized.value.cursor === undefined
+          ? {}
+          : { cursor: synchronized.value.cursor }),
+      },
+    };
   }
 
   async cachedState(): Promise<SyncResult<BootstrapState | undefined>> {

@@ -55,6 +55,17 @@ export interface AuthModule {
   ): Promise<AuthResult<AuthState>>;
   resendVerification(email: string): Promise<AuthResult<void>>;
   requestPasswordReset(email: string): Promise<AuthResult<void>>;
+  completeEmailVerification(
+    callbackUrl: string,
+  ): Promise<AuthResult<AuthState>>;
+  completePasswordReset(
+    recoveryUrl: string,
+    newPassword: string,
+  ): Promise<AuthResult<AuthState>>;
+  changePassword(
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<AuthResult<void>>;
   reauthenticate(
     method: ReauthenticationMethod,
   ): Promise<AuthResult<ReauthenticationGrant>>;

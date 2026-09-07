@@ -30,9 +30,6 @@ export function createConfiguredSupabaseClient(): Result<
           persistSession: false,
           detectSessionInUrl: false,
         },
-        realtime: {
-          params: { eventsPerSecond: 0 },
-        },
       }),
     };
   } catch {
