@@ -54,6 +54,7 @@ type AccountRow = Readonly<{
   account_status: AccountState['status'];
   history_epoch: number;
   sync_cursor: string | null;
+  hydrated: number;
 }>;
 
 type LegalRow = Readonly<{
@@ -125,6 +126,15 @@ implements SyncLocalRepository, SyncOutbox {
     }
   }
 
+  async isHydrated(): Promise<SyncResult<boolean>> {
+    try {
+      const row = await this.accountRow(this.database);
+      return { ok: true, value: row?.hydrated === trueInteger };
+    } catch {
+      return localFailure();
+    }
+  }
+
   async loadAccount(): Promise<SyncResult<AccountState | undefined>> {
     try {
       const row = await this.accountRow(this.database);
@@ -172,6 +182,8 @@ implements SyncLocalRepository, SyncOutbox {
       page.nextCursor,
       [],
       [],
+      true,
+      !page.hasMore,
     );
   }
 
@@ -354,6 +366,7 @@ implements SyncLocalRepository, SyncOutbox {
     dispositions: readonly MutationDisposition[],
     sentMutations: readonly PendingMutation[],
     replaceLegal = true,
+    completesHydration = false,
   ): Promise<SyncResult<void>> {
     if (account.accountId !== this.accountId) return localFailure();
     try {
@@ -398,7 +411,7 @@ implements SyncLocalRepository, SyncOutbox {
         await transaction.runAsync(
           `UPDATE local_account_state
            SET account_status = ?, history_epoch = ?, sync_cursor = ?,
-               last_synced_at_ms = ?, updated_at_ms = ?
+               last_synced_at_ms = ?, updated_at_ms = ?, hydrated = ?
            WHERE singleton_id = ? AND account_id = ? AND installation_id = ?`,
           [
             account.status,
@@ -406,6 +419,7 @@ implements SyncLocalRepository, SyncOutbox {
             cursor ?? row.sync_cursor,
             Date.now(),
             Date.now(),
+            completesHydration ? trueInteger : row.hydrated,
             singletonAccountStateId,
             this.accountId,
             this.installationId,
@@ -422,7 +436,7 @@ implements SyncLocalRepository, SyncOutbox {
     executor: SqliteExecutor,
   ): Promise<AccountRow | undefined> {
     const row = await executor.getFirstAsync<AccountRow>(
-      `SELECT account_id, installation_id, account_status, history_epoch, sync_cursor
+      `SELECT account_id, installation_id, account_status, history_epoch, sync_cursor, hydrated
        FROM local_account_state WHERE singleton_id = ?`,
       [singletonAccountStateId],
     );

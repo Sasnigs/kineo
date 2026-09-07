@@ -8,7 +8,7 @@ import type {
   SqliteExecutor,
 } from '../../core/persistence/persistence-contract';
 
-export const kineoSchemaVersion = 4;
+export const kineoSchemaVersion = 5;
 export const kineoInitialMigrationName = 'v1_initial';
 export const kineoV2MigrationName = 'v2_account_sync';
 export const kineoV3MigrationName = 'v3_account_hydration';
@@ -19,6 +19,7 @@ const initialSchemaVersion = 1;
 const accountSyncSchemaVersion = 2;
 const accountHydrationSchemaVersion = 3;
 const completeSyncOutboxSchemaVersion = 4;
+const verifiedHydrationSchemaVersion = 5;
 const singletonProfileId = 1;
 const minimumWeeklyGoalDays = 1;
 const maximumWeeklyGoalDays = 7;
@@ -415,6 +416,13 @@ type KineoMigration = Readonly<{
   statements: readonly string[];
 }>;
 
+const verifiedHydrationStatements = [
+  'ALTER TABLE local_account_state ADD COLUMN hydrated INTEGER NOT NULL DEFAULT 0 CHECK (hydrated IN (0, 1))',
+] as const;
+export const kineoV5MigrationChecksum = bytesToHex(
+  sha256(utf8ToBytes(verifiedHydrationStatements.join('\n'))),
+);
+
 const kineoMigrations: readonly KineoMigration[] = Object.freeze([
   {
     version: initialSchemaVersion,
@@ -439,6 +447,12 @@ const kineoMigrations: readonly KineoMigration[] = Object.freeze([
     name: kineoV4MigrationName,
     checksum: kineoV4MigrationChecksum,
     statements: kineoV4MigrationStatements,
+  },
+  {
+    version: verifiedHydrationSchemaVersion,
+    name: 'v5_verified_hydration',
+    checksum: kineoV5MigrationChecksum,
+    statements: verifiedHydrationStatements,
   },
 ]);
 

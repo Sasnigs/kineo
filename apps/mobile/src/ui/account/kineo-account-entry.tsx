@@ -58,6 +58,7 @@ type Props = Readonly<{
   runtime: KineoAccountRuntime;
   createAuthorizedService(
     session: KineoAccountSession,
+    offline: boolean,
   ): Promise<ProductResult<KineoProductServing>>;
   onStoreRestartRequired: () => void;
 }>;
@@ -94,7 +95,7 @@ export function KineoAccountEntry({
     session: KineoAccountSession,
     offline: boolean,
   ) => {
-    const authorized = await createAuthorizedService(session);
+    const authorized = await createAuthorizedService(session, offline);
     if (!authorized.ok) {
       setState({
         kind: 'error',
@@ -134,13 +135,17 @@ export function KineoAccountEntry({
       });
       return;
     }
-    const bootstrap = await connected.value.bootstrap();
+    const bootstrap = authState.kind === 'cached'
+      ? { ok: false as const, error: { code: 'offline' as const } }
+      : await connected.value.bootstrap();
     if (!bootstrap.ok) {
       const cached = await connected.value.cachedState();
       if (
         bootstrap.error.code === 'offline' &&
         cached.ok &&
         cached.value !== undefined &&
+        cached.value.account.accountId === authState.accountId &&
+        cached.value.account.status === 'active' &&
         connected.value.hasCurrentLegalAcceptances(cached.value)
       ) {
         await enterProduct(connected.value, true);

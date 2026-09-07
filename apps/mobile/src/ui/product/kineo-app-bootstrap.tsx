@@ -116,7 +116,7 @@ export function KineoAppBootstrap() {
         key={generation}
         runtime={state.account}
         service={service}
-        createAuthorizedService={async (session) => {
+        createAuthorizedService={async (session, offline) => {
           const accountStore = new AccountAwareKineoStore(
             state.local.store,
             session.accountId,
@@ -128,9 +128,11 @@ export function KineoAppBootstrap() {
             state.account.usesDevelopmentServices,
             state.local.accountWriter(session.accountId, session.installationId),
           );
-          const synchronizedProfile = await accountStore.synchronizeCurrentProfile();
-          if (!synchronizedProfile.ok) {
-            return { ok: false, error: { code: 'accountUnavailable' } };
+          if (!offline) {
+            const synchronizedProfile = await accountStore.synchronizeCurrentProfile();
+            if (!synchronizedProfile.ok) {
+              return { ok: false, error: { code: 'accountUnavailable' } };
+            }
           }
           return {
             ok: true,

@@ -57,6 +57,9 @@ export class KineoAccountSession {
   }
 
   async cachedState(): Promise<SyncResult<BootstrapState | undefined>> {
+    const hydrated = await this.outbox.isHydrated();
+    if (!hydrated.ok) return hydrated;
+    if (!hydrated.value) return { ok: true, value: undefined };
     const [account, cursor] = await Promise.all([
       this.outbox.loadAccount(),
       this.outbox.loadCursor(),

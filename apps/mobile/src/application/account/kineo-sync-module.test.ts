@@ -26,6 +26,7 @@ function account(historyEpoch = 1) {
 }
 
 class FakeRepository implements SyncLocalRepository {
+  async isHydrated() { return { ok: true as const, value: true }; }
   cursor?: string;
   pages: (BootstrapPage | SyncResponse)[] = [];
   pendingCount = 0;

@@ -22,6 +22,7 @@ const successfulWriter: AccountLocalWriter = {
 };
 
 class FakeRepository implements SyncLocalRepository, SyncOutbox {
+  async isHydrated() { return { ok: true as const, value: true }; }
   pending: PendingMutation[] = [];
   async loadAccount() {
     return {

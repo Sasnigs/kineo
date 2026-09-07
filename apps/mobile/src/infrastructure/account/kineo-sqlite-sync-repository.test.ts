@@ -37,6 +37,20 @@ async function fixture() {
 }
 
 describe('KineoSqliteSyncRepository', () => {
+  it('does not authorize an offline cache until the final hydration page commits', async () => {
+    const { database, repository } = await fixture();
+    const account = { accountId, status: 'active' as const, historyEpoch: 1, legalAcceptances: [] };
+    expect(await repository.isHydrated()).toEqual({ ok: true, value: false });
+    await repository.applyBootstrapPage({ account, changes: [], nextCursor: '1', hasMore: true });
+    expect(await repository.isHydrated()).toEqual({ ok: true, value: false });
+    await repository.applyBootstrapPage({ account, changes: [], nextCursor: '2', hasMore: false });
+    expect(await repository.isHydrated()).toEqual({ ok: true, value: true });
+    // A later interrupted refresh must not disable an already complete cache.
+    await repository.applyBootstrapPage({ account, changes: [], nextCursor: '3', hasMore: true });
+    expect(await repository.isHydrated()).toEqual({ ok: true, value: true });
+    await database.closeAsync();
+  });
+
   it('binds one account and rejects a different owner', async () => {
     const { database } = await fixture();
     const other = new KineoSqliteSyncRepository(

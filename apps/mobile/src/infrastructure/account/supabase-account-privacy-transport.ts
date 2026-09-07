@@ -123,6 +123,9 @@ implements AccountPrivacyTransport {
     try {
       const response = await this.functions.invoke(functionName, { body });
       if (response.error === null) return { ok: true, value: response.data };
+      if (response.error.name === 'FunctionsFetchError') {
+        return { ok: false, error: { code: 'offline' } };
+      }
       switch (response.error.context?.status) {
         case unauthorizedStatus:
           return {

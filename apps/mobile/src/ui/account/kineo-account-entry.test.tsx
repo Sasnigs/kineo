@@ -23,6 +23,29 @@ const bootstrap = {
 };
 
 describe('KineoAccountEntry', () => {
+  it('opens cached history without attempting online profile synchronization', async () => {
+    const service = {
+      loadStartState: async () => ({ ok: true, value: { kind: 'ready' } }),
+    } as unknown as KineoProductServing;
+    const remoteBootstrap = jest.fn<KineoAccountSession['bootstrap']>();
+    const session = {
+      bootstrap: remoteBootstrap,
+      cachedState: async () => ({ ok: true, value: bootstrap }),
+      hasCurrentLegalAcceptances: () => true,
+    } as unknown as KineoAccountSession;
+    const runtime = {
+      auth: { restoreSession: async () => ({ ok: true, value: { kind: 'cached', accountId, provider: 'email' } }) },
+      connect: async () => ({ ok: true, value: session }),
+    } as unknown as KineoAccountRuntime;
+    const authorize = jest.fn<(_: KineoAccountSession, offline: boolean) => Promise<{ ok: true; value: KineoProductServing }>>()
+      .mockResolvedValue({ ok: true, value: service });
+    const view = await render(<KineoAccountEntry service={service} runtime={runtime}
+      createAuthorizedService={authorize} onStoreRestartRequired={() => undefined} />);
+    expect(await view.findByText('PRODUCT READY')).toBeTruthy();
+    expect(remoteBootstrap).not.toHaveBeenCalled();
+    expect(authorize).toHaveBeenCalledWith(session, true);
+  });
+
   it('enforces promise, adult declaration, authentication, legal, then product order', async () => {
     const service = {
       loadStartState: async () => ({

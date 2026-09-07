@@ -49,6 +49,7 @@ export interface SyncTransport {
 }
 
 export interface SyncLocalRepository {
+  isHydrated(): Promise<SyncResult<boolean>>;
   loadAccount(): Promise<SyncResult<AccountState | undefined>>;
   loadCursor(): Promise<SyncResult<string | undefined>>;
   applyBootstrapPage(page: BootstrapPage): Promise<SyncResult<void>>;

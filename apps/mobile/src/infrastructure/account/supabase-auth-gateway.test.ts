@@ -7,27 +7,32 @@ import {
   type SupabaseAuthPort,
   type SupabaseSession,
 } from './supabase-auth-gateway';
-import type { RefreshTokenVault } from './secure-refresh-token-vault';
+import type { RefreshTokenVault, StoredRefreshCredential } from './secure-refresh-token-vault';
 
 const accountId = '10000000-0000-4000-8000-000000000001';
 const nowMilliseconds = 1_788_300_000_000;
 
 class FakeVault implements RefreshTokenVault {
   token?: string;
+  identity?: StoredRefreshCredential['identity'];
   savedValues: string[] = [];
 
-  async load(): Promise<AuthResult<string | undefined>> {
-    return { ok: true, value: this.token };
+  async load(): Promise<AuthResult<StoredRefreshCredential | undefined>> {
+    return { ok: true, value: this.token === undefined ? undefined : {
+      refreshToken: this.token, identity: this.identity,
+    } };
   }
 
-  async save(refreshToken: string): Promise<AuthResult<void>> {
-    this.token = refreshToken;
-    this.savedValues.push(refreshToken);
+  async save(credential: StoredRefreshCredential): Promise<AuthResult<void>> {
+    this.token = credential.refreshToken;
+    this.identity = credential.identity;
+    this.savedValues.push(credential.refreshToken);
     return { ok: true, value: undefined };
   }
 
   async clear(): Promise<AuthResult<void>> {
     this.token = undefined;
+    this.identity = undefined;
     return { ok: true, value: undefined };
   }
 }
@@ -43,6 +48,7 @@ const session: SupabaseSession = {
 };
 
 class FakeAuth implements SupabaseAuthPort {
+  refreshCount = 0;
   response: Awaited<ReturnType<SupabaseAuthPort['refreshSession']>> = {
     data: { session, user: session.user },
     error: null,
@@ -53,6 +59,7 @@ class FakeAuth implements SupabaseAuthPort {
   logoutScope?: string;
 
   async refreshSession() {
+    this.refreshCount += 1;
     return this.response;
   }
 
@@ -102,6 +109,41 @@ class FakeAuth implements SupabaseAuthPort {
 }
 
 describe('SupabaseAuthGateway', () => {
+  it('restores only cached identity when refresh is offline', async () => {
+    const auth = new FakeAuth();
+    auth.response = { data: { session: null, user: null }, error: { name: 'AuthRetryableFetchError' } };
+    const vault = new FakeVault();
+    vault.token = 'stored-refresh';
+    vault.identity = { accountId, provider: 'email' };
+    const gateway = new SupabaseAuthGateway(auth, vault, () => 'grant-id', () => nowMilliseconds);
+    await expect(gateway.restoreSession()).resolves.toEqual({
+      ok: true, value: { kind: 'cached', accountId, provider: 'email' },
+    });
+    await expect(gateway.validAccessToken()).resolves.toEqual({ ok: false, error: { code: 'offline' } });
+    expect(vault.token).toBe('stored-refresh');
+  });
+
+  it('does not invent cached identity for a legacy refresh token', async () => {
+    const auth = new FakeAuth();
+    auth.response = { data: { session: null, user: null }, error: { name: 'AuthRetryableFetchError' } };
+    const vault = new FakeVault();
+    vault.token = 'legacy-refresh';
+    const gateway = new SupabaseAuthGateway(auth, vault, () => 'grant-id', () => nowMilliseconds);
+    await expect(gateway.restoreSession()).resolves.toEqual({ ok: false, error: { code: 'offline' } });
+  });
+
+  it('serializes refresh for concurrent authenticated requests', async () => {
+    const auth = new FakeAuth();
+    const vault = new FakeVault();
+    vault.token = 'stored-refresh';
+    const gateway = new SupabaseAuthGateway(auth, vault, () => 'grant-id', () => nowMilliseconds);
+    const tokens = await Promise.all([gateway.validAccessToken(), gateway.validAccessToken()]);
+    expect(tokens).toEqual([
+      { ok: true, value: session.access_token }, { ok: true, value: session.access_token },
+    ]);
+    expect(auth.refreshCount).toBe(1);
+  });
+
   it('does not switch the product session when social reauthentication selects another account', async () => {
     const auth = new FakeAuth();
     const isolated = new FakeAuth();
@@ -143,6 +185,34 @@ describe('SupabaseAuthGateway', () => {
     const gateway = new SupabaseAuthGateway(auth, vault, () => 'grant-id', () => nowMilliseconds);
     expect((await gateway.logout()).ok).toBe(true);
     expect(auth.logoutScope).toBe('local');
+    expect(vault.token).toBeUndefined();
+  });
+
+  it('waits for an in-flight refresh before clearing credentials on logout', async () => {
+    const auth = new FakeAuth();
+    let releaseRefresh: (value: typeof auth.response) => void = () => undefined;
+    auth.refreshSession = () => new Promise((resolve) => { releaseRefresh = resolve; });
+    const vault = new FakeVault();
+    vault.token = 'refresh';
+    const gateway = new SupabaseAuthGateway(auth, vault, () => 'grant-id', () => nowMilliseconds);
+    const refreshing = gateway.restoreSession();
+    await Promise.resolve();
+    const logout = gateway.logout();
+    releaseRefresh(auth.response);
+    await refreshing;
+    expect((await logout).ok).toBe(true);
+    expect(vault.token).toBeUndefined();
+    expect(await gateway.validAccessToken()).toEqual({ ok: false, error: { code: 'sessionExpired' } });
+  });
+
+  it('does not fall back to cached identity when the server revokes refresh access', async () => {
+    const auth = new FakeAuth();
+    auth.response = { data: { session: null, user: null }, error: { name: 'AuthApiError', code: 'refresh_token_not_found' } };
+    const vault = new FakeVault();
+    vault.token = 'revoked';
+    vault.identity = { accountId, provider: 'email' };
+    const gateway = new SupabaseAuthGateway(auth, vault, () => 'grant-id', () => nowMilliseconds);
+    expect(await gateway.restoreSession()).toEqual({ ok: true, value: { kind: 'signedOut' } });
     expect(vault.token).toBeUndefined();
   });
 

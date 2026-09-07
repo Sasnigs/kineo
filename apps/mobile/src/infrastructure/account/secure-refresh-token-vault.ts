@@ -1,6 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 
-import type { AuthResult } from '../../core/account/auth-module';
+import type { AuthProvider, AuthResult } from '../../core/account/auth-module';
 
 export const refreshTokenKey = 'kineo.refresh-token';
 export const refreshTokenKeychainService = 'app.kineo.auth';
@@ -26,9 +26,18 @@ export interface SecureStorePort {
   ): Promise<void>;
 }
 
+export type StoredRefreshCredential = Readonly<{
+  refreshToken: string;
+  // Legacy development credentials can refresh online but cannot identify an
+  // account offline. New credentials always include the verified identity.
+  identity?: Readonly<{ accountId: string; provider: AuthProvider }>;
+}>;
+const credentialFormatVersion = 1;
+const accountIdentifierShape = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
 export interface RefreshTokenVault {
-  load(): Promise<AuthResult<string | undefined>>;
-  save(refreshToken: string): Promise<AuthResult<void>>;
+  load(): Promise<AuthResult<StoredRefreshCredential | undefined>>;
+  save(credential: StoredRefreshCredential): Promise<AuthResult<void>>;
   clear(): Promise<AuthResult<void>>;
 }
 
@@ -45,16 +54,23 @@ export class SecureRefreshTokenVault implements RefreshTokenVault {
     };
   }
 
-  async load(): Promise<AuthResult<string | undefined>> {
+  async load(): Promise<AuthResult<StoredRefreshCredential | undefined>> {
     try {
       const value = await this.secureStore.getItemAsync(
         refreshTokenKey,
         this.options,
       );
-      return {
-        ok: true,
-        value: value === null ? undefined : value,
-      };
+      if (value === null) return { ok: true, value: undefined };
+      if (!value.startsWith('{')) {
+        return value.length > 0
+          ? { ok: true, value: { refreshToken: value } }
+          : { ok: false, error: { code: 'secureStorageUnavailable' } };
+      }
+      const decoded: unknown = JSON.parse(value);
+      return isCredentialEnvelope(decoded)
+        ? { ok: true, value: { refreshToken: decoded.refreshToken,
+            ...(decoded.identity === undefined ? {} : { identity: decoded.identity }) } }
+        : { ok: false, error: { code: 'secureStorageUnavailable' } };
     } catch {
       return {
         ok: false,
@@ -63,14 +79,15 @@ export class SecureRefreshTokenVault implements RefreshTokenVault {
     }
   }
 
-  async save(refreshToken: string): Promise<AuthResult<void>> {
-    if (refreshToken.length === 0) {
+  async save(credential: StoredRefreshCredential): Promise<AuthResult<void>> {
+    const envelope = { ...credential, version: credentialFormatVersion };
+    if (!isCredentialEnvelope(envelope)) {
       return { ok: false, error: { code: 'invalidCredentials' } };
     }
     try {
       await this.secureStore.setItemAsync(
         refreshTokenKey,
-        refreshToken,
+        JSON.stringify(envelope),
         this.options,
       );
       return { ok: true, value: undefined };
@@ -96,4 +113,17 @@ export class SecureRefreshTokenVault implements RefreshTokenVault {
       };
     }
   }
+}
+
+function isCredentialEnvelope(value: unknown): value is StoredRefreshCredential & { version: number } {
+  if (typeof value !== 'object' || value === null ||
+      !('version' in value) || value.version !== credentialFormatVersion ||
+      !('refreshToken' in value) || typeof value.refreshToken !== 'string' || value.refreshToken.length === 0) {
+    return false;
+  }
+  if (!('identity' in value) || value.identity === undefined) return true;
+  const identity = value.identity;
+  return typeof identity === 'object' && identity !== null &&
+    'accountId' in identity && typeof identity.accountId === 'string' && accountIdentifierShape.test(identity.accountId) &&
+    'provider' in identity && (identity.provider === 'apple' || identity.provider === 'google' || identity.provider === 'email');
 }

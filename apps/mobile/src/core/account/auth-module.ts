@@ -13,6 +13,11 @@ export type AuthState =
       kind: 'authenticated';
       accountId: string;
       provider: AuthProvider;
+    }>
+  | Readonly<{
+      kind: 'cached';
+      accountId: string;
+      provider: AuthProvider;
     }>;
 
 export type ReauthenticationMethod =

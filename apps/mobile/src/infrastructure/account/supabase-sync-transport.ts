@@ -27,7 +27,7 @@ type FunctionResponse = Readonly<{
 export interface SupabaseFunctionsPort {
   invoke(
     functionName: string,
-    options: Readonly<{ body: object }>,
+    options: Readonly<{ body: object; headers?: Readonly<Record<string, string>> }>,
   ): PromiseLike<FunctionResponse>;
 }
 
@@ -85,6 +85,7 @@ export class SupabaseSyncTransport implements SyncTransport {
 }
 
 function mappedFunctionError<Value>(error: FunctionError): SyncResult<Value> {
+  if (error.name === 'FunctionsFetchError') return { ok: false, error: { code: 'offline' } };
   switch (error.context?.status) {
     case unauthorizedStatus:
       return { ok: false, error: { code: 'authenticationRequired' } };

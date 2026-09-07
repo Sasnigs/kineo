@@ -52,6 +52,7 @@ const checkIn: CheckIn = {
 };
 
 class FakeRepository implements SyncLocalRepository, SyncOutbox {
+  async isHydrated() { return { ok: true as const, value: true }; }
   pending: PendingMutation[] = [];
   entity: unknown = {
     decisionId: validDecisionId,

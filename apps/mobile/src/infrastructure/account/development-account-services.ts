@@ -65,7 +65,7 @@ export class DevelopmentAuthGateway implements AuthGateway {
     if (!loaded.ok) return loaded;
     return {
       ok: true,
-      value: loaded.value === developmentRefreshToken
+      value: loaded.value?.refreshToken === developmentRefreshToken
         ? authenticated()
         : { kind: 'signedOut' },
     };
@@ -135,7 +135,10 @@ export class DevelopmentAuthGateway implements AuthGateway {
   }
 
   private async signIn(): Promise<AuthResult<AuthState>> {
-    const stored = await this.vault.save(developmentRefreshToken);
+    const stored = await this.vault.save({
+      refreshToken: developmentRefreshToken,
+      identity: { accountId: developmentAccountId, provider: developmentProvider },
+    });
     return stored.ok ? { ok: true, value: authenticated() } : stored;
   }
 }

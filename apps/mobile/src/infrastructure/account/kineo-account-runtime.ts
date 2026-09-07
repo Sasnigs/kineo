@@ -35,6 +35,7 @@ import { SecureRefreshTokenVault } from './secure-refresh-token-vault';
 import { SupabaseAccountPrivacyTransport } from './supabase-account-privacy-transport';
 import type { SupabaseAuthPort } from './supabase-auth-gateway';
 import { SupabaseAuthGateway } from './supabase-auth-gateway';
+import { AuthenticatedFunctions } from './authenticated-functions';
 import { createConfiguredSupabaseClient } from './supabase-client';
 import {
   SupabaseSyncTransport,
@@ -132,12 +133,6 @@ export async function createKineoAccountRuntime(
     return { ok: false, error: { code: 'configurationMissing' } };
   }
   const client = configured.ok ? configured.value : undefined;
-  const functions = client?.functions as SupabaseFunctionsPort | undefined;
-  const coordinator = new RuntimeLogoutCoordinator(
-    local,
-    installation.value,
-    functions,
-  );
   const vault = new SecureRefreshTokenVault();
   const identity = new DevelopmentIdentityProvider();
   const gateway = development
@@ -156,6 +151,16 @@ export async function createKineoAccountRuntime(
             : undefined;
         },
       );
+  // Do not let functions' fetch path call getSession on the Auth client's
+  // expiring in-memory session and rotate outside our protected vault.
+  const dataClient = development ? undefined : createConfiguredSupabaseClient();
+  if (dataClient !== undefined && !dataClient.ok) {
+    return { ok: false, error: { code: 'configurationMissing' } };
+  }
+  const functions = gateway instanceof SupabaseAuthGateway && dataClient?.ok
+    ? new AuthenticatedFunctions(dataClient.value.functions, () => gateway.validAccessToken())
+    : undefined;
+  const coordinator = new RuntimeLogoutCoordinator(local, installation.value, functions);
   const auth = new KineoAuthModule(
     gateway,
     development ? identity : new AppleIdentityTokenProvider(),

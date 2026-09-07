@@ -8,11 +8,14 @@ import type {
   ReauthenticationMethod,
 } from '../../core/account/auth-module';
 import type { AuthGateway } from '../../application/account/kineo-auth-module';
-import type { RefreshTokenVault } from './secure-refresh-token-vault';
+import type { RefreshTokenVault, StoredRefreshCredential } from './secure-refresh-token-vault';
 
 const millisecondsPerSecond = 1_000;
 const secondsPerMinute = 60;
 const reauthenticationGrantLifetimeMinutes = 5;
+// Stay ahead of auth-js's 90-second automatic-refresh margin. Data requests use
+// a separate client; only this gateway may rotate/persist the product credential.
+const accessTokenRefreshMarginSeconds = 2 * secondsPerMinute;
 export const reauthenticationGrantLifetimeMilliseconds =
   reauthenticationGrantLifetimeMinutes *
   secondsPerMinute *
@@ -27,6 +30,7 @@ type SupabaseUser = Readonly<{
 export type SupabaseSession = Readonly<{
   access_token: string;
   refresh_token: string;
+  expires_at?: number;
   user: SupabaseUser;
 }>;
 
@@ -93,6 +97,8 @@ export interface SupabaseAuthPort {
 const retryableErrorName = 'AuthRetryableFetchError';
 const missingSessionErrorName = 'AuthSessionMissingError';
 const rateLimitedStatus = 429;
+const firstServerErrorStatus = 500;
+const unauthorizedStatus = 401;
 
 function providerFor(
   user: SupabaseUser,
@@ -105,7 +111,8 @@ function providerFor(
 }
 
 function stableAuthError(error: SupabaseAuthError): AuthError {
-  if (error.name === retryableErrorName || error.status === 0) {
+  if (error.name === retryableErrorName || error.status === 0 ||
+      (error.status !== undefined && error.status >= firstServerErrorStatus)) {
     return { code: 'offline' };
   }
   if (error.status === rateLimitedStatus) {
@@ -123,10 +130,17 @@ function stableAuthError(error: SupabaseAuthError): AuthError {
   if (error.code === 'weak_password') {
     return { code: 'invalidInput' };
   }
+  if (error.status === unauthorizedStatus || error.code === 'refresh_token_not_found' ||
+      error.code === 'refresh_token_already_used' || error.code === 'session_not_found') {
+    return { code: 'sessionExpired' };
+  }
   return { code: 'unexpected' };
 }
 
 export class SupabaseAuthGateway implements AuthGateway {
+  private refreshInFlight?: Promise<AuthResult<AuthState>>;
+  private accessSession?: Readonly<{ token: string; expiresAtSeconds: number }>;
+  private loggingOut = false;
   constructor(
     private readonly auth: SupabaseAuthPort,
     private readonly vault: RefreshTokenVault,
@@ -138,30 +152,58 @@ export class SupabaseAuthGateway implements AuthGateway {
       Pick<SupabaseAuthPort, 'signInWithIdToken'> | undefined,
   ) {}
 
-  async restoreSession(): Promise<AuthResult<AuthState>> {
+  restoreSession(): Promise<AuthResult<AuthState>> {
+    if (this.loggingOut) return Promise.resolve({ ok: false, error: { code: 'sessionExpired' } });
+    this.refreshInFlight ??= this.performRestore().finally(() => { this.refreshInFlight = undefined; });
+    return this.refreshInFlight;
+  }
+
+  async validAccessToken(): Promise<AuthResult<string>> {
+    if (this.loggingOut) return { ok: false, error: { code: 'sessionExpired' } };
+    const currentSeconds = this.nowMilliseconds() / millisecondsPerSecond;
+    if (this.accessSession !== undefined &&
+        this.accessSession.expiresAtSeconds - currentSeconds > accessTokenRefreshMarginSeconds) {
+      return { ok: true, value: this.accessSession.token };
+    }
+    const restored = await this.restoreSession();
+    if (!restored.ok) return restored;
+    if (restored.value.kind === 'cached') return { ok: false, error: { code: 'offline' } };
+    return restored.value.kind === 'authenticated' && this.accessSession !== undefined
+      ? { ok: true, value: this.accessSession.token }
+      : { ok: false, error: { code: 'sessionExpired' } };
+  }
+
+  private async performRestore(): Promise<AuthResult<AuthState>> {
     const stored = await this.vault.load();
     if (!stored.ok) return stored;
     if (stored.value === undefined) {
+      this.accessSession = undefined;
       return { ok: true, value: { kind: 'signedOut' } };
     }
 
     let response: SessionResponse;
     try {
       response = await this.auth.refreshSession({
-        refresh_token: stored.value,
+        refresh_token: stored.value.refreshToken,
       });
     } catch {
-      return { ok: false, error: { code: 'offline' } };
+      return cachedIdentity(stored.value);
     }
     if (response.error !== null) {
       const mapped = stableAuthError(response.error);
-      if (mapped.code === 'offline' || mapped.code === 'rateLimited') {
+      if (mapped.code === 'offline') return cachedIdentity(stored.value);
+      if (mapped.code !== 'sessionExpired' && mapped.code !== 'invalidCredentials')
         return { ok: false, error: mapped };
-      }
+      this.accessSession = undefined;
       const cleared = await this.vault.clear();
       return cleared.ok
         ? { ok: true, value: { kind: 'signedOut' } }
         : cleared;
+    }
+    if (stored.value.identity !== undefined &&
+        response.data.session?.user.id !== stored.value.identity.accountId) {
+      this.accessSession = undefined;
+      return { ok: false, error: { code: 'invalidCredentials' } };
     }
     return this.persistSession(response, 'email');
   }
@@ -386,7 +428,11 @@ export class SupabaseAuthGateway implements AuthGateway {
   }
 
   async logout(): Promise<AuthResult<void>> {
+    this.loggingOut = true;
     try {
+      // A refresh started before logout must not repersist a credential after
+      // the wipe. Block new refreshes and drain the existing one first.
+      await this.refreshInFlight;
       const response = await this.auth.signOut({ scope: 'local' });
       if (
         response.error !== null &&
@@ -394,9 +440,12 @@ export class SupabaseAuthGateway implements AuthGateway {
       ) {
         return { ok: false, error: stableAuthError(response.error) };
       }
+      this.accessSession = undefined;
       return this.vault.clear();
     } catch {
       return { ok: false, error: { code: 'offline' } };
+    } finally {
+      this.loggingOut = false;
     }
   }
 
@@ -408,8 +457,15 @@ export class SupabaseAuthGateway implements AuthGateway {
     if (session === null || session.user.id.length === 0) {
       return { ok: false, error: { code: 'invalidCredentials' } };
     }
-    const stored = await this.vault.save(session.refresh_token);
+    const stored = await this.vault.save({
+      refreshToken: session.refresh_token,
+      identity: { accountId: session.user.id, provider: providerFor(session.user, fallbackProvider) },
+    });
     if (!stored.ok) return stored;
+    this.accessSession = {
+      token: session.access_token,
+      expiresAtSeconds: session.expires_at ?? this.nowMilliseconds() / millisecondsPerSecond,
+    };
     return {
       ok: true,
       value: {
@@ -437,6 +493,12 @@ export class SupabaseAuthGateway implements AuthGateway {
       return { ok: false, error: { code: 'offline' } };
     }
   }
+}
+
+function cachedIdentity(credential: StoredRefreshCredential): AuthResult<AuthState> {
+  return credential.identity === undefined
+    ? { ok: false, error: { code: 'offline' } }
+    : { ok: true, value: { kind: 'cached', ...credential.identity } };
 }
 
 type RecoveryCredential =

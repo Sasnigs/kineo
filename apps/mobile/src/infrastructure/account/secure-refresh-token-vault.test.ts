@@ -8,6 +8,10 @@ import {
 } from './secure-refresh-token-vault';
 
 const keychainAccessibility = 7;
+const credential = {
+  refreshToken: 'refresh-token',
+  identity: { accountId: '10000000-0000-4000-8000-000000000001', provider: 'email' as const },
+};
 
 class FakeSecureStore implements SecureStorePort {
   value: string | null = null;
@@ -47,17 +51,17 @@ class FakeSecureStore implements SecureStorePort {
 }
 
 describe('SecureRefreshTokenVault', () => {
-  it('stores only the refresh token with non-synchronizing Keychain options', async () => {
+  it('stores refresh and cached identity atomically with non-synchronizing Keychain options', async () => {
     const store = new FakeSecureStore();
     const vault = new SecureRefreshTokenVault(store, keychainAccessibility);
 
-    await expect(vault.save('refresh-token')).resolves.toEqual({
+    await expect(vault.save(credential)).resolves.toEqual({
       ok: true,
       value: undefined,
     });
     await expect(vault.load()).resolves.toEqual({
       ok: true,
-      value: 'refresh-token',
+      value: credential,
     });
     expect(store.lastOptions).toEqual({
       keychainAccessible: keychainAccessibility,
@@ -75,7 +79,7 @@ describe('SecureRefreshTokenVault', () => {
       ok: false,
       error: { code: 'secureStorageUnavailable' },
     });
-    await expect(vault.save('refresh-token')).resolves.toEqual({
+    await expect(vault.save(credential)).resolves.toEqual({
       ok: false,
       error: { code: 'secureStorageUnavailable' },
     });
@@ -83,5 +87,23 @@ describe('SecureRefreshTokenVault', () => {
       ok: false,
       error: { code: 'secureStorageUnavailable' },
     });
+  });
+
+  it('preserves the prior credential when an atomic replacement fails', async () => {
+    const store = new FakeSecureStore();
+    const vault = new SecureRefreshTokenVault(store, keychainAccessibility);
+    expect((await vault.save(credential)).ok).toBe(true);
+    store.shouldFail = true;
+    expect((await vault.save({ ...credential, refreshToken: 'rotated' })).ok).toBe(false);
+    store.shouldFail = false;
+    await expect(vault.load()).resolves.toEqual({ ok: true, value: credential });
+  });
+
+  it('rejects a corrupted credential envelope without replacing it', async () => {
+    const store = new FakeSecureStore();
+    store.value = '{"refreshToken":"token","identity":{"accountId":"bad"}}';
+    const vault = new SecureRefreshTokenVault(store, keychainAccessibility);
+    await expect(vault.load()).resolves.toEqual({ ok: false, error: { code: 'secureStorageUnavailable' } });
+    expect(store.value).not.toBeNull();
   });
 });
