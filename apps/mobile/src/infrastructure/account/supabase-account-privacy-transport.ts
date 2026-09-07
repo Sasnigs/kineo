@@ -1,6 +1,7 @@
 import type {
   AccountPrivacyTransport,
   DeletionResumeCredential,
+  RetainedAttentionState,
 } from '../../application/account/kineo-account-privacy-module';
 import type {
   DeletionStatus,
@@ -24,7 +25,7 @@ implements AccountPrivacyTransport {
   ) {}
 
   async resetHistory(): Promise<
-    PrivacyResult<Readonly<{ historyEpoch: number }>>
+    PrivacyResult<Readonly<{ historyEpoch: number; attentionStates?: readonly RetainedAttentionState[] }>>
   > {
     const historyEpoch = await this.currentHistoryEpoch();
     if (historyEpoch === undefined) return workflowFailure();
@@ -34,11 +35,16 @@ implements AccountPrivacyTransport {
       historyEpoch,
     });
     if (!response.ok) return response;
+    const attentionStates = isRecord(response.value) && Array.isArray(response.value.attentionStates)
+      ? response.value.attentionStates : undefined;
     return isRecord(response.value) &&
-      isPositiveSafeInteger(response.value.historyEpoch)
+      isPositiveSafeInteger(response.value.historyEpoch) && attentionStates !== undefined &&
+      attentionStates.every((state) => isRecord(state) &&
+        ['neck', 'upperMidBack', 'lowerBack'].includes(String(state.area)) &&
+        isPositiveSafeInteger(state.updatedAtMilliseconds))
       ? {
           ok: true,
-          value: { historyEpoch: response.value.historyEpoch },
+          value: { historyEpoch: response.value.historyEpoch, attentionStates: attentionStates as RetainedAttentionState[] },
         }
       : workflowFailure();
   }

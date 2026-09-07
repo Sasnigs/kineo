@@ -27,10 +27,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: apps/mobile/.nvmrc
-      - name: Apply local database migrations
-        run: npx --yes "supabase@$SUPABASE_CLI_VERSION" db start
+      - name: Install domain build dependencies
+        working-directory: apps/mobile
+        run: npm ci
+      - name: Build shared account domain
+        working-directory: apps/mobile
+        run: npm run account:bundle
+      - name: Start local account services and apply migrations
+        run: npx --yes "supabase@$SUPABASE_CLI_VERSION" start --exclude realtime,storage-api,imgproxy,postgres-meta,studio,logflare,vector,supavisor
       - name: Verify database security and commands
         run: npx --yes "supabase@$SUPABASE_CLI_VERSION" test db
+      - name: Verify real authentication and account API
+        run: node Scripts/test-account-api.mjs
       - name: Stop test database
         if: always()
         run: npx --yes "supabase@$SUPABASE_CLI_VERSION" stop

@@ -3,6 +3,7 @@ import type { KineoPersistence } from '../../core/persistence/kineo-store';
 import type { SyncResult } from '../../core/account/sync-module';
 import { KineoSqliteSyncRepository } from '../account/kineo-sqlite-sync-repository';
 import { KineoSqliteAccountWriter } from '../account/kineo-sqlite-account-writer';
+import { ExpoPersonalDataExportSharer } from '../account/expo-personal-data-export-sharer';
 import { openKineoDatabase } from './expo-sqlite-database';
 import { KineoSqliteStore } from './kineo-sqlite-store';
 import { deleteProtectedStore, prepareProtectedStorageDirectory, protectDatabaseFiles } from './protected-storage';
@@ -32,6 +33,8 @@ export async function openProtectedKineoLocalRuntime(
 ): Promise<PersistenceResult<OpenedKineoLocalRuntime>> {
   const directory = await prepareProtectedStorageDirectory();
   if (!directory.ok) return directory;
+  const exportCleanup = await new ExpoPersonalDataExportSharer().cleanup();
+  if (!exportCleanup.ok) return { ok: false, error: { code: 'deletionFailed' } };
   const opened = await openKineoDatabase({
     databaseName: kineoDatabaseName,
     protectedDirectoryPath: directory.value,

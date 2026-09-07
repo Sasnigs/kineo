@@ -23,6 +23,77 @@ const bootstrap = {
 };
 
 describe('KineoAccountEntry', () => {
+  it('finishes expired logout through explicit isolated sign-in without hydrating history', async () => {
+    const loadStartState = jest.fn<KineoProductServing['loadStartState']>();
+    const restoreSession = jest.fn<KineoAccountRuntime['auth']['restoreSession']>();
+    const recover = jest.fn<KineoAccountRuntime['reauthenticatePendingLogout']>()
+      .mockResolvedValue({ ok: true, value: { kind: 'complete' } });
+    const restart = jest.fn();
+    const runtime = {
+      resumePendingDeletion: async () => ({ ok: true, value: undefined }),
+      resumePendingLogout: async () => ({ ok: true, value: {
+        kind: 'pending', localWiped: true, canReauthenticate: true, error: { code: 'sessionExpired' },
+      } }),
+      reauthenticatePendingLogout: recover,
+      auth: { restoreSession },
+    } as unknown as KineoAccountRuntime;
+    const service = { loadStartState } as unknown as KineoProductServing;
+    const view = await render(<KineoAccountEntry runtime={runtime} service={service}
+      createAuthorizedService={async () => ({ ok: true, value: service })}
+      onStoreRestartRequired={restart} />);
+    expect(await view.findByText('Sign in to finish signing out')).toBeTruthy();
+    await fireEvent.changeText(view.getByLabelText('Recovery email'), 'person@example.com');
+    await fireEvent.changeText(view.getByLabelText('Recovery password'), 'correct horse battery staple');
+    await fireEvent.press(view.getByRole('button', { name: 'Use email to finish signing out' }));
+    await waitFor(() => expect(recover).toHaveBeenCalledWith({ kind: 'email', credentials: {
+      email: 'person@example.com', password: 'correct horse battery staple',
+    } }));
+    expect(restart).toHaveBeenCalledTimes(1);
+    expect(loadStartState).not.toHaveBeenCalled();
+    expect(restoreSession).not.toHaveBeenCalled();
+  });
+
+  it('restarts after completed logout recovery without opening the old store or restoring Auth', async () => {
+    const loadStartState = jest.fn<KineoProductServing['loadStartState']>();
+    const restoreSession = jest.fn<KineoAccountRuntime['auth']['restoreSession']>();
+    const restart = jest.fn();
+    const runtime = {
+      resumePendingDeletion: async () => ({ ok: true, value: undefined }),
+      resumePendingLogout: async () => ({ ok: true, value: { kind: 'complete' } }),
+      auth: { restoreSession },
+    } as unknown as KineoAccountRuntime;
+    const service = { loadStartState } as unknown as KineoProductServing;
+    await render(<KineoAccountEntry runtime={runtime} service={service}
+      createAuthorizedService={async () => ({ ok: true, value: service })}
+      onStoreRestartRequired={restart} />);
+    await waitFor(() => expect(restart).toHaveBeenCalledTimes(1));
+    expect(loadStartState).not.toHaveBeenCalled();
+    expect(restoreSession).not.toHaveBeenCalled();
+  });
+
+  it('gates pending offline logout before auth or private cached data and offers retry', async () => {
+    const loadStartState = jest.fn<KineoProductServing['loadStartState']>();
+    const restoreSession = jest.fn<KineoAccountRuntime['auth']['restoreSession']>();
+    const order: string[] = [];
+    const restart = jest.fn();
+    const runtime = {
+      resumePendingDeletion: async () => { order.push('deletion'); return { ok: true, value: undefined }; },
+      resumePendingLogout: async () => {
+        order.push('logout');
+        return { ok: true, value: { kind: 'pending', localWiped: true, error: { code: 'offline' } } };
+      },
+      auth: { restoreSession },
+    } as unknown as KineoAccountRuntime;
+    const service = { loadStartState } as unknown as KineoProductServing;
+    const view = await render(<KineoAccountEntry runtime={runtime} service={service}
+      createAuthorizedService={async () => ({ ok: true, value: service })}
+      onStoreRestartRequired={restart} />);
+    expect(await view.findByText('Signed out on this device. Connect to the internet to finish signing out securely.')).toBeTruthy();
+    expect(order).toEqual(['deletion', 'logout']);
+    expect(loadStartState).not.toHaveBeenCalled();
+    expect(restoreSession).not.toHaveBeenCalled();
+  });
+
   it('resumes deletion before authentication or opening product data', async () => {
     const loadStartState = jest.fn<KineoProductServing['loadStartState']>();
     const restoreSession = jest.fn<KineoAccountRuntime['auth']['restoreSession']>();
@@ -52,6 +123,7 @@ describe('KineoAccountEntry', () => {
     } as unknown as KineoAccountSession;
     const runtime = {
       resumePendingDeletion: async () => ({ ok: true, value: undefined }),
+      resumePendingLogout: async () => ({ ok: true, value: { kind: 'none' } }),
       auth: { restoreSession: async () => ({ ok: true, value: { kind: 'cached', accountId, provider: 'email' } }) },
       connect: async () => ({ ok: true, value: session }),
     } as unknown as KineoAccountRuntime;
@@ -89,6 +161,7 @@ describe('KineoAccountEntry', () => {
     } as unknown as KineoAccountSession;
     const runtime = {
       resumePendingDeletion: async () => ({ ok: true, value: undefined }),
+      resumePendingLogout: async () => ({ ok: true, value: { kind: 'none' } }),
       usesDevelopmentServices: true,
       auth: {
         restoreSession: async () => ({
@@ -127,6 +200,7 @@ describe('KineoAccountEntry', () => {
 
     await fireEvent.press(view.getByText('Continue with test account'));
     expect(await view.findByText('Review before continuing')).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Read prototype Terms of Service' })).toBeTruthy();
 
     await fireEvent.press(view.getByRole('checkbox'));
     await fireEvent.press(view.getByText('Accept and continue'));

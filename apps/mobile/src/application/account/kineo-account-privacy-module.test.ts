@@ -5,6 +5,7 @@ import type {
   DeletionResumeCredential,
   DeletionResumeStore,
   LocalPrivacyStore,
+  RetainedAttentionState,
 } from './kineo-account-privacy-module';
 import { KineoAccountPrivacyModule } from './kineo-account-privacy-module';
 import type { PrivacyResult } from '../../core/account/account-privacy-module';
@@ -32,7 +33,7 @@ class FakeResumeStore implements DeletionResumeStore {
 class FakeLocalStore implements LocalPrivacyStore {
   resets = 0;
   wipes = 0;
-  async resetHistory(_historyEpoch: number): Promise<PrivacyResult<void>> {
+  async resetHistory(_historyEpoch: number, _attentionStates: readonly RetainedAttentionState[] = []): Promise<PrivacyResult<void>> {
     this.resets += 1;
     return { ok: true, value: undefined };
   }

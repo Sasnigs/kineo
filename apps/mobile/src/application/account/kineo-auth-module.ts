@@ -14,6 +14,7 @@ import {
   type ReauthenticationGrant,
   type ReauthenticationMethod,
 } from '../../core/account/auth-module';
+import type { LogoutRecoveryState } from './kineo-logout-workflow';
 
 export interface IdentityTokenProvider {
   acquireIdentityToken(): Promise<
@@ -56,11 +57,8 @@ export interface AuthGateway {
 }
 
 export interface LogoutCoordinator {
-  hasPendingMutations(): Promise<AuthResult<boolean>>;
-  flushPendingMutations(): Promise<AuthResult<void>>;
-  discardPendingMutations(): Promise<AuthResult<void>>;
-  revokeInstallation(): Promise<AuthResult<void>>;
-  wipeLocalAccount(): Promise<AuthResult<void>>;
+  logout(policy: LogoutPolicy): Promise<AuthResult<void>>;
+  resumePendingLogout(): Promise<AuthResult<LogoutRecoveryState>>;
 }
 
 function invalidInput(): AuthResult<never> {
@@ -78,7 +76,7 @@ export class KineoAuthModule implements AuthModule {
   ) {}
 
   restoreSession(): Promise<AuthResult<AuthState>> {
-    this.restoreInFlight ??= this.gateway.restoreSession().finally(() => {
+    this.restoreInFlight ??= this.withLogoutRecovery(() => this.gateway.restoreSession()).finally(() => {
       this.restoreInFlight = undefined;
     });
     return this.restoreInFlight;
@@ -97,7 +95,7 @@ export class KineoAuthModule implements AuthModule {
   ): Promise<AuthResult<AuthState>> {
     const valid = validateEmailCredentials(credentials);
     return valid.ok
-      ? this.gateway.signUpWithEmail(valid.value)
+      ? this.withLogoutRecovery(() => this.gateway.signUpWithEmail(valid.value))
       : invalidInput();
   }
 
@@ -106,7 +104,7 @@ export class KineoAuthModule implements AuthModule {
   ): Promise<AuthResult<AuthState>> {
     const valid = validateEmailCredentials(credentials);
     return valid.ok
-      ? this.gateway.signInWithEmail(valid.value)
+      ? this.withLogoutRecovery(() => this.gateway.signInWithEmail(valid.value))
       : invalidInput();
   }
 
@@ -128,7 +126,7 @@ export class KineoAuthModule implements AuthModule {
     callbackUrl: string,
   ): Promise<AuthResult<AuthState>> {
     return callbackUrl.length > 0
-      ? this.gateway.completeEmailVerification(callbackUrl)
+      ? this.withLogoutRecovery(() => this.gateway.completeEmailVerification(callbackUrl))
       : Promise.resolve(invalidInput());
   }
 
@@ -138,7 +136,7 @@ export class KineoAuthModule implements AuthModule {
   ): Promise<AuthResult<AuthState>> {
     const password = validatePassword(newPassword);
     return password.ok && recoveryUrl.length > 0
-      ? this.gateway.completePasswordReset(recoveryUrl, password.value)
+      ? this.withLogoutRecovery(() => this.gateway.completePasswordReset(recoveryUrl, password.value))
       : invalidInput();
   }
 
@@ -181,36 +179,34 @@ export class KineoAuthModule implements AuthModule {
   }
 
   async logout(policy: LogoutPolicy): Promise<AuthResult<void>> {
-    const pending = await this.logoutCoordinator.hasPendingMutations();
-    if (!pending.ok) return pending;
-    if (pending.value) {
-      const resolved = policy === 'waitForSync'
-        ? await this.logoutCoordinator.flushPendingMutations()
-        : await this.logoutCoordinator.discardPendingMutations();
-      if (!resolved.ok) return resolved;
-    }
+    await this.restoreInFlight;
+    return this.logoutCoordinator.logout(policy);
+  }
 
-    const revoked = await this.logoutCoordinator.revokeInstallation();
-    if (!revoked.ok) return revoked;
-    const loggedOut = await this.gateway.logout();
-    if (!loggedOut.ok) return loggedOut;
-    return this.logoutCoordinator.wipeLocalAccount();
+  private async withLogoutRecovery<Value>(operation: () => Promise<AuthResult<Value>>): Promise<AuthResult<Value>> {
+    const recovered = await this.logoutCoordinator.resumePendingLogout();
+    if (!recovered.ok) return recovered;
+    return recovered.value.kind === 'pending'
+      ? { ok: false, error: recovered.value.error }
+      : operation();
   }
 
   private async signInWithNativeProvider(
     provider: Extract<AuthProvider, 'apple' | 'google'>,
     identity: IdentityTokenProvider,
   ): Promise<AuthResult<AuthState>> {
-    const acquired = await identity.acquireIdentityToken();
-    if (!acquired.ok) return acquired;
-    if (acquired.value.token.length === 0) {
-      const error: AuthError = { code: 'invalidCredentials' };
-      return { ok: false, error };
-    }
-    return this.gateway.signInWithIdentityToken(
-      provider,
-      acquired.value.token,
-      acquired.value.nonce,
-    );
+    return this.withLogoutRecovery(async () => {
+      const acquired = await identity.acquireIdentityToken();
+      if (!acquired.ok) return acquired;
+      if (acquired.value.token.length === 0) {
+        const error: AuthError = { code: 'invalidCredentials' };
+        return { ok: false, error };
+      }
+      return this.gateway.signInWithIdentityToken(
+        provider,
+        acquired.value.token,
+        acquired.value.nonce,
+      );
+    });
   }
 }

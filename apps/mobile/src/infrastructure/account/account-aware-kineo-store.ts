@@ -5,6 +5,7 @@ import type {
   SyncOutbox,
 } from '../../core/account/sync-module';
 import type { KineoPersistence } from '../../core/persistence/kineo-store';
+import { terminalRoutineStatuses } from '../../core/domain/selection-domain';
 import type {
   PersistenceResult,
 } from '../../core/persistence/persistence-contract';
@@ -32,7 +33,7 @@ export class AccountAwareKineoStore implements KineoPersistence {
   async saveProfileState(
     state: Parameters<KineoPersistence['saveProfileState']>[0],
   ): Promise<PersistenceResult<void>> {
-    return this.pushProfile(state, (local) => local.saveProfileState(state));
+    return this.pushProfile(state);
   }
 
   loadCheckIn: KineoPersistence['loadCheckIn'] = (id) =>
@@ -62,11 +63,18 @@ export class AccountAwareKineoStore implements KineoPersistence {
         attentionTransitions: safetyMutations.map((mutation) => ({
           ...mutation.event,
           statusAfter: mutation.statusAfter,
+          expectedAttentionUpdatedAtMilliseconds: mutation.expectedAttentionUpdatedAtMilliseconds,
         })),
       }, true);
-      if (!remote.ok) return remote;
+      return remote;
     }
-    return this.base.completeCheckIn(checkIn, safetyMutations);
+    // Normal submissions were already authorized by PlanAuthority. Do not replay
+    // provisional safety IDs/timestamps over the authoritative projection.
+    const remote = await this.repository.loadSynchronizedEntity('checkIn', checkIn.id);
+    if (!remote.ok) return writeFailure();
+    return equalDomainValues(remote.value, checkIn)
+      ? { ok: true, value: undefined }
+      : { ok: false, error: { code: 'conflictingWrite' } };
   }
 
   async applySafetyMutation(
@@ -77,13 +85,24 @@ export class AccountAwareKineoStore implements KineoPersistence {
       transition: {
         ...mutation.event,
         statusAfter: mutation.statusAfter,
+        expectedAttentionUpdatedAtMilliseconds: mutation.expectedAttentionUpdatedAtMilliseconds,
       },
     }, true);
-    return remote.ok ? this.base.applySafetyMutation(mutation) : remote;
+    return remote;
   }
 
-  appendSelectionDecision: KineoPersistence['appendSelectionDecision'] = (decision) =>
-    this.base.appendSelectionDecision(decision);
+  appendSelectionDecision: KineoPersistence['appendSelectionDecision'] = async (decision) => {
+    const remote = await this.repository.loadSynchronizedEntity('selectionDecision', decision.id);
+    if (!remote.ok) return writeFailure();
+    const envelope = isRecord(remote.value) ? remote.value : undefined;
+    const canonical = isRecord(envelope?.canonicalDecision) ? envelope.canonicalDecision : envelope;
+    if (canonical === undefined) return { ok: false, error: { code: 'conflictingWrite' } };
+    const { createdAtMilliseconds: _serverCreatedAt, ...serverDecision } = canonical;
+    const { createdAtMilliseconds: _localCreatedAt, ...localDecision } = decision;
+    return equalDomainValues(serverDecision, localDecision)
+      ? { ok: true, value: undefined }
+      : { ok: false, error: { code: 'conflictingWrite' } };
+  };
 
   loadLatestSelectionDecision: KineoPersistence['loadLatestSelectionDecision'] = (checkInId) =>
     this.base.loadLatestSelectionDecision(checkInId);
@@ -98,7 +117,7 @@ export class AccountAwareKineoStore implements KineoPersistence {
       kind: 'recordPauseToday',
       event,
     }, true);
-    return remote.ok ? this.base.recordPauseToday(event) : remote;
+    return remote;
   }
 
   loadPauseToday: KineoPersistence['loadPauseToday'] = (localDay) =>
@@ -121,19 +140,35 @@ export class AccountAwareKineoStore implements KineoPersistence {
       decision: decision.value,
       routine: session,
     }, true);
-    return remote.ok ? this.base.createRoutine(session) : remote;
+    // Successful synchronization already committed the server session and its
+    // ownership in the same local projection transaction.
+    return remote;
   }
 
-  loadRoutineSession: KineoPersistence['loadRoutineSession'] = (id) =>
-    this.base.loadRoutineSession(id);
+  loadRoutineSession: KineoPersistence['loadRoutineSession'] = async (id) => {
+    const loaded = await this.base.loadRoutineSession(id);
+    if (!loaded.ok || loaded.value === undefined ||
+        terminalRoutineStatuses.some((status) => status === loaded.value?.status)) return loaded;
+    const ownership = await this.requirePlaybackOwnership(id);
+    return ownership.ok ? loaded : ownership;
+  };
 
-  loadNonterminalRoutine: KineoPersistence['loadNonterminalRoutine'] = () =>
-    this.base.loadNonterminalRoutine();
+  loadNonterminalRoutine: KineoPersistence['loadNonterminalRoutine'] = async () => {
+    const loaded = await this.base.loadNonterminalRoutine();
+    if (!loaded.ok || loaded.value === undefined) return loaded;
+    const ownership = await this.requirePlaybackOwnership(loaded.value.id);
+    if (ownership.ok) return loaded;
+    return ownership.error.code === 'conflictingWrite'
+      ? { ok: true, value: undefined }
+      : ownership;
+  };
 
   async recordRoutineEvent(
     event: Parameters<KineoPersistence['recordRoutineEvent']>[0],
     checkpoint: Parameters<KineoPersistence['recordRoutineEvent']>[1],
   ): Promise<PersistenceResult<void>> {
+    const ownership = await this.requirePlaybackOwnership(event.routineSessionId);
+    if (!ownership.ok) return ownership;
     return this.pushCommand({
       kind: 'recordRoutineEvent',
       event: {
@@ -198,7 +233,6 @@ export class AccountAwareKineoStore implements KineoPersistence {
 
   private async pushProfile(
     state: Parameters<KineoPersistence['saveProfileState']>[0],
-    localWrite?: LocalAccountWrite,
   ): Promise<PersistenceResult<void>> {
     const remote = await this.repository.loadSynchronizedEntity(
       'profile',
@@ -229,7 +263,15 @@ export class AccountAwareKineoStore implements KineoPersistence {
         updatedAtMilliseconds: state.profile.updatedAtMilliseconds,
       },
       reminderSettings: state.reminderSettings,
-    }, false, localWrite);
+    }, true);
+  }
+
+  private async requirePlaybackOwnership(routineId: string): Promise<PersistenceResult<void>> {
+    const remote = await this.repository.loadSynchronizedEntity('routineSession', routineId);
+    if (!remote.ok) return writeFailure();
+    return isRecord(remote.value) && remote.value.ownerInstallationId === this.installationId
+      ? { ok: true, value: undefined }
+      : { ok: false, error: { code: 'conflictingWrite' } };
   }
 
   private async pushCommand(
@@ -277,4 +319,18 @@ function writeFailure(): PersistenceResult<void> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// JSONB and local domain constructors need not retain object key order. Optional
+// undefined values are absent from the wire; array ordering remains meaningful.
+function equalDomainValues(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((value, index) => equalDomainValues(value, right[index]));
+  }
+  if (!isRecord(left) || !isRecord(right)) return false;
+  const leftKeys = Object.keys(left).filter((key) => left[key] !== undefined);
+  const rightKeys = Object.keys(right).filter((key) => right[key] !== undefined);
+  return leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => equalDomainValues(left[key], right[key]));
 }

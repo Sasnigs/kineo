@@ -38,12 +38,16 @@ Deno.serve(async (request) => {
   const state = await authorized.service.rpc('kineo_changes_for_account', {
     p_account_id: authorized.accountId,
     p_after_sequence: 0,
-    p_page_size: 1,
+    p_page_size: 3,
   });
+  const history = isRecord(state.data) && Array.isArray(state.data.changes)
+    ? state.data.changes.find((change) => isRecord(change) && change.entityKind === 'history')
+    : undefined;
   return state.error === null &&
     isRecord(state.data) &&
-    typeof state.data.historyEpoch === 'number'
-    ? jsonResponse({ historyEpoch: state.data.historyEpoch })
+    typeof state.data.historyEpoch === 'number' && isRecord(history) &&
+    isRecord(history.payload)
+    ? jsonResponse({ historyEpoch: state.data.historyEpoch, attentionStates: history.payload.attentionStates })
     : serverFailure();
 });
 

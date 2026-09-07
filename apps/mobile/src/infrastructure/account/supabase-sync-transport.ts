@@ -272,7 +272,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isOptionalString(value: unknown): boolean {
-  return value === undefined || (typeof value === 'string' && value.length > 0);
+  return value === undefined || value === null ||
+    (typeof value === 'string' && value.length > 0);
 }
 
 function isPositiveSafeInteger(value: unknown): value is number {

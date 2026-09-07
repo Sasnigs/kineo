@@ -60,23 +60,23 @@ select is(public.kineo_apply_mutation_for_account(
 -- Export authorization and consumption run against the real transactional function.
 create temporary table export_fixture as
 select public.kineo_prepare_export_for_account(
-  '10000000-0000-4000-8000-000000000001', 'test-only-token-hash',
+  '10000000-0000-4000-8000-000000000001', repeat('a', 64),
   clock_timestamp() + interval '15 minutes'
 ) as job;
 
 select throws_ok($$select public.kineo_consume_export_for_account(
   '10000000-0000-4000-8000-000000000002',
-  (select (job->>'jobId')::uuid from export_fixture), 'test-only-token-hash'
+  (select (job->>'jobId')::uuid from export_fixture), repeat('a', 64)
 )$$, '28000', 'export_unavailable', 'a different account cannot consume an export');
 
 select is(public.kineo_consume_export_for_account(
   '10000000-0000-4000-8000-000000000001',
-  (select (job->>'jobId')::uuid from export_fixture), 'test-only-token-hash'
+  (select (job->>'jobId')::uuid from export_fixture), repeat('a', 64)
 )->>'formatVersion', 'kineo-export-v1', 'authorized export returns its payload before clearing it');
 
 select throws_ok($$select public.kineo_consume_export_for_account(
   '10000000-0000-4000-8000-000000000001',
-  (select (job->>'jobId')::uuid from export_fixture), 'test-only-token-hash'
+  (select (job->>'jobId')::uuid from export_fixture), repeat('a', 64)
 )$$, '28000', 'export_unavailable', 'a consumed export cannot be downloaded twice');
 
 select is((select export_payload from kineo_private.export_jobs

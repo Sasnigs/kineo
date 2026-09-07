@@ -1,11 +1,11 @@
 # Account implementation checkpoint — September 7, 2026
 
-Status: **in progress; not qualified for merge or release**. Approved scope remains TD-10–12. Passing unit tests does not close the account milestones.
+Status: **implementation complete locally; not yet qualified for merge or release**. Approved scope remains TD-10–12. Passing local tests does not close external credential, physical-device, privacy/legal, or production gates.
 
 ## Verified in this pass
 
-- App: 43 Jest suites, 290 tests pass; TypeScript and ESLint pass. Added atomic local/outbox rollback, offline session/hydration, refresh/logout race, and two-phase deletion recovery regressions.
-- PostgreSQL: five initial migrations passed fresh setup; migration 006 applied incrementally. Three pgTAP files, 253 assertions pass, including private-table/client grants, command grants, duplicate receipts, reset epochs, installation/account mismatch, one-time export consumption, and deletion revocation/recovery.
+- App: 50 Jest suites, 399 tests pass; TypeScript and ESLint pass. Added atomic local/outbox rollback, offline session/hydration, refresh/logout race, durable logout recovery, multi-device projection, reset retention, refresh/export cleanup, and two-phase deletion recovery regressions.
+- PostgreSQL: eight migrations and five pgTAP files, 267 assertions pass locally, including private-table/client grants, command grants, duplicate receipts, reset epochs, installation/account mismatch, authoritative plan/lifecycle guards, complete one-time exports, expiry cleanup, and deletion revocation/recovery.
 - Supabase CLI 2.117.0 configuration parses. Replaced deprecated local mail configuration. Removed a repeated constraint drop that would have broken migration 004.
 - Added database migration/pgTAP verification to CI; the new CI job has not run on GitHub yet.
 
@@ -31,12 +31,12 @@ Independent review against TD-10–12 identified four major open gaps:
 3. Implemented; integration qualification remains: two-phase deletion prepares a non-destructive job, saves recovery credentials, then commits. Relaunch checks recovery before Auth. PostgreSQL tests verify revocation before domain removal and recovery after Auth removal; server tests cover already-missing Auth identities. Native/local Auth failure injection remains.
 4. **Logout/relogin:** the revoked installation identifier is reused, and explicit offline discard still requires online revocation. Implement durable logout recovery and new installation identity without bypassing revocation or silently losing pending work.
 
-Remaining major implementation findings: server-authoritative composition/safety and logout/relogin recovery. Session and deletion fixes still require integration qualification. No claim of full account-milestone completion.
+Resolved locally: server-authoritative composition/safety, routine lifecycle and feedback ownership, durable logout/relogin recovery, multi-device projections, reset retention, complete exports, and rejected-outbox quarantine. Real local API qualification passes password signup/login, server consent gating, canonical plan/tamper rejection, routine lifecycle, feedback-area enforcement, and deletion recovery.
 
 ## Additional qualification work
 
-- Verify remote routine ownership, event ordering, local pending checkpoints, conflict resolution, epoch resets, and paginated projections with real SQLite and server commands—not only transport fakes.
-- Complete export contents, expiry cleanup, protected temporary files, and deletion session revocation/idempotency.
+- Verify remote routine ownership, event ordering, local pending checkpoints, conflict resolution, epoch resets, and paginated projections with real SQLite and server commands—not only transport fakes. Local regression coverage now passes.
+- Complete export contents, expiry cleanup, protected temporary files, and deletion session revocation/idempotency. Local database and app cleanup tests now pass.
 - Qualify callback and recovery links, provider cancellation/revocation, legal-document access, abuse settings, and generic email responses with local Auth/mail plus configured provider credentials.
 - Run native rebuild, simulator account flows, accessibility, network/log inspection, and load/concurrency tests. Physical-device and production credential/privacy review remain release gates.
 
@@ -53,4 +53,6 @@ npx --yes supabase@2.117.0 test db --network-id kineo-local-tests
 
 Use the same network flag for both commands. CLI-generated `.temp` files and environment files are ignored under `supabase/.gitignore`.
 
-No account PR exists at this checkpoint. Do not merge this branch on unit-test results alone.
+No account PR exists at this checkpoint. Do not merge this branch on local results alone.
+
+The generated iOS project was regenerated and a Release simulator build succeeded. The clean simulator launch check rendered the expected first-use promise screen. Physical-device Keychain/protected-data behavior, configured Apple/Google credentials, provider abuse settings, production SMTP/DNS, privacy counsel, and App Review remain external release gates.

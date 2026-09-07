@@ -91,6 +91,7 @@ export class KineoCloudPlanAuthority implements PlanAuthority {
           attentionTransitions: safetyMutations.map((mutation) => ({
             ...mutation.event,
             statusAfter: mutation.statusAfter,
+            expectedAttentionUpdatedAtMilliseconds: mutation.expectedAttentionUpdatedAtMilliseconds,
           })),
         },
       });

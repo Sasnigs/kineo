@@ -1,10 +1,7 @@
 export const syncProtocolVersion = 'sync-v1.0.0';
-export const selectionRulesVersion = 'selection-v1.0.0-prototype';
 export const maximumSyncMutationCount = 100;
 export const defaultChangePageSize = 200;
 export const maximumChangePageSize = 500;
-export const activeUnlockOutcomeCount = 2;
-export const initialDecisionRevision = 1;
 
 const uuidShape =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -50,11 +47,7 @@ const commandKinds = new Set([
   'startRoutine',
   'recordRoutineEvent',
   'submitFeedback',
-  'resetHistory',
 ]);
-
-export type ServerRoutineLevel = 'gentle' | 'balanced' | 'active';
-
 export type ValidatedMutation = Readonly<{
   mutationId: string;
   installationId: string;
@@ -74,27 +67,6 @@ export type ValidatedBootstrapRequest = Readonly<{
   appVersion: string;
   platformVersion: string;
   cursor?: string;
-}>;
-
-export type AuthoritativePlan = Readonly<{
-  decisionId: string;
-  checkInId: string;
-  revision: number;
-  rulesVersion: typeof selectionRulesVersion;
-  catalogVersion: string;
-  recommendedLevel: ServerRoutineLevel;
-  selectedLevel: ServerRoutineLevel;
-  deliveredLevel: ServerRoutineLevel;
-  durationVariant: 'quick' | 'standard';
-  includedAreas: readonly string[];
-  routineSnapshot: Readonly<{
-    schemaVersion: string;
-    catalogVersion: string;
-    rulesVersion: string;
-    includedAreas: readonly string[];
-    selectedLevel: ServerRoutineLevel;
-    durationVariant: 'quick' | 'standard';
-  }>;
 }>;
 
 export function validateBootstrapRequest(
@@ -152,119 +124,6 @@ export function validateSyncRequest(
   };
 }
 
-export function createAuthoritativePlan(
-  command: Readonly<Record<string, unknown> & { kind: string }>,
-  historyCounts: Readonly<Record<string, number>>,
-): AuthoritativePlan | undefined {
-  if (command.kind !== 'submitCheckIn' || !isRecord(command.checkIn)) {
-    return undefined;
-  }
-  const checkIn = command.checkIn;
-  if (
-    !isUuid(checkIn.id) ||
-    !bodyAreas.has(String(checkIn.primaryArea)) ||
-    !Array.isArray(checkIn.entries) ||
-    checkIn.entries.length === 0
-  ) {
-    return undefined;
-  }
-  const parsedEntries: Array<{
-    area: string;
-    changeReport: string;
-    movementComfort: string;
-    conditionalSafetyAnswer?: string;
-  }> = [];
-  for (const entry of checkIn.entries) {
-    if (
-      !isRecord(entry) ||
-      !isUuid(entry.id) ||
-      !bodyAreas.has(String(entry.area)) ||
-      !changeReports.has(String(entry.changeReport)) ||
-      !movementComforts.has(String(entry.movementComfort))
-    ) {
-      return undefined;
-    }
-    const needsSafety =
-      entry.changeReport === 'worse' || entry.movementComfort === 'limited';
-    if (
-      needsSafety !== (typeof entry.conditionalSafetyAnswer === 'string') ||
-      (needsSafety && !safetyAnswers.has(String(entry.conditionalSafetyAnswer)))
-    ) {
-      return undefined;
-    }
-    parsedEntries.push({
-      area: String(entry.area),
-      changeReport: String(entry.changeReport),
-      movementComfort: String(entry.movementComfort),
-      ...(typeof entry.conditionalSafetyAnswer === 'string'
-        ? { conditionalSafetyAnswer: entry.conditionalSafetyAnswer }
-        : {}),
-    });
-  }
-  if (
-    parsedEntries.some(({ conditionalSafetyAnswer }) =>
-      conditionalSafetyAnswer === 'yes' ||
-      conditionalSafetyAnswer === 'notSure')
-  ) {
-    return undefined;
-  }
-  if (command.suppressPlan === true) return undefined;
-  const primary = parsedEntries.find(
-    ({ area }) => area === checkIn.primaryArea,
-  );
-  if (primary === undefined) return undefined;
-  const primaryLevel = selectAreaLevel(
-    primary.changeReport,
-    primary.movementComfort,
-    (historyCounts[primary.area] ?? 0) >= activeUnlockOutcomeCount,
-  );
-  const levels = parsedEntries.map((entry) =>
-    selectAreaLevel(
-      entry.changeReport,
-      entry.movementComfort,
-      (historyCounts[entry.area] ?? 0) >= activeUnlockOutcomeCount,
-    ),
-  );
-  const recommendedLevel = levels.reduce(gentlerLevel, primaryLevel);
-  const requestedOverride =
-    command.requestedOverride === 'gentle' ||
-    command.requestedOverride === 'balanced' ||
-    command.requestedOverride === 'active'
-      ? command.requestedOverride
-      : undefined;
-  const selectedLevel = requestedOverride === undefined
-    ? recommendedLevel
-    : gentlerLevel(recommendedLevel, requestedOverride);
-  const decisionId = command.decisionId;
-  if (!isUuid(decisionId)) return undefined;
-  const durationVariant =
-    command.durationVariant === 'quick' ? 'quick' : 'standard';
-  const catalogVersion = '0.1.0';
-  const includedAreas = parsedEntries.map(({ area }) => area);
-  return {
-    decisionId,
-    checkInId: checkIn.id,
-    revision: isPositiveSafeInteger(command.decisionRevision)
-      ? command.decisionRevision
-      : initialDecisionRevision,
-    rulesVersion: selectionRulesVersion,
-    catalogVersion,
-    recommendedLevel,
-    selectedLevel,
-    deliveredLevel: selectedLevel,
-    durationVariant,
-    includedAreas,
-    routineSnapshot: {
-      schemaVersion: 'routine-snapshot-v1',
-      catalogVersion,
-      rulesVersion: selectionRulesVersion,
-      includedAreas,
-      selectedLevel,
-      durationVariant,
-    },
-  };
-}
-
 export function decodeCursor(cursor: string | undefined): number | undefined {
   if (cursor === undefined) return 0;
   if (!cursorShape.test(cursor)) return undefined;
@@ -300,7 +159,7 @@ function validateMutation(
 
 function validateCommand(command: Record<string, unknown>): boolean {
   // This field is exclusively server-owned; never accept an injected approval.
-  if ('authoritativePlan' in command) return false;
+  if ('authoritativePlan' in command || 'authorityVersion' in command) return false;
   switch (command.kind) {
     case 'acceptLegal':
       return isRecord(command.acceptance) &&
@@ -449,6 +308,7 @@ function validateAttentionTransition(value: unknown): boolean {
     safetyStatuses.has(String(value.statusAfter)) &&
     (value.sourceCheckInEntryId === undefined || isUuid(value.sourceCheckInEntryId)) &&
     (value.returnAnswer === undefined || safetyAnswers.has(String(value.returnAnswer))) &&
+    isOptionalPositiveSafeInteger(value.expectedAttentionUpdatedAtMilliseconds) &&
     isPositiveSafeInteger(value.occurredAtMilliseconds) &&
     validateDayContext(value.dayContext))) return false;
   const clearsAttention = value.kind === 'attentionClearedReturnedToUsual' ||
@@ -549,7 +409,6 @@ function validateFeedback(value: unknown): boolean {
     !isPositiveSafeInteger(value.submittedAtMilliseconds) ||
     !validateDayContext(value.dayContext) ||
     !Array.isArray(value.responses) ||
-    value.responses.length === 0 ||
     value.responses.length > maximumFeedbackResponseCount
   ) return false;
   const ids = new Set<string>();
@@ -603,36 +462,6 @@ function isBoundedSafeInteger(
     Number.isSafeInteger(value) &&
     value >= minimum &&
     value <= maximum;
-}
-
-function selectAreaLevel(
-  changeReport: string,
-  movementComfort: string,
-  activeUnlocked: boolean,
-): ServerRoutineLevel {
-  if (changeReport === 'worse' || movementComfort === 'limited') {
-    return 'gentle';
-  }
-  if (
-    changeReport === 'better' &&
-    movementComfort === 'good' &&
-    activeUnlocked
-  ) {
-    return 'active';
-  }
-  return 'balanced';
-}
-
-function gentlerLevel(
-  left: ServerRoutineLevel,
-  right: ServerRoutineLevel,
-): ServerRoutineLevel {
-  const rank: Readonly<Record<ServerRoutineLevel, number>> = {
-    gentle: 0,
-    balanced: 1,
-    active: 2,
-  };
-  return rank[left] <= rank[right] ? left : right;
 }
 
 function isUuid(value: unknown): value is string {

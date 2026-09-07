@@ -15,6 +15,7 @@ import {
   type IdentityTokenProvider,
   type LogoutCoordinator,
 } from './kineo-auth-module';
+import type { LogoutRecoveryState } from './kineo-logout-workflow';
 
 const accountId = '10000000-0000-4000-8000-000000000001';
 const validCredentials: EmailCredentials = {
@@ -125,29 +126,14 @@ class FakeIdentityProvider implements IdentityTokenProvider {
 
 class FakeLogoutCoordinator implements LogoutCoordinator {
   readonly actions: string[] = [];
-  pending = false;
+  recovery: AuthResult<LogoutRecoveryState> = { ok: true, value: { kind: 'none' } };
 
-  async hasPendingMutations(): Promise<AuthResult<boolean>> {
-    return { ok: true, value: this.pending };
+  async resumePendingLogout(): Promise<AuthResult<LogoutRecoveryState>> {
+    return this.recovery;
   }
 
-  async flushPendingMutations(): Promise<AuthResult<void>> {
-    this.actions.push('flush');
-    return { ok: true, value: undefined };
-  }
-
-  async discardPendingMutations(): Promise<AuthResult<void>> {
-    this.actions.push('discard');
-    return { ok: true, value: undefined };
-  }
-
-  async revokeInstallation(): Promise<AuthResult<void>> {
-    this.actions.push('revoke');
-    return { ok: true, value: undefined };
-  }
-
-  async wipeLocalAccount(): Promise<AuthResult<void>> {
-    this.actions.push('wipe');
+  async logout(policy: LogoutPolicy): Promise<AuthResult<void>> {
+    this.actions.push(policy);
     return { ok: true, value: undefined };
   }
 }
@@ -248,34 +234,29 @@ describe('KineoAuthModule', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it.each<Readonly<{ policy: LogoutPolicy; expectedAction: string }>>([
-    { policy: 'waitForSync', expectedAction: 'flush' },
-    { policy: 'discardPendingChanges', expectedAction: 'discard' },
-  ])('resolves pending work before revoke, logout, and local wipe', async ({
-    policy,
-    expectedAction,
-  }) => {
+  it.each<LogoutPolicy>(['waitForSync', 'discardPendingChanges'])('delegates %s to durable logout', async (policy) => {
     const { module, gateway, logout } = makeModule();
-    logout.pending = true;
     await expect(module.logout(policy)).resolves.toEqual({
       ok: true,
       value: undefined,
     });
-    expect(logout.actions).toEqual([expectedAction, 'revoke', 'wipe']);
-    expect(gateway.logoutCount).toBe(1);
+    expect(logout.actions).toEqual([policy]);
+    expect(gateway.logoutCount).toBe(0);
   });
 
-  it('does not wipe local data if remote logout fails', async () => {
-    const gateway = new FakeGateway();
-    jest.spyOn(gateway, 'logout').mockResolvedValue({
-      ok: false,
-      error: { code: 'offline' },
-    });
-    const { module, logout } = makeModule(gateway);
-    await expect(module.logout('waitForSync')).resolves.toEqual({
-      ok: false,
-      error: { code: 'offline' },
-    });
-    expect(logout.actions).toEqual(['revoke']);
+  it('blocks restored cache and every login path while remote logout recovery is pending', async () => {
+    const { module, gateway, logout } = makeModule();
+    logout.recovery = { ok: true, value: { kind: 'pending', localWiped: true, error: { code: 'offline' } } };
+    const signIn = jest.spyOn(gateway, 'signInWithEmail');
+    for (const result of await Promise.all([
+      module.restoreSession(), module.signInWithEmail(validCredentials),
+      module.signUpWithEmail(validCredentials), module.signInWithApple(),
+      module.completeEmailVerification('kineo://auth/callback'),
+      module.completePasswordReset('kineo://auth/reset', validCredentials.password),
+    ])) expect(result).toEqual({ ok: false, error: { code: 'offline' } });
+    expect(gateway.restoreCount).toBe(0);
+    expect(signIn).not.toHaveBeenCalled();
+    expect(gateway.signInToken).toBeUndefined();
+    expect(gateway.signupCredentials).toBeUndefined();
   });
 });

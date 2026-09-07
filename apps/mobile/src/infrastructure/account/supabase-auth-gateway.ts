@@ -141,6 +141,9 @@ export class SupabaseAuthGateway implements AuthGateway {
   private refreshInFlight?: Promise<AuthResult<AuthState>>;
   private accessSession?: Readonly<{ token: string; expiresAtSeconds: number }>;
   private loggingOut = false;
+  private logoutSuspended = false;
+  private authGeneration = Symbol();
+  private readonly credentialWrites = new Set<Promise<AuthResult<void>>>();
   constructor(
     private readonly auth: SupabaseAuthPort,
     private readonly vault: RefreshTokenVault,
@@ -174,6 +177,7 @@ export class SupabaseAuthGateway implements AuthGateway {
   }
 
   private async performRestore(): Promise<AuthResult<AuthState>> {
+    const generation = this.authGeneration;
     const stored = await this.vault.load();
     if (!stored.ok) return stored;
     if (stored.value === undefined) {
@@ -205,7 +209,7 @@ export class SupabaseAuthGateway implements AuthGateway {
       this.accessSession = undefined;
       return { ok: false, error: { code: 'invalidCredentials' } };
     }
-    return this.persistSession(response, 'email');
+    return this.persistSession(response, 'email', generation);
   }
 
   async signInWithIdentityToken(
@@ -214,6 +218,7 @@ export class SupabaseAuthGateway implements AuthGateway {
     nonce?: string,
     purpose: 'signIn' | 'reauthenticate' = 'signIn',
   ): Promise<AuthResult<AuthState>> {
+    const generation = this.authGeneration;
     try {
       let expectedAccountId: string | undefined;
       if (purpose === 'reauthenticate') {
@@ -251,7 +256,7 @@ export class SupabaseAuthGateway implements AuthGateway {
         });
       }
       return response.error === null
-        ? this.persistSession(response, provider)
+        ? this.persistSession(response, provider, generation)
         : { ok: false, error: stableAuthError(response.error) };
     } catch {
       return { ok: false, error: { code: 'offline' } };
@@ -261,6 +266,7 @@ export class SupabaseAuthGateway implements AuthGateway {
   async signUpWithEmail(
     credentials: EmailCredentials,
   ): Promise<AuthResult<AuthState>> {
+    const generation = this.authGeneration;
     try {
       const response = await this.auth.signUp({
         ...credentials,
@@ -280,7 +286,7 @@ export class SupabaseAuthGateway implements AuthGateway {
           },
         };
       }
-      return this.persistSession(response, 'email');
+      return this.persistSession(response, 'email', generation);
     } catch {
       return { ok: false, error: { code: 'offline' } };
     }
@@ -289,10 +295,11 @@ export class SupabaseAuthGateway implements AuthGateway {
   async signInWithEmail(
     credentials: EmailCredentials,
   ): Promise<AuthResult<AuthState>> {
+    const generation = this.authGeneration;
     try {
       const response = await this.auth.signInWithPassword(credentials);
       return response.error === null
-        ? this.persistSession(response, 'email')
+        ? this.persistSession(response, 'email', generation)
         : { ok: false, error: stableAuthError(response.error) };
     } catch {
       return { ok: false, error: { code: 'offline' } };
@@ -381,6 +388,7 @@ export class SupabaseAuthGateway implements AuthGateway {
   async reauthenticate(
     method: ReauthenticationMethod,
   ): Promise<AuthResult<ReauthenticationGrant>> {
+    const generation = this.authGeneration;
     if (method.kind !== 'password') {
       return {
         ok: false,
@@ -400,7 +408,7 @@ export class SupabaseAuthGateway implements AuthGateway {
       if (response.error !== null) {
         return { ok: false, error: stableAuthError(response.error) };
       }
-      const persisted = await this.persistSession(response, 'email');
+      const persisted = await this.persistSession(response, 'email', generation);
       return persisted.ok
         ? this.createReauthenticationGrant()
         : persisted;
@@ -425,6 +433,21 @@ export class SupabaseAuthGateway implements AuthGateway {
           now + reauthenticationGrantLifetimeMilliseconds,
       },
     };
+  }
+
+  async suspendForLogout(): Promise<void> {
+    this.loggingOut = true;
+    await this.refreshInFlight;
+    await Promise.all(this.credentialWrites);
+    this.authGeneration = Symbol();
+    this.logoutSuspended = true;
+    this.accessSession = undefined;
+  }
+
+  resumeAfterLogout(): void {
+    this.accessSession = undefined;
+    this.logoutSuspended = false;
+    this.loggingOut = false;
   }
 
   async logout(): Promise<AuthResult<void>> {
@@ -452,15 +475,21 @@ export class SupabaseAuthGateway implements AuthGateway {
   private async persistSession(
     response: SessionResponse,
     fallbackProvider: AuthProvider,
+    generation: symbol,
   ): Promise<AuthResult<AuthState>> {
+    if (this.logoutSuspended || generation !== this.authGeneration) {
+      return { ok: false, error: { code: 'sessionExpired' } };
+    }
     const session = response.data.session;
     if (session === null || session.user.id.length === 0) {
       return { ok: false, error: { code: 'invalidCredentials' } };
     }
-    const stored = await this.vault.save({
+    const writing = this.vault.save({
       refreshToken: session.refresh_token,
       identity: { accountId: session.user.id, provider: providerFor(session.user, fallbackProvider) },
     });
+    this.credentialWrites.add(writing);
+    const stored = await writing.finally(() => { this.credentialWrites.delete(writing); });
     if (!stored.ok) return stored;
     this.accessSession = {
       token: session.access_token,
@@ -479,6 +508,7 @@ export class SupabaseAuthGateway implements AuthGateway {
   private async consumeRedirectCredential(
     credential: RecoveryCredential,
   ): Promise<AuthResult<AuthState>> {
+    const generation = this.authGeneration;
     try {
       const response = credential.kind === 'code'
         ? await this.auth.exchangeCodeForSession(credential.code)
@@ -487,7 +517,7 @@ export class SupabaseAuthGateway implements AuthGateway {
             refresh_token: credential.refreshToken,
           });
       return response.error === null
-        ? this.persistSession(response, 'email')
+        ? this.persistSession(response, 'email', generation)
         : { ok: false, error: stableAuthError(response.error) };
     } catch {
       return { ok: false, error: { code: 'offline' } };

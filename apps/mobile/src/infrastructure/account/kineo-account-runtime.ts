@@ -4,10 +4,8 @@ import { Platform } from 'react-native';
 
 import { KineoAccountPrivacyModule, resumeStoredDeletion } from '../../application/account/kineo-account-privacy-module';
 import { KineoAccountSession } from '../../application/account/kineo-account-session';
-import {
-  KineoAuthModule,
-  type LogoutCoordinator,
-} from '../../application/account/kineo-auth-module';
+import { KineoAuthModule, type IdentityTokenProvider } from '../../application/account/kineo-auth-module';
+import { KineoLogoutWorkflow, type LogoutOperations, type LogoutRecoveryState } from '../../application/account/kineo-logout-workflow';
 import { KineoSyncModule } from '../../application/account/kineo-sync-module';
 import type {
   AuthModule,
@@ -15,6 +13,7 @@ import type {
   AuthResult,
 } from '../../core/account/auth-module';
 import type { SyncResult } from '../../core/account/sync-module';
+import type { EmailCredentials } from '../../core/account/account-domain';
 import type { DeletionStatus, PersonalDataExportSharer, PrivacyResult } from '../../core/account/account-privacy-module';
 import { expoReminderScheduler } from '../reminders/expo-reminder-scheduler';
 import type { OpenedKineoLocalRuntime } from '../persistence/open-protected-kineo-store';
@@ -33,6 +32,8 @@ import {
 } from './native-identity-providers';
 import { SecureDeletionResumeStore } from './secure-deletion-resume-store';
 import { SecureRefreshTokenVault } from './secure-refresh-token-vault';
+import { SecureLogoutResumeStore } from './secure-logout-resume-store';
+import { SupabaseLogoutRecovery } from './supabase-logout-recovery';
 import { SupabaseAccountPrivacyTransport } from './supabase-account-privacy-transport';
 import type { SupabaseAuthPort } from './supabase-auth-gateway';
 import { SupabaseAuthGateway } from './supabase-auth-gateway';
@@ -56,30 +57,30 @@ export type KineoAccountRuntime = Readonly<{
   exportSharer: PersonalDataExportSharer;
   usesDevelopmentServices: boolean;
   resumePendingDeletion(): Promise<PrivacyResult<DeletionStatus | undefined>>;
+  resumePendingLogout(): Promise<AuthResult<LogoutRecoveryState>>;
+  reauthenticatePendingLogout(method:
+    | Readonly<{ kind: 'email'; credentials: EmailCredentials }>
+    | Readonly<{ kind: 'apple' | 'google' }>
+  ): Promise<AuthResult<LogoutRecoveryState>>;
   connect(
     accountId: string,
     provider: AuthProvider,
   ): Promise<AccountRuntimeResult<KineoAccountSession>>;
 }>;
 
-class RuntimeLogoutCoordinator implements LogoutCoordinator {
+class RuntimeLogoutOperations implements LogoutOperations {
   private session?: KineoAccountSession;
 
   constructor(
     private readonly local: OpenedKineoLocalRuntime,
-    private readonly installationId: string,
-    private readonly functions?: SupabaseFunctionsPort,
+    private readonly identity: InstallationIdentity,
+    private readonly vault: SecureRefreshTokenVault,
+    private readonly gateway: SupabaseAuthGateway | DevelopmentAuthGateway,
+    private readonly remote?: SupabaseLogoutRecovery,
   ) {}
 
   attach(session: KineoAccountSession): void {
     this.session = session;
-  }
-
-  async hasPendingMutations(): Promise<AuthResult<boolean>> {
-    const result = await this.session?.outbox.pendingMutations();
-    return result === undefined
-      ? { ok: true, value: false }
-      : syncToAuth(result, (mutations) => mutations.length > 0);
   }
 
   async flushPendingMutations(): Promise<AuthResult<void>> {
@@ -87,43 +88,50 @@ class RuntimeLogoutCoordinator implements LogoutCoordinator {
     if (session === undefined) return { ok: true, value: undefined };
     const pending = await session.outbox.pendingMutations();
     if (!pending.ok) return syncToAuth(pending);
+    if (pending.value.length === 0) return { ok: true, value: undefined };
     const synchronized = await session.sync.synchronize(pending.value);
     return syncToAuth(synchronized, () => undefined);
   }
 
-  async discardPendingMutations(): Promise<AuthResult<void>> {
-    const result = await this.session?.outbox.discardPendingMutations();
-    return result === undefined
-      ? { ok: true, value: undefined }
-      : syncToAuth(result);
+  async capture(): ReturnType<LogoutOperations['capture']> {
+    if (this.gateway instanceof SupabaseAuthGateway) await this.gateway.suspendForLogout();
+    const installation = await this.identity.getOrCreate();
+    if (!installation.ok) return { ok: false, error: { code: 'secureStorageUnavailable' } };
+    const credential = await this.vault.load();
+    if (!credential.ok) return credential;
+    return credential.value === undefined
+      ? { ok: false, error: { code: 'sessionExpired' } }
+      : { ok: true, value: { installationId: installation.value, credential: credential.value } };
   }
 
-  async revokeInstallation(): Promise<AuthResult<void>> {
-    if (this.functions === undefined) return { ok: true, value: undefined };
-    try {
-      const result = await this.functions.invoke('revoke-installation', {
-        body: { installationId: this.installationId },
-      });
-      return result.error === null
-        ? { ok: true, value: undefined }
-        : { ok: false, error: { code: 'unexpected' } };
-    } catch {
-      return { ok: false, error: { code: 'offline' } };
-    }
-  }
+  revokeInstallation: LogoutOperations['revokeInstallation'] = (intent, saveCredential) =>
+    this.remote?.revokeInstallation(intent, saveCredential) ?? Promise.resolve({ ok: true, value: undefined });
+
+  logoutSession: LogoutOperations['logoutSession'] = (intent, saveCredential) =>
+    this.remote?.logoutSession(intent, saveCredential) ?? Promise.resolve({ ok: true, value: undefined });
 
   async wipeLocalAccount(): Promise<AuthResult<void>> {
+    const cancelled = await expoReminderScheduler.cancelAll();
+    if (!cancelled.ok) return { ok: false, error: { code: 'unexpected' } };
     const wiped = await this.local.store.deleteAllData();
-    return wiped.ok
-      ? { ok: true, value: undefined }
-      : { ok: false, error: { code: 'unexpected' } };
+    if (!wiped.ok) return { ok: false, error: { code: 'unexpected' } };
+    const cleared = await this.vault.clear();
+    if (cleared.ok) this.session = undefined;
+    return cleared;
+  }
+
+  async rotateInstallation(previousInstallationId: string): Promise<AuthResult<void>> {
+    const rotated = await this.identity.rotateAfterLogout(previousInstallationId);
+    return rotated.ok ? { ok: true, value: undefined }
+      : { ok: false, error: { code: 'secureStorageUnavailable' } };
   }
 }
 
 export async function createKineoAccountRuntime(
   local: OpenedKineoLocalRuntime,
 ): Promise<AccountRuntimeResult<KineoAccountRuntime>> {
-  const installation = await new InstallationIdentity().getOrCreate();
+  const installationIdentity = new InstallationIdentity();
+  const installation = await installationIdentity.getOrCreate();
   if (!installation.ok) {
     return { ok: false, error: { code: 'localPersistence' } };
   }
@@ -136,6 +144,7 @@ export async function createKineoAccountRuntime(
   }
   const client = configured.ok ? configured.value : undefined;
   const vault = new SecureRefreshTokenVault();
+  const logoutStore = new SecureLogoutResumeStore();
   const identity = new DevelopmentIdentityProvider();
   const gateway = development
     ? new DevelopmentAuthGateway(vault, Date.now)
@@ -160,19 +169,48 @@ export async function createKineoAccountRuntime(
     return { ok: false, error: { code: 'configurationMissing' } };
   }
   const functions = gateway instanceof SupabaseAuthGateway && dataClient?.ok
-    ? new AuthenticatedFunctions(dataClient.value.functions, () => gateway.validAccessToken())
+    ? new AuthenticatedFunctions(dataClient.value.functions, async () => {
+        const pending = await logoutStore.load();
+        if (!pending.ok) return pending;
+        return pending.value === undefined ? gateway.validAccessToken()
+          : { ok: false, error: { code: 'sessionExpired' } };
+      })
     : undefined;
-  const coordinator = new RuntimeLogoutCoordinator(local, installation.value, functions);
-  const auth = new KineoAuthModule(
-    gateway,
-    development ? identity : new AppleIdentityTokenProvider(),
-    development
+  const remoteLogout = dataClient?.ok ? new SupabaseLogoutRecovery(() => {
+    const isolated = createConfiguredSupabaseClient();
+    return isolated.ok ? isolated.value.auth as unknown as SupabaseAuthPort : undefined;
+  }, dataClient.value.functions, Date.now) : undefined;
+  const logoutOperations = new RuntimeLogoutOperations(local, installationIdentity, vault, gateway, remoteLogout);
+  const logoutWorkflow = new KineoLogoutWorkflow(logoutStore, logoutOperations);
+  const resumePendingLogout = async (): Promise<AuthResult<LogoutRecoveryState>> => {
+    const result = await logoutWorkflow.resumePendingLogout();
+    if (result.ok && result.value.kind === 'complete' && gateway instanceof SupabaseAuthGateway) {
+      gateway.resumeAfterLogout();
+    }
+    return result;
+  };
+  const appleIdentity: IdentityTokenProvider = development ? identity : new AppleIdentityTokenProvider();
+  const googleIdentity: IdentityTokenProvider = development
       ? identity
       : new GoogleIdentityTokenProvider({
           webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
           iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-        }),
-    coordinator,
+        });
+  const auth = new KineoAuthModule(
+    gateway,
+    appleIdentity,
+    googleIdentity,
+    {
+      resumePendingLogout,
+      async logout(policy) {
+        const result = await logoutWorkflow.logout(policy);
+        if (gateway instanceof SupabaseAuthGateway) {
+          const marker = await logoutStore.load();
+          if (marker.ok && marker.value === undefined) gateway.resumeAfterLogout();
+        }
+        return result;
+      },
+    },
   );
   const resumeStore = new SecureDeletionResumeStore();
   const wipePrivateDevice = async (): Promise<PrivacyResult<void>> => {
@@ -190,6 +228,22 @@ export async function createKineoAccountRuntime(
       auth,
       exportSharer: new ExpoPersonalDataExportSharer(),
       usesDevelopmentServices: development,
+      resumePendingLogout,
+      async reauthenticatePendingLogout(method) {
+        const recovered = await logoutWorkflow.reauthenticatePendingLogout(async (intent) => {
+          if (remoteLogout === undefined) return { ok: false, error: { code: 'unexpected' } };
+          if (method.kind === 'email') return remoteLogout.reauthenticate(intent, method);
+          const acquired = await (method.kind === 'apple' ? appleIdentity : googleIdentity).acquireIdentityToken();
+          return acquired.ok ? remoteLogout.reauthenticate(intent, {
+            kind: 'identityToken', provider: method.kind,
+            token: acquired.value.token, nonce: acquired.value.nonce,
+          }) : acquired;
+        });
+        if (recovered.ok && recovered.value.kind === 'complete' && gateway instanceof SupabaseAuthGateway) {
+          gateway.resumeAfterLogout();
+        }
+        return recovered;
+      },
       resumePendingDeletion() {
         const transport = development
           ? { deletionStatus: async (credential: { resumeToken: string }): Promise<PrivacyResult<DeletionStatus>> =>
@@ -201,6 +255,12 @@ export async function createKineoAccountRuntime(
         return resumeStoredDeletion(transport, resumeStore, wipePrivateDevice);
       },
       async connect(accountId, provider) {
+        const logout = await resumePendingLogout();
+        if (!logout.ok || logout.value.kind === 'pending') {
+          return { ok: false, error: { code: 'localPersistence' } };
+        }
+        const installation = await installationIdentity.getOrCreate();
+        if (!installation.ok) return { ok: false, error: { code: 'localPersistence' } };
         const repository = local.syncRepository(
           accountId,
           installation.value,
@@ -252,7 +312,7 @@ export async function createKineoAccountRuntime(
           randomUUID,
           Date.now,
         );
-        coordinator.attach(session);
+        logoutOperations.attach(session);
         return { ok: true, value: session };
       },
     },

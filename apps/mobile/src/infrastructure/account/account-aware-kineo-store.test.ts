@@ -24,6 +24,7 @@ const successfulWriter: AccountLocalWriter = {
 class FakeRepository implements SyncLocalRepository, SyncOutbox {
   async isHydrated() { return { ok: true as const, value: true }; }
   pending: PendingMutation[] = [];
+  synchronizedEntity: unknown = { ownerInstallationId: installationId };
   async loadAccount() {
     return {
       ok: true as const,
@@ -42,7 +43,7 @@ class FakeRepository implements SyncLocalRepository, SyncOutbox {
     return { ok: true as const, value: this.pending.length };
   }
   async loadSynchronizedEntity() {
-    return { ok: true as const, value: undefined };
+    return { ok: true as const, value: this.synchronizedEntity };
   }
   async enqueue(mutation: PendingMutation) {
     this.pending.push(mutation);
@@ -85,6 +86,56 @@ class FakeSync implements SyncModule {
 }
 
 describe('AccountAwareKineoStore', () => {
+  it('does not change account-wide preferences locally while offline', async () => {
+    const sync = new FakeSync();
+    sync.result = 'offline';
+    let writes = 0;
+    const store = new AccountAwareKineoStore({} as KineoPersistence,
+      accountId, installationId, sync, new FakeRepository(), () => mutationId,
+      () => nowMilliseconds, false, {
+        async commit() { writes += 1; return { ok: true, value: undefined }; },
+      });
+    expect(await store.saveProfileState({ profile: { adultAcknowledged: true,
+      weeklyGoalDays: 3, telemetryChoice: 'notOffered', createdAtMilliseconds: nowMilliseconds,
+      updatedAtMilliseconds: nowMilliseconds } })).toEqual({ ok: false, error: { code: 'writeFailed' } });
+    expect(writes).toBe(0);
+  });
+
+  it('cannot queue offline playback for another installation’s active routine', async () => {
+    const sync = new FakeSync();
+    sync.result = 'offline';
+    const repository = new FakeRepository();
+    repository.synchronizedEntity = { ownerInstallationId: 'another-installation' };
+    let writes = 0;
+    const store = new AccountAwareKineoStore({} as KineoPersistence,
+      accountId, installationId, sync, repository, () => mutationId,
+      () => nowMilliseconds, false, {
+        async commit() { writes += 1; return { ok: true, value: undefined }; },
+      });
+    expect(await store.recordRoutineEvent({ routineSessionId: 'routine' } as never,
+      { status: 'inProgress', currentStepIndex: 0, stepElapsedMilliseconds: 0,
+        updatedAtMilliseconds: nowMilliseconds })).toEqual({ ok: false, error: { code: 'conflictingWrite' } });
+    expect(writes).toBe(0);
+  });
+
+  it('retains remote history but never resumes another installation’s active playback', async () => {
+    const repository = new FakeRepository();
+    repository.synchronizedEntity = { ownerInstallationId: 'another-installation' };
+    let status = 'inProgress';
+    const base = {
+      async loadNonterminalRoutine() { return { ok: true, value: { id: 'routine', status } }; },
+      async loadRoutineSession() { return { ok: true, value: { id: 'routine', status } }; },
+    } as unknown as KineoPersistence;
+    const store = new AccountAwareKineoStore(base, accountId, installationId,
+      new FakeSync(), repository, () => mutationId, () => nowMilliseconds, false, successfulWriter);
+    expect(await store.loadNonterminalRoutine()).toEqual({ ok: true, value: undefined });
+    expect(await store.loadRoutineSession('routine' as never))
+      .toEqual({ ok: false, error: { code: 'conflictingWrite' } });
+    status = 'stopped';
+    expect(await store.loadRoutineSession('routine' as never))
+      .toEqual({ ok: true, value: { id: 'routine', status: 'stopped' } });
+  });
+
   it.each(['installationRevoked', 'authenticationRequired', 'localPersistence', 'conflict'] as const)(
     'does not disguise %s as a successful offline write', async (errorCode) => {
       const sync = new FakeSync();

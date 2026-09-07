@@ -11,9 +11,10 @@ export type DeletionResumeCredential = Readonly<{
   jobId: string;
   resumeToken: string;
 }>;
+export type RetainedAttentionState = Readonly<{ area: 'neck' | 'upperMidBack' | 'lowerBack'; updatedAtMilliseconds: number }>;
 
 export interface AccountPrivacyTransport {
-  resetHistory(): Promise<PrivacyResult<Readonly<{ historyEpoch: number }>>>;
+  resetHistory(): Promise<PrivacyResult<Readonly<{ historyEpoch: number; attentionStates?: readonly RetainedAttentionState[] }>>>;
   requestExport(): Promise<PrivacyResult<ExportStatus>>;
   downloadExport(
     status: Extract<ExportStatus, { kind: 'ready' }>,
@@ -32,7 +33,7 @@ export interface DeletionResumeStore {
 }
 
 export interface LocalPrivacyStore {
-  resetHistory(historyEpoch: number): Promise<PrivacyResult<void>>;
+  resetHistory(historyEpoch: number, attentionStates: readonly RetainedAttentionState[]): Promise<PrivacyResult<void>>;
   wipeAccount(): Promise<PrivacyResult<void>>;
 }
 
@@ -50,7 +51,7 @@ export class KineoAccountPrivacyModule implements AccountPrivacyModule {
     if (!this.grantIsCurrent(grant)) return reauthenticationRequired();
     const reset = await this.transport.resetHistory();
     if (!reset.ok) return reset;
-    return this.localStore.resetHistory(reset.value.historyEpoch);
+    return this.localStore.resetHistory(reset.value.historyEpoch, reset.value.attentionStates ?? []);
   }
 
   requestExport(

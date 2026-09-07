@@ -15,11 +15,11 @@ const exportJsonIndentSpaces = 2;
 type TemporaryFile = Readonly<{
   uri: string;
   exists(): boolean;
-  write(content: string): void;
+  write(content: string): void | Promise<void>;
   remove(): void;
 }>;
 
-type ExportFileFactory = () => TemporaryFile;
+type ExportFileFactory = () => TemporaryFile | Promise<TemporaryFile>;
 type ExportSharePort = Readonly<{
   isAvailable(): Promise<boolean>;
   share(uri: string): Promise<void>;
@@ -36,9 +36,9 @@ export class ExpoPersonalDataExportSharer implements PersonalDataExportSharer {
     let result: PrivacyResult<void>;
     try {
       if (!(await this.sharing.isAvailable())) return workflowFailure();
-      file = this.createFile();
+      file = await this.createFile();
       if (file.exists()) file.remove();
-      file.write(JSON.stringify(data, undefined, exportJsonIndentSpaces));
+      await file.write(JSON.stringify(data, undefined, exportJsonIndentSpaces));
       await this.sharing.share(file.uri);
       result = { ok: true, value: undefined };
     } catch {
@@ -55,14 +55,37 @@ export class ExpoPersonalDataExportSharer implements PersonalDataExportSharer {
     }
     return result;
   }
+
+  async cleanup(): Promise<PrivacyResult<void>> {
+    try {
+      const file = await this.createFile();
+      if (file.exists()) file.remove();
+      return { ok: true, value: undefined };
+    } catch {
+      return workflowFailure();
+    }
+  }
 }
 
-function createExpoFile(): TemporaryFile {
-  const file = new File(Paths.cache, exportFileName);
+async function createExpoFile(): Promise<TemporaryFile> {
+  const { prepareProtectedStorageDirectory, protectDatabaseFiles } = await import('../persistence/protected-storage');
+  const directory = await prepareProtectedStorageDirectory();
+  if (!directory.ok) throw new Error('Private export storage unavailable.');
+  // Remove the previous development implementation's unprotected cache artifact.
+  const legacyFile = new File(Paths.cache, exportFileName);
+  if (legacyFile.exists) legacyFile.delete();
+  const file = new File(directory.value, exportFileName);
   return {
     uri: file.uri,
     exists: () => file.exists,
-    write: (content) => file.write(content),
+    write: async (content) => {
+      file.create();
+      // The existing native operation protects a private file plus any SQLite
+      // sidecars. For an export only the file exists; no new native API is needed.
+      const protection = await protectDatabaseFiles(file.uri);
+      if (!protection.ok) throw new Error('Private export protection unavailable.');
+      file.write(content);
+    },
     remove: () => file.delete(),
   };
 }

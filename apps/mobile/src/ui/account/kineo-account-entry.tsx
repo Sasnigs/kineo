@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { KineoAccountSession } from '../../application/account/kineo-account-session';
+import type { LogoutRecoveryState } from '../../application/account/kineo-logout-workflow';
 import type { KineoProductServing } from '../../application/kineo-product-service';
 import { minimumPasswordCharacterCount } from '../../core/account/account-domain';
 import type {
@@ -29,6 +30,7 @@ import type { BootstrapState } from '../../core/account/sync-module';
 import type { KineoAccountRuntime } from '../../infrastructure/account/kineo-account-runtime';
 import { colors, layout, radius, spacing, typography } from '../theme/tokens';
 import { KineoProductApp } from '../product/kineo-product-app';
+import { PrototypeLegalDocuments } from './prototype-legal-documents';
 
 type EntryState =
   | Readonly<{ kind: 'loading'; message: string }>
@@ -38,6 +40,7 @@ type EntryState =
   | Readonly<{ kind: 'authentication' }>
   | Readonly<{ kind: 'verification'; email: string }>
   | Readonly<{ kind: 'passwordRecovery'; recoveryUrl: string }>
+  | Readonly<{ kind: 'logoutRecovery'; recovery: Extract<LogoutRecoveryState, { kind: 'pending' }> }>
   | Readonly<{
       kind: 'legal';
       session: KineoAccountSession;
@@ -213,6 +216,20 @@ export function KineoAccountEntry({
           retry: onStoreRestartRequired });
         return;
       }
+      const logout = await runtime.resumePendingLogout();
+      if (!active) return;
+      if (logout.ok && logout.value.kind === 'complete') {
+        onStoreRestartRequired();
+        return;
+      }
+      if (!logout.ok || logout.value.kind === 'pending') {
+        setState(logout.ok && logout.value.kind === 'pending'
+          ? { kind: 'logoutRecovery', recovery: logout.value }
+          : { kind: 'error',
+          message: logoutRecoveryMessage(logout.ok ? logout.value : undefined),
+          retry: onStoreRestartRequired });
+        return;
+      }
       if (incomingUrl !== null && isPasswordRecoveryUrl(incomingUrl)) {
         setState({ kind: 'passwordRecovery', recoveryUrl: incomingUrl });
         return;
@@ -350,11 +367,28 @@ export function KineoAccountEntry({
               },
             ),
             logout: async (discardPendingChanges) => {
+              setState({ kind: 'loading', message: 'Signing out securely…' });
               const result = await runtime.auth.logout(
                 discardPendingChanges
                   ? 'discardPendingChanges'
                   : 'waitForSync',
               );
+              if (!result.ok) {
+                const recovery = await runtime.resumePendingLogout();
+                if (!recovery.ok || recovery.value.kind === 'pending') {
+                  setState(recovery.ok && recovery.value.kind === 'pending'
+                    ? { kind: 'logoutRecovery', recovery: recovery.value }
+                    : { kind: 'error',
+                    message: logoutRecoveryMessage(recovery.ok ? recovery.value : undefined),
+                    retry: onStoreRestartRequired });
+                } else if (recovery.value.kind === 'complete') {
+                  onStoreRestartRequired();
+                } else {
+                  // A failed pre-logout sync has not created recovery intent or
+                  // removed data. Keep the account available for an explicit retry.
+                  setState(state);
+                }
+              }
               return result.ok
                 ? { ok: true, value: undefined }
                 : { ok: false, error: { code: 'accountUnavailable' } };
@@ -381,6 +415,45 @@ export function KineoAccountEntry({
       <AccountShell eyebrow="LET’S TRY THAT AGAIN" title="Your data stayed safe.">
         <Text style={styles.body}>{state.message}</Text>
         <ActionButton label="Retry" onPress={state.retry} />
+      </AccountShell>
+    );
+  }
+
+  if (state.kind === 'logoutRecovery') {
+    const canSignIn = state.recovery.canReauthenticate === true && state.recovery.error.code === 'sessionExpired';
+    const recover = async (method: Parameters<KineoAccountRuntime['reauthenticatePendingLogout']>[0]) => {
+      setBusy(true);
+      setNotice(undefined);
+      const recovered = await runtime.reauthenticatePendingLogout(method);
+      setBusy(false);
+      setPassword('');
+      if (!recovered.ok) {
+        setNotice(recovered.error.code === 'reauthenticationRequired'
+          ? 'Sign in with the same account that started signing out. No account data has been opened.'
+          : authErrorMessage(recovered.error));
+      } else if (recovered.value.kind === 'pending') {
+        setState({ kind: 'logoutRecovery', recovery: recovered.value });
+      } else {
+        onStoreRestartRequired();
+      }
+    };
+    return (
+      <AccountShell eyebrow="SECURE SIGN-OUT" title={canSignIn ? 'Sign in to finish signing out' : 'Finish signing out'}>
+        <Text style={styles.body}>{logoutRecoveryMessage(state.recovery)}</Text>
+        {canSignIn ? <>
+          <TextInput accessibilityLabel="Recovery email" placeholder="Email" autoCapitalize="none"
+            autoComplete="email" keyboardType="email-address" style={styles.input} value={email} onChangeText={setEmail} />
+          <TextInput accessibilityLabel="Recovery password" placeholder="Password" secureTextEntry
+            autoComplete="current-password" style={styles.input} value={password} onChangeText={setPassword} />
+          <ActionButton label="Use email to finish signing out" disabled={busy}
+            onPress={() => void recover({ kind: 'email', credentials: { email, password } })} />
+          <SecondaryButton label="Use Apple to finish signing out" disabled={busy}
+            onPress={() => void recover({ kind: 'apple' })} />
+          <SecondaryButton label="Use Google to finish signing out" disabled={busy}
+            onPress={() => void recover({ kind: 'google' })} />
+        </> : null}
+        <SecondaryButton label="Retry" disabled={busy} onPress={onStoreRestartRequired} />
+        {notice === undefined ? null : <Notice message={notice} />}
       </AccountShell>
     );
   }
@@ -526,6 +599,7 @@ export function KineoAccountEntry({
         <Text style={styles.body}>
           Kineo stores your wellness check-ins and routine history so they can follow your account across devices.
         </Text>
+        <PrototypeLegalDocuments />
         <Pressable
           accessibilityRole="checkbox"
           accessibilityState={{ checked: legalAccepted }}
@@ -778,6 +852,17 @@ function authErrorMessage(error: AuthError): string {
     default:
       return accountCopy.genericError;
   }
+}
+
+function logoutRecoveryMessage(state: LogoutRecoveryState | undefined): string {
+  if (state?.kind === 'pending' && state.error.code === 'sessionExpired') {
+    return state.canReauthenticate
+      ? 'The saved sign-out credential expired. Verify the same account to revoke this installation and finish signing out. This will not open your history or sign you back into Kineo.'
+      : 'This older sign-out record has no verified account identity. Kineo cannot safely replace its credential; private history remains unavailable.';
+  }
+  return state?.kind === 'pending' && state.localWiped
+    ? 'Signed out on this device. Connect to the internet to finish signing out securely.'
+    : 'Signing out is not finished. Your private data is locked while Kineo retries secure cleanup.';
 }
 
 async function withReauthentication(

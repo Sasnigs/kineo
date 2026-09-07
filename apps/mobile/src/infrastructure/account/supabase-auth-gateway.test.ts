@@ -109,6 +109,43 @@ class FakeAuth implements SupabaseAuthPort {
 }
 
 describe('SupabaseAuthGateway', () => {
+  it('rejects a late login callback from before logout even after a fresh login is allowed', async () => {
+    const auth = new FakeAuth();
+    let finishSignIn: ((response: typeof auth.response) => void) | undefined;
+    auth.signInWithPassword = () => new Promise((resolve) => { finishSignIn = resolve; });
+    const vault = new FakeVault();
+    const gateway = new SupabaseAuthGateway(auth, vault, () => 'grant-id', () => nowMilliseconds);
+    const signingIn = gateway.signInWithEmail({ email: 'person@example.com', password: 'correct horse battery staple' });
+    await gateway.suspendForLogout();
+    gateway.resumeAfterLogout();
+    if (finishSignIn === undefined) throw new Error('Sign-in did not start.');
+    finishSignIn(auth.response);
+    expect(await signingIn).toEqual({ ok: false, error: { code: 'sessionExpired' } });
+    expect(vault.token).toBeUndefined();
+  });
+
+  it('drains rotation before logout capture, blocks refresh while suspended, then permits a new login', async () => {
+    const auth = new FakeAuth();
+    const vault = new FakeVault();
+    vault.token = 'original-refresh';
+    let finishRefresh: ((response: typeof auth.response) => void) | undefined;
+    auth.refreshSession = () => new Promise((resolve) => { finishRefresh = resolve; });
+    const gateway = new SupabaseAuthGateway(auth, vault, () => 'grant-id', () => nowMilliseconds);
+    const restoring = gateway.restoreSession();
+    await Promise.resolve();
+    const suspending = gateway.suspendForLogout();
+    if (finishRefresh === undefined) throw new Error('Refresh did not start.');
+    finishRefresh(auth.response);
+    await restoring;
+    await suspending;
+    expect(vault.token).toBe('rotated-refresh');
+    expect(await gateway.validAccessToken()).toEqual({ ok: false, error: { code: 'sessionExpired' } });
+    await vault.clear();
+    gateway.resumeAfterLogout();
+    expect(await gateway.signInWithEmail({ email: 'person@example.com', password: 'correct horse battery staple' }))
+      .toMatchObject({ ok: true, value: { kind: 'authenticated' } });
+  });
+
   it('restores only cached identity when refresh is offline', async () => {
     const auth = new FakeAuth();
     auth.response = { data: { session: null, user: null }, error: { name: 'AuthRetryableFetchError' } };

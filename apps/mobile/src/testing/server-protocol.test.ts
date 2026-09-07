@@ -1,25 +1,32 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { selectAreaLevel } from '../core/selection/area-level-rule';
 import {
-  activeUnlockOutcomeCount,
-  createAuthoritativePlan,
   validateSyncRequest,
 } from '../../../../supabase/functions/_shared/protocol';
 
 const installationId = '20000000-0000-4000-8000-000000000001';
 const mutationId = '30000000-0000-4000-8000-000000000001';
-const checkInId = '40000000-0000-4000-8000-000000000001';
-const entryId = '50000000-0000-4000-8000-000000000001';
-const decisionId = '60000000-0000-4000-8000-000000000001';
+const legalCommand = { kind: 'acceptLegal', acceptance: {
+  documentKind: 'privacyPolicy', documentVersion: 'test', locale: 'en-US', acceptedAtMilliseconds: 1,
+} };
 
 describe('server sync protocol', () => {
-  it('rejects client-supplied server approval fields', () => {
+  it('accepts skipping optional feedback without inventing responses', () => {
+    expect(validateSyncRequest({ installationId, mutations: [{
+      mutationId, installationId, historyEpoch: 1, createdAtMilliseconds: 1,
+      command: { kind: 'submitFeedback', submission: {
+        id: mutationId, routineSessionId: mutationId, submittedAtMilliseconds: 1,
+        dayContext: { localDay: '2026-09-07', timeZoneId: 'UTC', calendarId: 'gregorian' },
+        responses: [],
+      } },
+    }] })).toBeDefined();
+  });
+  it.each(['authoritativePlan', 'authorityVersion'])('rejects client-supplied server field %s', (field) => {
     expect(validateSyncRequest({
       installationId,
       mutations: [{
         mutationId, installationId, historyEpoch: 1, createdAtMilliseconds: 1,
-        command: { kind: 'resetHistory', authoritativePlan: { selectedLevel: 'active' } },
+        command: { ...legalCommand, [field]: 1 },
       }],
     })).toBeUndefined();
   });
@@ -30,7 +37,7 @@ describe('server sync protocol', () => {
       installationId,
       historyEpoch: 1,
       createdAtMilliseconds,
-      command: { kind: 'resetHistory' },
+      command: legalCommand,
     });
     expect(validateSyncRequest({
       installationId,
@@ -46,6 +53,12 @@ describe('server sync protocol', () => {
         installationId: '20000000-0000-4000-8000-000000000099',
       }],
     })).toBeUndefined();
+  });
+
+  it('does not expose reauthentication-only history reset through ordinary sync', () => {
+    expect(validateSyncRequest({ installationId, mutations: [{
+      mutationId, installationId, historyEpoch: 1, createdAtMilliseconds: 1, command: { kind: 'resetHistory' },
+    }] })).toBeUndefined();
   });
 
   it('rejects malformed commands before they reach PostgreSQL', () => {
@@ -65,75 +78,4 @@ describe('server sync protocol', () => {
     })).toBeUndefined();
   });
 
-  it('keeps server level selection in parity with the mobile domain', () => {
-    const scenarios = [
-      { changeReport: 'worse' as const, movementComfort: 'good' as const, unlocked: true },
-      { changeReport: 'better' as const, movementComfort: 'limited' as const, unlocked: true },
-      { changeReport: 'better' as const, movementComfort: 'good' as const, unlocked: false },
-      { changeReport: 'better' as const, movementComfort: 'good' as const, unlocked: true },
-    ];
-    for (const scenario of scenarios) {
-      const plan = createAuthoritativePlan({
-        kind: 'submitCheckIn',
-        checkIn: {
-          id: checkInId,
-          primaryArea: 'neck',
-          entries: [{
-            id: entryId,
-            area: 'neck',
-            changeReport: scenario.changeReport,
-            movementComfort: scenario.movementComfort,
-            ...(scenario.changeReport === 'worse' ||
-              scenario.movementComfort === 'limited'
-              ? { conditionalSafetyAnswer: 'no' }
-              : {}),
-          }],
-        },
-        decisionId,
-      }, {
-        neck: scenario.unlocked ? activeUnlockOutcomeCount : 0,
-      });
-      expect(plan?.selectedLevel).toBe(selectAreaLevel({
-        changeReport: scenario.changeReport,
-        movementComfort: scenario.movementComfort,
-        activeUnlocked: scenario.unlocked,
-      }));
-    }
-  });
-
-  it('does not create a plan when a safety answer requires attention', () => {
-    expect(createAuthoritativePlan({
-      kind: 'submitCheckIn',
-      checkIn: {
-        id: checkInId,
-        primaryArea: 'neck',
-        entries: [{
-          id: entryId,
-          area: 'neck',
-          changeReport: 'worse',
-          movementComfort: 'limited',
-          conditionalSafetyAnswer: 'notSure',
-        }],
-      },
-      decisionId,
-    }, {})).toBeUndefined();
-  });
-
-  it('does not create a plan for an attention correction', () => {
-    expect(createAuthoritativePlan({
-      kind: 'submitCheckIn',
-      suppressPlan: true,
-      checkIn: {
-        id: checkInId,
-        primaryArea: 'neck',
-        entries: [{
-          id: entryId,
-          area: 'neck',
-          changeReport: 'similar',
-          movementComfort: 'okay',
-        }],
-      },
-      decisionId,
-    }, {})).toBeUndefined();
-  });
 });

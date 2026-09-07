@@ -31,6 +31,21 @@ export class InstallationIdentity {
     private readonly nextIdentifier: () => string = Crypto.randomUUID,
   ) {}
 
+  async rotateAfterLogout(previousIdentifier: string): Promise<SyncResult<string>> {
+    const current = await this.getOrCreate();
+    if (!current.ok || current.value !== previousIdentifier) return current;
+    try {
+      const replacement = this.nextIdentifier();
+      if (!uuidShape.test(replacement) || replacement === previousIdentifier) {
+        return { ok: false, error: { code: 'localPersistence' } };
+      }
+      await this.store.setItemAsync(installationIdentifierKey, replacement, secureStoreOptions);
+      return { ok: true, value: replacement };
+    } catch {
+      return { ok: false, error: { code: 'localPersistence' } };
+    }
+  }
+
   async getOrCreate(): Promise<SyncResult<string>> {
     try {
       const stored = await this.store.getItemAsync(

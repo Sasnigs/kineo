@@ -36,6 +36,7 @@ import {
   createPauseTodayEvent,
   createRoutineEventMutation,
   createRoutineSession,
+  isValidRoutineTransition,
   type FeedbackSubmission,
   type PauseTodayEvent,
   type RoutineCheckpoint,
@@ -47,6 +48,7 @@ const singletonAccountStateId = 1;
 const initialAttemptCount = 0;
 const falseInteger = 0;
 const trueInteger = 1;
+const firstRoutineEventSequence = 1;
 
 type AccountRow = Readonly<{
   account_id: string;
@@ -296,17 +298,27 @@ implements SyncLocalRepository, SyncOutbox {
     }
   }
 
-  async resetForHistoryEpoch(historyEpoch: number): Promise<SyncResult<void>> {
+  async resetForHistoryEpoch(historyEpoch: number, attentionStates: readonly Readonly<{ area: string; updatedAtMilliseconds: number }>[] = []): Promise<SyncResult<void>> {
     if (!Number.isSafeInteger(historyEpoch) || historyEpoch <= 0) {
       return localFailure();
     }
     try {
       await this.database.withExclusiveTransactionAsync(async (transaction) => {
+        if (attentionStates.some((state) => !['neck', 'upperMidBack', 'lowerBack'].includes(state.area) ||
+          !Number.isSafeInteger(state.updatedAtMilliseconds) || state.updatedAtMilliseconds <= 0)) {
+          throw new Error('Invalid retained attention state.');
+        }
         await deleteHistory(transaction);
         await transaction.runAsync(
           'DELETE FROM synchronized_entities WHERE account_id = ?',
           [this.accountId],
         );
+        for (const state of attentionStates) {
+          await transaction.runAsync(
+            'INSERT INTO attention_states(area, updated_at_ms) VALUES (?, ?)',
+            [state.area, state.updatedAtMilliseconds],
+          );
+        }
         await transaction.runAsync(
           'DELETE FROM sync_outbox WHERE account_id = ?',
           [this.accountId],
@@ -379,6 +391,15 @@ implements SyncLocalRepository, SyncOutbox {
         ) {
           throw new Error('Local account binding does not match.');
         }
+        if (cursor !== undefined && Number.isSafeInteger(Number(cursor))) {
+          const reset = await transaction.getFirstAsync<{ cursor: string }>(
+            `SELECT cursor FROM synchronized_entities WHERE account_id = ? AND entity_kind = 'history' LIMIT 1`,
+            [this.accountId],
+          );
+          if (reset !== null && Number.isSafeInteger(Number(reset.cursor)) && Number(cursor) < Number(reset.cursor)) {
+            throw new Error('Sync cursor predates the active history epoch.');
+          }
+        }
         if (replaceLegal) {
           await transaction.runAsync(
             'DELETE FROM local_legal_acceptances WHERE account_id = ?',
@@ -403,8 +424,14 @@ implements SyncLocalRepository, SyncOutbox {
           await applyChange(
             transaction,
             this.accountId,
-            this.installationId,
             change,
+          );
+        }
+        if (changes.some((change) => change.operation === 'reset')) {
+          await transaction.runAsync(
+            `UPDATE sync_outbox SET state = 'conflict', last_error_code = 'staleHistoryEpoch'
+             WHERE account_id = ? AND state = 'pending'`,
+            [this.accountId],
           );
         }
         await applyDispositions(transaction, dispositions, sentMutations);
@@ -447,7 +474,6 @@ implements SyncLocalRepository, SyncOutbox {
 async function applyChange(
   transaction: SqliteExecutor,
   accountId: string,
-  installationId: string,
   change: SyncChange,
 ): Promise<void> {
   if (change.operation === 'reset') {
@@ -455,6 +481,23 @@ async function applyChange(
     await transaction.runAsync(
       'DELETE FROM synchronized_entities WHERE account_id = ?',
       [accountId],
+    );
+    const payload = asRecord(change.payload);
+    const retained = payload?.attentionStates;
+    if (!Array.isArray(retained) || retained.some((state) => {
+      const value = asRecord(state);
+      return value === undefined || !['neck', 'upperMidBack', 'lowerBack'].includes(String(value.area)) ||
+        !Number.isSafeInteger(value.updatedAtMilliseconds) || Number(value.updatedAtMilliseconds) <= 0;
+    })) throw new Error('Invalid reset retention payload.');
+    for (const state of retained) {
+      const value = state as { area: string; updatedAtMilliseconds: number };
+      await transaction.runAsync('INSERT INTO attention_states(area, updated_at_ms) VALUES (?, ?)', [value.area, value.updatedAtMilliseconds]);
+    }
+    await transaction.runAsync(
+      `INSERT INTO synchronized_entities(account_id, entity_kind, entity_id, payload_json, cursor)
+       VALUES (?, 'history', ?, ?, ?)
+       ON CONFLICT(account_id, entity_kind, entity_id) DO UPDATE SET payload_json = excluded.payload_json, cursor = excluded.cursor`,
+      [accountId, change.entityId, JSON.stringify(change.payload), change.cursor],
     );
     return;
   }
@@ -469,7 +512,7 @@ async function applyChange(
   if (change.payload === undefined) {
     throw new Error('An upsert must have a payload.');
   }
-  await projectChange(transaction, installationId, change);
+  await projectChange(transaction, change);
   if (
     change.entityKind === 'legalAcceptance' &&
     isLegalAcceptance(change.payload)
@@ -520,11 +563,12 @@ async function applyDispositions(
         'DELETE FROM sync_outbox WHERE mutation_id = ?',
         [disposition.mutationId],
       );
-    } else if (disposition.kind === 'conflict') {
+    } else {
       await transaction.runAsync(
-        `UPDATE sync_outbox SET state = 'conflict', last_error_code = 'conflict'
+        `UPDATE sync_outbox SET state = 'conflict', last_error_code = ?
          WHERE mutation_id = ?`,
-        [disposition.mutationId],
+        [disposition.kind === 'conflict' ? 'conflict' : disposition.code,
+          disposition.mutationId],
       );
     }
   }
@@ -532,7 +576,6 @@ async function applyDispositions(
 
 async function projectChange(
   transaction: SqliteExecutor,
-  installationId: string,
   change: SyncChange,
 ): Promise<void> {
   switch (change.entityKind) {
@@ -549,9 +592,9 @@ async function projectChange(
     case 'selectionDecision':
       return projectSelectionDecision(transaction, change.payload);
     case 'routineSession':
-      return projectRoutineSession(transaction, installationId, change.payload);
+      return projectRoutineSession(transaction, change.payload);
     case 'routineEvent':
-      return projectRoutineEvent(transaction, installationId, change.payload);
+      return projectRoutineEvent(transaction, change.payload);
     case 'feedback':
       return projectFeedback(transaction, change.payload);
     case 'legalAcceptance':
@@ -641,12 +684,23 @@ async function projectCheckIn(
   if (!validated.ok) throw new Error('Invalid synchronized check-in.');
   const checkIn = validated.value;
   await transaction.runAsync(
+    `DELETE FROM check_in_entries WHERE check_in_id = ? AND EXISTS (
+      SELECT 1 FROM check_ins WHERE id = ? AND status = 'draft'
+    )`,
+    [checkIn.id, checkIn.id],
+  );
+  await transaction.runAsync(
     `INSERT INTO check_ins(
       id, status, purpose, primary_area, secondary_area, correction_area,
       source_triggering_entry_id, started_at_ms, completed_at_ms, local_day,
       time_zone_id, calendar_id
     ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO NOTHING`,
+    ON CONFLICT(id) DO UPDATE SET
+      status = excluded.status, purpose = excluded.purpose,
+      primary_area = excluded.primary_area, secondary_area = excluded.secondary_area,
+      correction_area = excluded.correction_area,
+      completed_at_ms = excluded.completed_at_ms
+    WHERE check_ins.status = 'draft'`,
     [
       checkIn.id,
       checkIn.status,
@@ -700,6 +754,11 @@ async function projectSafetyEvent(
     (record.statusAfter !== 'normal' && record.statusAfter !== 'attentionRequired')
   ) throw new Error('Invalid synchronized safety event.');
   const value = event.value;
+  const existing = await transaction.getFirstAsync<{ id: string }>(
+    'SELECT id FROM safety_events WHERE id = ?', [value.id],
+  );
+  // A duplicate immutable event is an acknowledgement, not a new transition.
+  if (existing !== null) return;
   await transaction.runAsync(
     `INSERT INTO safety_events(
       id, area, kind, source_check_in_entry_id, return_answer,
@@ -756,8 +815,11 @@ async function projectSelectionDecision(
   payload: unknown,
 ): Promise<void> {
   const record = asRecord(payload);
-  if (record === undefined || !Array.isArray(record.areaInputs)) return;
-  const decision = createSelectionDecision(payload as SelectionDecision);
+  const candidate = asRecord(record?.canonicalDecision) ?? record;
+  if (candidate === undefined || !Array.isArray(candidate.areaInputs)) {
+    throw new Error('Invalid synchronized selection decision.');
+  }
+  const decision = createSelectionDecision(candidate as SelectionDecision);
   if (!decision.ok) throw new Error('Invalid synchronized selection decision.');
   const value = decision.value;
   await transaction.runAsync(
@@ -854,9 +916,7 @@ async function projectSelectionDecision(
 
 async function projectRoutineSession(
   transaction: SqliteExecutor,
-  installationId: string,
   payload: unknown,
-  allowRemoteTerminal = true,
 ): Promise<void> {
   const record = asRecord(payload);
   const routineCandidate = asRecord(record?.routine);
@@ -865,15 +925,9 @@ async function projectRoutineSession(
   }
   const routine = createRoutineSession(routineCandidate as RoutineSession);
   if (!routine.ok) throw new Error('Invalid synchronized routine session.');
-  const isOwner = record.ownerInstallationId === installationId;
-  if (!isOwner && !(allowRemoteTerminal && isTerminalRoutine(routine.value.status))) {
-    await transaction.runAsync(
-      'DELETE FROM selection_decisions WHERE id = ?',
-      [routine.value.decisionId],
-    );
-    return;
-  }
   const value = routine.value;
+  // The feed includes creation followed by every ordered lifecycle event.
+  // Snapshot echoes must not rewind a newer, locally queued checkpoint.
   await transaction.runAsync(
     `INSERT INTO routine_sessions(
       id, decision_id, check_in_id, status, routine_snapshot_json,
@@ -881,13 +935,7 @@ async function projectRoutineSession(
       started_at_ms, updated_at_ms, ended_at_ms, local_day,
       time_zone_id, calendar_id
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      status = excluded.status,
-      current_step_index = excluded.current_step_index,
-      step_elapsed_ms = excluded.step_elapsed_ms,
-      started_at_ms = excluded.started_at_ms,
-      updated_at_ms = excluded.updated_at_ms,
-      ended_at_ms = excluded.ended_at_ms`,
+    ON CONFLICT(id) DO NOTHING`,
     [
       value.id,
       value.decisionId,
@@ -909,7 +957,6 @@ async function projectRoutineSession(
 
 async function projectRoutineEvent(
   transaction: SqliteExecutor,
-  installationId: string,
   payload: unknown,
 ): Promise<void> {
   const record = asRecord(payload);
@@ -925,57 +972,39 @@ async function projectRoutineEvent(
   };
   const mutation = createRoutineEventMutation(record as RoutineEvent, checkpoint);
   if (!mutation.ok) throw new Error('Invalid synchronized routine event.');
-  let localRoutine = await transaction.getFirstAsync<{ id: string }>(
-    'SELECT id FROM routine_sessions WHERE id = ?',
+  const localRoutine = await transaction.getFirstAsync<{
+    id: string; status: RoutineSession['status']; started_at_ms: number | null;
+  }>(
+    'SELECT id, status, started_at_ms FROM routine_sessions WHERE id = ?',
     [mutation.value.event.routineSessionId],
   );
-  if (localRoutine === null && isTerminalRoutine(checkpoint.status)) {
-    const remoteRoutine = await transaction.getFirstAsync<SynchronizedEntityRow>(
-      `SELECT payload_json FROM synchronized_entities
-       WHERE entity_kind = 'routineSession' AND entity_id = ?`,
-      [mutation.value.event.routineSessionId],
-    );
-    const remoteRecord = remoteRoutine?.payload_json === null || remoteRoutine === null
-      ? undefined
-      : asRecord(JSON.parse(remoteRoutine.payload_json));
-    const baseRoutine = asRecord(remoteRecord?.routine);
-    if (
-      remoteRecord !== undefined &&
-      baseRoutine !== undefined &&
-      typeof baseRoutine.decisionId === 'string'
-    ) {
-      const decisionMirror = await transaction.getFirstAsync<SynchronizedEntityRow>(
-        `SELECT payload_json FROM synchronized_entities
-         WHERE entity_kind = 'selectionDecision' AND entity_id = ?`,
-        [baseRoutine.decisionId],
-      );
-      if (decisionMirror !== null && decisionMirror.payload_json !== null) {
-        await projectSelectionDecision(transaction, JSON.parse(decisionMirror.payload_json));
-      }
-      await projectRoutineSession(transaction, installationId, {
-        ...remoteRecord,
-        routine: {
-          ...baseRoutine,
-          status: checkpoint.status,
-          currentStepIndex: checkpoint.currentStepIndex,
-          stepElapsedMilliseconds: checkpoint.stepElapsedMilliseconds,
-          updatedAtMilliseconds: checkpoint.updatedAtMilliseconds,
-          ...(typeof baseRoutine.startedAtMilliseconds === 'number'
-            ? { startedAtMilliseconds: baseRoutine.startedAtMilliseconds }
-            : { startedAtMilliseconds: mutation.value.event.occurredAtMilliseconds }),
-          ...(checkpoint.endedAtMilliseconds === undefined
-            ? {}
-            : { endedAtMilliseconds: checkpoint.endedAtMilliseconds }),
-        },
-      }, true);
-      localRoutine = await transaction.getFirstAsync<{ id: string }>(
-        'SELECT id FROM routine_sessions WHERE id = ?',
-        [mutation.value.event.routineSessionId],
-      );
-    }
-  }
-  if (localRoutine === null) return;
+  if (localRoutine === null) throw new Error('Synchronized routine event has no session.');
   const event = mutation.value.event;
+  const latest = await transaction.getFirstAsync<{ sequence_number: number | null }>(
+    'SELECT max(sequence_number) AS sequence_number FROM routine_events WHERE routine_session_id = ?',
+    [event.routineSessionId],
+  );
+  const latestSequence = latest?.sequence_number ?? 0;
+  if (event.sequenceNumber <= latestSequence) {
+    const existing = await transaction.getFirstAsync<{ id: string }>(
+      `SELECT id FROM routine_events WHERE id = ? AND routine_session_id = ?
+       AND sequence_number = ? AND kind = ? AND occurred_at_ms = ?
+       AND step_id IS ? AND module_id IS ? AND alternative_id IS ? AND local_reason_code IS ?
+       AND resulting_status = ? AND resulting_step_index = ? AND resulting_step_elapsed_ms = ?
+       AND resulting_updated_at_ms = ? AND resulting_ended_at_ms IS ?`,
+      [event.id, event.routineSessionId, event.sequenceNumber, event.kind,
+        event.occurredAtMilliseconds, event.stepId ?? null, event.moduleId ?? null,
+        event.alternativeId ?? null, event.localReason ?? null, checkpoint.status,
+        checkpoint.currentStepIndex, checkpoint.stepElapsedMilliseconds,
+        checkpoint.updatedAtMilliseconds, checkpoint.endedAtMilliseconds ?? null],
+    );
+    if (existing === null) throw new Error('Synchronized event conflicts with local history.');
+    return;
+  }
+  if (event.sequenceNumber !== latestSequence + firstRoutineEventSequence ||
+      !isValidRoutineTransition(localRoutine.status, event.kind, checkpoint.status)) {
+    throw new Error('Synchronized event is missing an earlier lifecycle transition.');
+  }
   await transaction.runAsync(
     `INSERT INTO routine_events(
       id, routine_session_id, sequence_number, kind, step_id, module_id,
@@ -1004,7 +1033,7 @@ async function projectRoutineEvent(
   await transaction.runAsync(
     `UPDATE routine_sessions SET
       status = ?, current_step_index = ?, step_elapsed_ms = ?,
-      updated_at_ms = ?, ended_at_ms = ?
+      updated_at_ms = ?, ended_at_ms = ?, started_at_ms = ?
      WHERE id = ?`,
     [
       checkpoint.status,
@@ -1012,6 +1041,7 @@ async function projectRoutineEvent(
       checkpoint.stepElapsedMilliseconds,
       checkpoint.updatedAtMilliseconds,
       checkpoint.endedAtMilliseconds ?? null,
+      event.kind === 'started' ? event.occurredAtMilliseconds : localRoutine.started_at_ms,
       event.routineSessionId,
     ],
   );
@@ -1061,13 +1091,6 @@ async function projectFeedback(
       ],
     );
   }
-}
-
-function isTerminalRoutine(status: RoutineSession['status']): boolean {
-  return status === 'completed' ||
-    status === 'stopped' ||
-    status === 'safetyStopped' ||
-    status === 'abandoned';
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

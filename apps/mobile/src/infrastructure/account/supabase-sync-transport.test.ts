@@ -22,7 +22,7 @@ class FakeFunctions implements SupabaseFunctionsPort {
 }
 
 describe('SupabaseSyncTransport', () => {
-  it('parses a valid bootstrap response', async () => {
+  it.each([undefined, null])('parses an empty bootstrap cursor (%s)', async (nextCursor) => {
     const functions = new FakeFunctions();
     functions.response = {
       data: {
@@ -33,6 +33,7 @@ describe('SupabaseSyncTransport', () => {
           legalAcceptances: [],
         },
         changes: [],
+        nextCursor,
         hasMore: false,
       },
       error: null,
