@@ -179,7 +179,25 @@ export class DevelopmentSyncTransport implements SyncTransport {
     let historyEpoch = account.value.historyEpoch;
     for (const mutation of request.mutations) {
       this.cursor += 1;
-      if (mutation.command.kind === 'acceptLegal') {
+      if (mutation.command.kind === 'saveProfile') {
+        changes.push({
+          cursor: String(this.cursor),
+          entityKind: 'profile',
+          entityId: this.accountId,
+          operation: 'upsert',
+          payload: mutation.command.profile,
+        });
+        if (mutation.command.reminderSettings !== undefined) {
+          this.cursor += 1;
+          changes.push({
+            cursor: String(this.cursor),
+            entityKind: 'reminderSettings',
+            entityId: this.accountId,
+            operation: 'upsert',
+            payload: mutation.command.reminderSettings,
+          });
+        }
+      } else if (mutation.command.kind === 'acceptLegal') {
         changes.push({
           cursor: String(this.cursor),
           entityKind: 'legalAcceptance',
