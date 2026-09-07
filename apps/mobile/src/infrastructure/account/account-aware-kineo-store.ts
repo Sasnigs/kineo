@@ -8,6 +8,7 @@ import type { KineoPersistence } from '../../core/persistence/kineo-store';
 import type {
   PersistenceResult,
 } from '../../core/persistence/persistence-contract';
+import type { AccountLocalWriter, LocalAccountWrite } from './kineo-sqlite-account-writer';
 
 const missingRemoteVersion = 0;
 const initialDecisionRevision = 1;
@@ -22,6 +23,7 @@ export class AccountAwareKineoStore implements KineoPersistence {
     private readonly nextIdentifier: () => string,
     private readonly nowMilliseconds: () => number,
     private readonly allowDevelopmentReset: boolean,
+    private readonly localWriter: AccountLocalWriter,
   ) {}
 
   loadProfileState: KineoPersistence['loadProfileState'] = () =>
@@ -30,9 +32,7 @@ export class AccountAwareKineoStore implements KineoPersistence {
   async saveProfileState(
     state: Parameters<KineoPersistence['saveProfileState']>[0],
   ): Promise<PersistenceResult<void>> {
-    const saved = await this.base.saveProfileState(state);
-    if (!saved.ok) return saved;
-    return this.pushProfile(state);
+    return this.pushProfile(state, (local) => local.saveProfileState(state));
   }
 
   loadCheckIn: KineoPersistence['loadCheckIn'] = (id) =>
@@ -134,8 +134,6 @@ export class AccountAwareKineoStore implements KineoPersistence {
     event: Parameters<KineoPersistence['recordRoutineEvent']>[0],
     checkpoint: Parameters<KineoPersistence['recordRoutineEvent']>[1],
   ): Promise<PersistenceResult<void>> {
-    const recorded = await this.base.recordRoutineEvent(event, checkpoint);
-    if (!recorded.ok) return recorded;
     return this.pushCommand({
       kind: 'recordRoutineEvent',
       event: {
@@ -150,7 +148,7 @@ export class AccountAwareKineoStore implements KineoPersistence {
         resultingUpdatedAtMilliseconds: checkpoint.updatedAtMilliseconds,
         resultingEndedAtMilliseconds: checkpoint.endedAtMilliseconds,
       },
-    }, false);
+    }, false, (local) => local.recordRoutineEvent(event, checkpoint));
   }
 
   loadRoutineEvents: KineoPersistence['loadRoutineEvents'] = (id) =>
@@ -159,12 +157,10 @@ export class AccountAwareKineoStore implements KineoPersistence {
   async submitFeedback(
     submission: Parameters<KineoPersistence['submitFeedback']>[0],
   ): Promise<PersistenceResult<void>> {
-    const saved = await this.base.submitFeedback(submission);
-    if (!saved.ok) return saved;
     return this.pushCommand({
       kind: 'submitFeedback',
       submission,
-    }, false);
+    }, false, (local) => local.submitFeedback(submission));
   }
 
   hasFeedbackForRoutine: KineoPersistence['hasFeedbackForRoutine'] = (id) =>
@@ -202,6 +198,7 @@ export class AccountAwareKineoStore implements KineoPersistence {
 
   private async pushProfile(
     state: Parameters<KineoPersistence['saveProfileState']>[0],
+    localWrite?: LocalAccountWrite,
   ): Promise<PersistenceResult<void>> {
     const remote = await this.repository.loadSynchronizedEntity(
       'profile',
@@ -232,12 +229,13 @@ export class AccountAwareKineoStore implements KineoPersistence {
         updatedAtMilliseconds: state.profile.updatedAtMilliseconds,
       },
       reminderSettings: state.reminderSettings,
-    }, false);
+    }, false, localWrite);
   }
 
   private async pushCommand(
     command: SyncCommand,
     requiresServerSuccess: boolean,
+    localWrite?: LocalAccountWrite,
   ): Promise<PersistenceResult<void>> {
     const account = await this.repository.loadAccount();
     if (!account.ok || account.value === undefined) return writeFailure();
@@ -250,8 +248,13 @@ export class AccountAwareKineoStore implements KineoPersistence {
       command,
     });
     if (!created.ok) return writeFailure();
-    const enqueued = await this.repository.enqueue(created.value);
-    if (!enqueued.ok) return writeFailure();
+    if (localWrite !== undefined) {
+      const committed = await this.localWriter.commit(created.value, localWrite);
+      if (!committed.ok) return committed;
+    } else {
+      const enqueued = await this.repository.enqueue(created.value);
+      if (!enqueued.ok) return writeFailure();
+    }
     const pending = await this.repository.pendingMutations();
     if (!pending.ok) return writeFailure();
     const synchronized = await this.sync.synchronize(pending.value);

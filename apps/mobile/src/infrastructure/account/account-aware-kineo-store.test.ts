@@ -9,11 +9,17 @@ import type {
 } from '../../core/account/sync-module';
 import type { KineoPersistence } from '../../core/persistence/kineo-store';
 import { AccountAwareKineoStore } from './account-aware-kineo-store';
+import type { AccountLocalWriter } from './kineo-sqlite-account-writer';
 
 const accountId = '10000000-0000-4000-8000-000000000001';
 const installationId = '20000000-0000-4000-8000-000000000001';
 const mutationId = '30000000-0000-4000-8000-000000000001';
 const nowMilliseconds = 1_788_300_000_000;
+// These tests isolate server-result mapping; real commit/rollback behavior is
+// exercised with SQLite in kineo-sqlite-account-writer.test.ts.
+const successfulWriter: AccountLocalWriter = {
+  commit: async () => ({ ok: true, value: undefined }),
+};
 
 class FakeRepository implements SyncLocalRepository, SyncOutbox {
   pending: PendingMutation[] = [];
@@ -86,6 +92,7 @@ describe('AccountAwareKineoStore', () => {
         { recordRoutineEvent: async () => ({ ok: true, value: undefined }) } as unknown as KineoPersistence,
         accountId, installationId, sync, new FakeRepository(),
         () => mutationId, () => nowMilliseconds, false,
+        successfulWriter,
       );
       const result = await store.recordRoutineEvent({
         id: 'event', routineSessionId: 'routine', sequenceNumber: 1,
@@ -116,6 +123,7 @@ describe('AccountAwareKineoStore', () => {
       () => mutationId,
       () => nowMilliseconds,
       false,
+      successfulWriter,
     );
 
     await store.completeCheckIn({ kind: 'attentionCorrection' } as never, []);
@@ -152,6 +160,7 @@ describe('AccountAwareKineoStore', () => {
       () => mutationId,
       () => nowMilliseconds,
       false,
+      successfulWriter,
     );
 
     await expect(store.createRoutine({
@@ -184,6 +193,15 @@ describe('AccountAwareKineoStore', () => {
       () => mutationId,
       () => nowMilliseconds,
       false,
+      {
+        async commit(mutation, write) {
+          const written = await write(base);
+          if (!written.ok) return written;
+          const queued = await repository.enqueue(mutation);
+          return queued.ok ? { ok: true, value: undefined }
+            : { ok: false, error: { code: 'writeFailed' } };
+        },
+      },
     );
 
     await expect(store.recordRoutineEvent({

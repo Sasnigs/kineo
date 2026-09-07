@@ -126,6 +126,7 @@ export function KineoAppBootstrap() {
             systemProductRuntime.nextIdentifier,
             Date.now,
             state.account.usesDevelopmentServices,
+            state.local.accountWriter(session.accountId, session.installationId),
           );
           const synchronizedProfile = await accountStore.synchronizeCurrentProfile();
           if (!synchronizedProfile.ok) {

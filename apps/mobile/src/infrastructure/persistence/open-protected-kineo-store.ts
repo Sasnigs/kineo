@@ -2,6 +2,7 @@ import type { PersistenceResult } from '../../core/persistence/persistence-contr
 import type { KineoPersistence } from '../../core/persistence/kineo-store';
 import type { SyncResult } from '../../core/account/sync-module';
 import { KineoSqliteSyncRepository } from '../account/kineo-sqlite-sync-repository';
+import { KineoSqliteAccountWriter } from '../account/kineo-sqlite-account-writer';
 import { openKineoDatabase } from './expo-sqlite-database';
 import { KineoSqliteStore } from './kineo-sqlite-store';
 import { deleteProtectedStore, prepareProtectedStorageDirectory, protectDatabaseFiles } from './protected-storage';
@@ -11,6 +12,7 @@ const kineoDatabaseName = 'kineo.sqlite';
 
 export type OpenedKineoLocalRuntime = Readonly<{
   store: KineoPersistence;
+  accountWriter(accountId: string, installationId: string): KineoSqliteAccountWriter;
   syncRepository(
     accountId: string,
     installationId: string,
@@ -57,6 +59,10 @@ export async function openProtectedKineoLocalRuntime(
     ok: true,
     value: {
       store,
+      accountWriter: (accountId, installationId) => new KineoSqliteAccountWriter(
+        database, accountId, installationId,
+        () => protectDatabaseFiles(database.databasePath),
+      ),
       syncRepository: (accountId, installationId) =>
         new KineoSqliteSyncRepository(
           database,
