@@ -23,6 +23,9 @@ readonly SIMULATOR_ID="$1"
 readonly APP_PATH="$2"
 readonly MAESTRO_BIN="$3"
 readonly FLOW_ROOT="$(cd "$(dirname "$0")/../apps/mobile/.maestro" && pwd)"
+readonly FLOW_FIRST_USE="${FLOW_ROOT}/first-use-routine.yaml"
+readonly FLOW_ATTENTION="${FLOW_ROOT}/attention-correction.yaml"
+readonly FLOW_INTERRUPTION="${FLOW_ROOT}/interruption-and-safety.yaml"
 readonly CONTENT_SIZE="${KINEO_SIMULATOR_CONTENT_SIZE:-$DEFAULT_CONTENT_SIZE}"
 readonly APPEARANCE="${KINEO_SIMULATOR_APPEARANCE:-$DEFAULT_APPEARANCE}"
 readonly INCREASE_CONTRAST="${KINEO_SIMULATOR_INCREASE_CONTRAST:-$DEFAULT_INCREASE_CONTRAST}"
@@ -47,11 +50,11 @@ xcrun simctl install "$SIMULATOR_ID" "$APP_PATH"
 
 export MAESTRO_CLI_NO_ANALYTICS=1
 export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
-"$MAESTRO_BIN" test \
-  -e UI_WAIT_TIMEOUT_MILLISECONDS="$UI_WAIT_TIMEOUT_MILLISECONDS" \
-  -e UI_SCROLL_TIMEOUT_MILLISECONDS="$UI_SCROLL_TIMEOUT_MILLISECONDS" \
-  -e UI_SCROLL_SPEED="$UI_SCROLL_SPEED" \
-  --device "$SIMULATOR_ID" \
-  "${FLOW_ROOT}/first-use-routine.yaml" \
-  "${FLOW_ROOT}/attention-correction.yaml" \
-  "${FLOW_ROOT}/interruption-and-safety.yaml"
+for flow_path in "$FLOW_FIRST_USE" "$FLOW_ATTENTION" "$FLOW_INTERRUPTION"; do
+  "$MAESTRO_BIN" test \
+    -e UI_WAIT_TIMEOUT_MILLISECONDS="$UI_WAIT_TIMEOUT_MILLISECONDS" \
+    -e UI_SCROLL_TIMEOUT_MILLISECONDS="$UI_SCROLL_TIMEOUT_MILLISECONDS" \
+    -e UI_SCROLL_SPEED="$UI_SCROLL_SPEED" \
+    --device "$SIMULATOR_ID" \
+    "$flow_path"
+done
