@@ -7,13 +7,18 @@ import {
 } from '../_shared/http.ts';
 import { sha256Hex } from '../_shared/secrets.ts';
 
+const jobIdShape = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+// 32 random bytes, unpadded base64url.
+const resumeTokenShape = /^[A-Za-z0-9_-]{43}$/u;
+
 Deno.serve(async (request) => {
   if (request.method !== 'POST') return methodNotAllowed();
   const input = await readJson(request);
   if (
     !isRecord(input) ||
     typeof input.jobId !== 'string' ||
-    typeof input.resumeToken !== 'string'
+    typeof input.resumeToken !== 'string' ||
+    !jobIdShape.test(input.jobId) || !resumeTokenShape.test(input.resumeToken)
   ) {
     return jsonResponse({ error: { code: 'invalid_request' } }, 400);
   }

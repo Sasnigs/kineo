@@ -4,8 +4,8 @@ Status: **in progress; not qualified for merge or release**. Approved scope rema
 
 ## Verified in this pass
 
-- App: 40 Jest suites, 271 tests pass; TypeScript, ESLint, project boundaries, and whitespace checks pass.
-- PostgreSQL: all five migrations apply on a fresh local Supabase database. Two pgTAP files, 241 assertions pass. Coverage includes all private-table client grants/RLS, public command grants, duplicate receipts, reset epochs, installation/account mismatch, and one-time export consumption.
+- App: 43 Jest suites, 290 tests pass; TypeScript and ESLint pass. Added atomic local/outbox rollback, offline session/hydration, refresh/logout race, and two-phase deletion recovery regressions.
+- PostgreSQL: five initial migrations passed fresh setup; migration 006 applied incrementally. Three pgTAP files, 253 assertions pass, including private-table/client grants, command grants, duplicate receipts, reset epochs, installation/account mismatch, one-time export consumption, and deletion revocation/recovery.
 - Supabase CLI 2.117.0 configuration parses. Replaced deprecated local mail configuration. Removed a repeated constraint drop that would have broken migration 004.
 - Added database migration/pgTAP verification to CI; the new CI job has not run on GitHub yet.
 
@@ -18,7 +18,7 @@ Database mutation processing now locks the account before receipt/epoch handling
 Compared account commits and working changes with baseline `0ee5861`, using AGENTS.md and CONTRIBUTING.md.
 
 1. Resolved: optional-online writes silently reported success for every sync failure. Only durable offline-pending writes may now succeed offline; rejection/conflict/storage failure propagates.
-2. **Open, major:** product writes and outbox insertion are separate transactions in `account-aware-kineo-store.ts`. An interrupted or failed enqueue can leave a committed local change without sync intent. Implement one protected transaction and test rollback, crash/retry, and protected-data failures.
+2. Resolved: local-first product writes and outbox insertion now share one protected SQLite transaction. Real SQLite tests cover failed enqueue rollback/retry, stale epochs, and loss of protected-data access.
 3. Resolved: export file-existence checks could throw outside the typed result boundary.
 4. Heuristic, not a hard violation: `kineo-sqlite-sync-repository.ts` mixes account/outbox mechanics with extensive product projections and lifecycle reconstruction. Separate responsibilities only as needed to fix projection correctness; avoid a speculative rewrite.
 
@@ -27,11 +27,11 @@ Compared account commits and working changes with baseline `0ee5861`, using AGEN
 Independent review against TD-10–12 identified four major open gaps:
 
 1. **Server authority:** the server approves levels/metadata, but still accepts client-composed exercises, doses, decisions, and fingerprints. Share canonical versioned selection/composition code; enforce attention state and exact server composition under a coherent account-state version. A client checksum is not authorization.
-2. **Offline session lifecycle:** cold launch still needs a network token refresh before reaching cached hydration. Persist protected account identity bound to the refresh credential; permit only the documented cached experience offline. Also qualify serialized refresh during long-running sessions and retries.
-3. **Deletion recovery:** deletion can finish remotely before its recovery credential reaches local storage. Persist recovery intent before irreversible remote work; resume before ordinary authentication, including after Auth identity removal. The missing-credential false-success fix alone does not close this gap.
+2. Implemented; integration qualification remains: protected identity is atomically bound to the refresh credential. Cached access requires completed hydration, active account state, and current legal acceptance. Function requests use centrally serialized refresh; refresh/logout races and revoked credentials have regressions. Long-running native/Auth tests remain.
+3. Implemented; integration qualification remains: two-phase deletion prepares a non-destructive job, saves recovery credentials, then commits. Relaunch checks recovery before Auth. PostgreSQL tests verify revocation before domain removal and recovery after Auth removal; server tests cover already-missing Auth identities. Native/local Auth failure injection remains.
 4. **Logout/relogin:** the revoked installation identifier is reused, and explicit offline discard still requires online revocation. Implement durable logout recovery and new installation identity without bypassing revocation or silently losing pending work.
 
-Review totals: three documented standards findings (two resolved, one open) plus one heuristic; four open spec findings. Worst standards issue: split local/outbox commit. Worst spec issue: non-authoritative routine composition.
+Remaining major implementation findings: server-authoritative composition/safety and logout/relogin recovery. Session and deletion fixes still require integration qualification. No claim of full account-milestone completion.
 
 ## Additional qualification work
 

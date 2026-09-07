@@ -2,7 +2,7 @@ import Constants from 'expo-constants';
 import { randomUUID } from 'expo-crypto';
 import { Platform } from 'react-native';
 
-import { KineoAccountPrivacyModule } from '../../application/account/kineo-account-privacy-module';
+import { KineoAccountPrivacyModule, resumeStoredDeletion } from '../../application/account/kineo-account-privacy-module';
 import { KineoAccountSession } from '../../application/account/kineo-account-session';
 import {
   KineoAuthModule,
@@ -15,7 +15,8 @@ import type {
   AuthResult,
 } from '../../core/account/auth-module';
 import type { SyncResult } from '../../core/account/sync-module';
-import type { PersonalDataExportSharer } from '../../core/account/account-privacy-module';
+import type { DeletionStatus, PersonalDataExportSharer, PrivacyResult } from '../../core/account/account-privacy-module';
+import { expoReminderScheduler } from '../reminders/expo-reminder-scheduler';
 import type { OpenedKineoLocalRuntime } from '../persistence/open-protected-kineo-store';
 import {
   DevelopmentAuthGateway,
@@ -54,6 +55,7 @@ export type KineoAccountRuntime = Readonly<{
   auth: AuthModule;
   exportSharer: PersonalDataExportSharer;
   usesDevelopmentServices: boolean;
+  resumePendingDeletion(): Promise<PrivacyResult<DeletionStatus | undefined>>;
   connect(
     accountId: string,
     provider: AuthProvider,
@@ -151,7 +153,7 @@ export async function createKineoAccountRuntime(
             : undefined;
         },
       );
-  // Do not let functions' fetch path call getSession on the Auth client's
+  // Do not let function requests call getSession on the Auth client's
   // expiring in-memory session and rotate outside our protected vault.
   const dataClient = development ? undefined : createConfiguredSupabaseClient();
   if (dataClient !== undefined && !dataClient.ok) {
@@ -172,6 +174,15 @@ export async function createKineoAccountRuntime(
         }),
     coordinator,
   );
+  const resumeStore = new SecureDeletionResumeStore();
+  const wipePrivateDevice = async (): Promise<PrivacyResult<void>> => {
+    const cancelled = await expoReminderScheduler.cancelAll();
+    if (!cancelled.ok) return { ok: false, error: { code: 'localWipeFailed' } };
+    const wiped = await local.store.deleteAllData();
+    if (!wiped.ok) return { ok: false, error: { code: 'localWipeFailed' } };
+    const cleared = await vault.clear();
+    return cleared.ok ? { ok: true, value: undefined } : { ok: false, error: { code: 'localWipeFailed' } };
+  };
 
   return {
     ok: true,
@@ -179,6 +190,16 @@ export async function createKineoAccountRuntime(
       auth,
       exportSharer: new ExpoPersonalDataExportSharer(),
       usesDevelopmentServices: development,
+      resumePendingDeletion() {
+        const transport = development
+          ? { deletionStatus: async (credential: { resumeToken: string }): Promise<PrivacyResult<DeletionStatus>> =>
+              credential.resumeToken === 'development-resume-token'
+                ? { ok: true, value: { kind: 'complete' } }
+                : { ok: false, error: { code: 'workflowFailed' } } }
+          : new SupabaseAccountPrivacyTransport(functions as SupabaseFunctionsPort,
+              installation.value, async () => undefined, randomUUID);
+        return resumeStoredDeletion(transport, resumeStore, wipePrivateDevice);
+      },
       async connect(accountId, provider) {
         const repository = local.syncRepository(
           accountId,
@@ -217,8 +238,8 @@ export async function createKineoAccountRuntime(
             );
         const privacy = new KineoAccountPrivacyModule(
           privacyTransport,
-          new SecureDeletionResumeStore(),
-          new KineoLocalPrivacyStore(local.store, repository),
+          resumeStore,
+          new KineoLocalPrivacyStore(wipePrivateDevice, repository),
           Date.now,
         );
         const session = new KineoAccountSession(

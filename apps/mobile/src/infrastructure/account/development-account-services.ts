@@ -1,6 +1,5 @@
 import type {
   AccountPrivacyTransport,
-  DeleteAccountResponse,
   DeletionResumeCredential,
 } from '../../application/account/kineo-account-privacy-module';
 import type { AuthGateway, IdentityTokenProvider } from '../../application/account/kineo-auth-module';
@@ -314,15 +313,12 @@ export class DevelopmentPrivacyTransport implements AccountPrivacyTransport {
       : { ok: false as const, error: { code: 'workflowFailed' as const } };
   }
 
-  async deleteAccount(): Promise<PrivacyResult<DeleteAccountResponse>> {
+  async prepareDeletion(): Promise<PrivacyResult<DeletionResumeCredential>> {
     return {
       ok: true,
       value: {
-        status: { kind: 'complete' },
-        resumeCredential: {
-          jobId: randomUUID(),
-          resumeToken: 'development-resume-token',
-        },
+        jobId: randomUUID(),
+        resumeToken: 'development-resume-token',
       },
     };
   }

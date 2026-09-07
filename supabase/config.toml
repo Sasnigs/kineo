@@ -43,3 +43,8 @@ policy = "per_worker"
 
 [analytics]
 enabled = false
+
+# The endpoint verifies a high-entropy, job-scoped recovery capability itself;
+# the account's Auth identity can already have been deleted on a previous try.
+[functions.deletion-status]
+verify_jwt = false

@@ -1,4 +1,3 @@
-import { completeDeletion } from '../_shared/deletion.ts';
 import {
   authorize,
   jsonResponse,
@@ -23,17 +22,13 @@ Deno.serve(async (request) => {
   if (begun.error !== null || !isDeletionJob(begun.data)) {
     return serverFailure();
   }
-  const complete = await completeDeletion(
-    authorized.service,
-    authorized.accountId,
-    begun.data.jobId,
-    resumeTokenHash,
-  );
+  // Preparation is deliberately non-destructive. The client must persist this
+  // capability before calling deletion-status to commit/resume deletion.
   return jsonResponse({
-    kind: complete ? 'complete' : 'pending',
+    kind: 'pending',
     jobId: begun.data.jobId,
     resumeToken,
-  }, complete ? 200 : 202);
+  }, 202);
 });
 
 function isDeletionJob(

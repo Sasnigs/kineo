@@ -64,13 +64,10 @@ class FakeTransport implements AccountPrivacyTransport {
       value: { formatVersion: 'kineo-export-v1' },
     };
   }
-  async deleteAccount() {
+  async prepareDeletion() {
     return {
       ok: true as const,
-      value: {
-        status: { kind: this.deletionKind },
-        resumeCredential: credential,
-      },
+      value: credential,
     };
   }
   async deletionStatus() {
@@ -82,6 +79,37 @@ class FakeTransport implements AccountPrivacyTransport {
 }
 
 describe('KineoAccountPrivacyModule', () => {
+  it('does not begin irreversible deletion if recovery credentials cannot be saved', async () => {
+    const transport = new FakeTransport();
+    let destructiveCalls = 0;
+    transport.deletionStatus = async () => {
+      destructiveCalls += 1;
+      return { ok: true, value: { kind: 'complete' } };
+    };
+    const resume = new FakeResumeStore();
+    const failedStore: DeletionResumeStore = {
+      load: () => resume.load(), clear: () => resume.clear(),
+      save: async () => ({ ok: false, error: { code: 'workflowFailed' } }),
+    };
+    const module = new KineoAccountPrivacyModule(transport, failedStore, new FakeLocalStore(), () => nowMilliseconds);
+    expect((await module.deleteAccount(currentGrant)).ok).toBe(false);
+    expect(destructiveCalls).toBe(0);
+  });
+
+  it('can resume after the destructive response is lost', async () => {
+    const transport: AccountPrivacyTransport = new FakeTransport();
+    const resume = new FakeResumeStore();
+    const local = new FakeLocalStore();
+    transport.deletionStatus = async () => ({ ok: false, error: { code: 'offline' } });
+    const module = new KineoAccountPrivacyModule(transport, resume, local, () => nowMilliseconds);
+    expect(await module.deleteAccount(currentGrant)).toEqual({ ok: false, error: { code: 'offline' } });
+    expect(resume.value).toEqual(credential);
+    expect(local.wipes).toBe(0);
+    transport.deletionStatus = async () => ({ ok: true, value: { kind: 'complete' } });
+    expect(await module.resumeDeletion()).toEqual({ ok: true, value: { kind: 'complete' } });
+    expect(local.wipes).toBe(1);
+  });
+
   it('does not report deletion complete without a recovery credential', async () => {
     const local = new FakeLocalStore();
     const module = new KineoAccountPrivacyModule(

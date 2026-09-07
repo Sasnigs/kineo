@@ -23,6 +23,23 @@ const bootstrap = {
 };
 
 describe('KineoAccountEntry', () => {
+  it('resumes deletion before authentication or opening product data', async () => {
+    const loadStartState = jest.fn<KineoProductServing['loadStartState']>();
+    const restoreSession = jest.fn<KineoAccountRuntime['auth']['restoreSession']>();
+    const restart = jest.fn();
+    const runtime = {
+      resumePendingDeletion: async () => ({ ok: true, value: { kind: 'complete' } }),
+      auth: { restoreSession },
+    } as unknown as KineoAccountRuntime;
+    const service = { loadStartState } as unknown as KineoProductServing;
+    await render(<KineoAccountEntry runtime={runtime} service={service}
+      createAuthorizedService={async () => ({ ok: true, value: service })}
+      onStoreRestartRequired={restart} />);
+    await waitFor(() => expect(restart).toHaveBeenCalledTimes(1));
+    expect(restoreSession).not.toHaveBeenCalled();
+    expect(loadStartState).not.toHaveBeenCalled();
+  });
+
   it('opens cached history without attempting online profile synchronization', async () => {
     const service = {
       loadStartState: async () => ({ ok: true, value: { kind: 'ready' } }),
@@ -34,6 +51,7 @@ describe('KineoAccountEntry', () => {
       hasCurrentLegalAcceptances: () => true,
     } as unknown as KineoAccountSession;
     const runtime = {
+      resumePendingDeletion: async () => ({ ok: true, value: undefined }),
       auth: { restoreSession: async () => ({ ok: true, value: { kind: 'cached', accountId, provider: 'email' } }) },
       connect: async () => ({ ok: true, value: session }),
     } as unknown as KineoAccountRuntime;
@@ -70,6 +88,7 @@ describe('KineoAccountEntry', () => {
       }),
     } as unknown as KineoAccountSession;
     const runtime = {
+      resumePendingDeletion: async () => ({ ok: true, value: undefined }),
       usesDevelopmentServices: true,
       auth: {
         restoreSession: async () => ({

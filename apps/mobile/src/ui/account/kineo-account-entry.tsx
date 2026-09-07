@@ -200,16 +200,25 @@ export function KineoAccountEntry({
 
   useEffect(() => {
     let active = true;
-    if (incomingUrl !== null && isPasswordRecoveryUrl(incomingUrl)) {
-      void Promise.resolve().then(() => {
-        if (active) {
-          setState({ kind: 'passwordRecovery', recoveryUrl: incomingUrl });
-        }
-      });
-      return () => { active = false; };
-    }
-    if (incomingUrl !== null && isEmailVerificationUrl(incomingUrl)) {
-      void runtime.auth.completeEmailVerification(incomingUrl).then(async (result) => {
+    const prepareEntry = async () => {
+      const deletion = await runtime.resumePendingDeletion();
+      if (!active) return;
+      if (deletion.ok && deletion.value?.kind === 'complete') {
+        onStoreRestartRequired();
+        return;
+      }
+      if (!deletion.ok || deletion.value !== undefined) {
+        setState({ kind: 'error',
+          message: 'Account deletion is still in progress. Connect to the internet and try again.',
+          retry: onStoreRestartRequired });
+        return;
+      }
+      if (incomingUrl !== null && isPasswordRecoveryUrl(incomingUrl)) {
+        setState({ kind: 'passwordRecovery', recoveryUrl: incomingUrl });
+        return;
+      }
+      if (incomingUrl !== null && isEmailVerificationUrl(incomingUrl)) {
+        const result = await runtime.auth.completeEmailVerification(incomingUrl);
         if (!active) return;
         if (!result.ok) {
           setState({
@@ -220,28 +229,21 @@ export function KineoAccountEntry({
           return;
         }
         await continueFromAuthState(result.value);
-      });
-      return () => { active = false; };
-    }
-    void service.loadStartState().then((result) => {
-      if (!active) return;
-      if (!result.ok) {
-        setState({
-          kind: 'error',
-          message: accountCopy.genericError,
-          retry: onStoreRestartRequired,
-        });
         return;
       }
-      if (
-        result.value.kind === 'onboarding' &&
-        result.value.progress.step === 'welcome'
-      ) {
+      const result = await service.loadStartState();
+      if (!active) return;
+      if (!result.ok) {
+        setState({ kind: 'error', message: accountCopy.genericError, retry: onStoreRestartRequired });
+        return;
+      }
+      if (result.value.kind === 'onboarding' && result.value.progress.step === 'welcome') {
         setState({ kind: 'promise' });
       } else {
-        void restoreAuthentication();
+        await restoreAuthentication();
       }
-    });
+    };
+    void prepareEntry();
     return () => {
       active = false;
     };
@@ -250,7 +252,7 @@ export function KineoAccountEntry({
     incomingUrl,
     onStoreRestartRequired,
     restoreAuthentication,
-    runtime.auth,
+    runtime,
     service,
   ]);
 

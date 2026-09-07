@@ -1,6 +1,5 @@
 import type {
   AccountPrivacyTransport,
-  DeleteAccountResponse,
   DeletionResumeCredential,
 } from '../../application/account/kineo-account-privacy-module';
 import type {
@@ -78,13 +77,13 @@ implements AccountPrivacyTransport {
       : workflowFailure();
   }
 
-  async deleteAccount(): Promise<PrivacyResult<DeleteAccountResponse>> {
+  async prepareDeletion(): Promise<PrivacyResult<DeletionResumeCredential>> {
     const response = await this.invoke('delete-account', {});
     if (!response.ok) return response;
     const value = response.value;
     if (
       !isRecord(value) ||
-      (value.kind !== 'pending' && value.kind !== 'complete') ||
+      value.kind !== 'pending' ||
       typeof value.jobId !== 'string' ||
       typeof value.resumeToken !== 'string'
     ) {
@@ -93,11 +92,8 @@ implements AccountPrivacyTransport {
     return {
       ok: true,
       value: {
-        status: { kind: value.kind },
-        resumeCredential: {
-          jobId: value.jobId,
-          resumeToken: value.resumeToken,
-        },
+        jobId: value.jobId,
+        resumeToken: value.resumeToken,
       },
     };
   }
