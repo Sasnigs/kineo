@@ -873,7 +873,11 @@ async function withReauthentication(
     grant: ReauthenticationGrant,
   ) => Promise<ProductResult<void>>,
 ): Promise<ProductResult<void>> {
-  if (session.provider === 'email' && (password === undefined || password.length === 0)) {
+  if (
+    session.provider === 'email' &&
+    !runtime.usesDevelopmentServices &&
+    (password === undefined || password.length === 0)
+  ) {
     return { ok: false, error: { code: 'accountUnavailable' } };
   }
   const reauthenticated = await runtime.auth.reauthenticate(

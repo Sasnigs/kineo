@@ -7,9 +7,28 @@ import type { KineoAccountRuntime } from '../../infrastructure/account/kineo-acc
 import { KineoAccountEntry } from './kineo-account-entry';
 
 jest.mock('../product/kineo-product-app', () => {
-  const { Text: MockText } =
+  const { Pressable: MockPressable, Text: MockText, View: MockView } =
     jest.requireActual<typeof import('react-native')>('react-native');
-  return { KineoProductApp: () => <MockText>PRODUCT READY</MockText> };
+  return {
+    KineoProductApp: ({ accountActions }: {
+      accountActions?: Readonly<{
+        deleteAccount(password?: string): Promise<unknown>;
+      }>;
+    }) => (
+      <MockView>
+        <MockText>PRODUCT READY</MockText>
+        {accountActions === undefined ? null : (
+          <MockPressable
+            accessibilityLabel="TEST DELETE ACCOUNT"
+            accessibilityRole="button"
+            onPress={() => void accountActions.deleteAccount()}
+          >
+            <MockText>TEST DELETE ACCOUNT</MockText>
+          </MockPressable>
+        )}
+      </MockView>
+    ),
+  };
 });
 
 const accountId = '10000000-0000-4000-8000-000000000001';
@@ -134,6 +153,65 @@ describe('KineoAccountEntry', () => {
     expect(await view.findByText('PRODUCT READY')).toBeTruthy();
     expect(remoteBootstrap).not.toHaveBeenCalled();
     expect(authorize).toHaveBeenCalledWith(session, true);
+  });
+
+  it('allows passwordless reauthentication for an internal test account', async () => {
+    const grant = {
+      value: 'development-grant',
+      expiresAtMilliseconds: 1_788_300_300_000,
+    };
+    const reauthenticate = jest.fn<
+      KineoAccountRuntime['auth']['reauthenticate']
+    >().mockResolvedValue({ ok: true, value: grant });
+    const deleteAccount = jest.fn<
+      KineoAccountSession['privacy']['deleteAccount']
+    >().mockResolvedValue({ ok: true, value: { kind: 'complete' } });
+    const service = {
+      loadStartState: async () => ({
+        ok: true as const,
+        value: { kind: 'today' as const, primaryArea: 'neck' as const },
+      }),
+    } as unknown as KineoProductServing;
+    const session = {
+      provider: 'email',
+      bootstrap: async () => ({ ok: true as const, value: bootstrap }),
+      hasCurrentLegalAcceptances: () => true,
+      privacy: { deleteAccount },
+    } as unknown as KineoAccountSession;
+    const runtime = {
+      usesDevelopmentServices: true,
+      resumePendingDeletion: async () => ({ ok: true, value: undefined }),
+      resumePendingLogout: async () => ({ ok: true, value: { kind: 'none' } }),
+      auth: {
+        restoreSession: async () => ({
+          ok: true as const,
+          value: {
+            kind: 'authenticated' as const,
+            accountId,
+            provider: 'email' as const,
+          },
+        }),
+        reauthenticate,
+      },
+      connect: async () => ({ ok: true as const, value: session }),
+    } as unknown as KineoAccountRuntime;
+    const view = await render(
+      <KineoAccountEntry
+        service={service}
+        runtime={runtime}
+        createAuthorizedService={async () => ({ ok: true, value: service })}
+        onStoreRestartRequired={() => undefined}
+      />,
+    );
+
+    await fireEvent.press(
+      await view.findByRole('button', { name: 'TEST DELETE ACCOUNT' }),
+    );
+    await waitFor(() => expect(reauthenticate).toHaveBeenCalledWith({
+      kind: 'password',
+      password: '',
+    }));
+    expect(deleteAccount).toHaveBeenCalledWith(grant);
   });
 
   it('enforces promise, adult declaration, authentication, legal, then product order', async () => {
