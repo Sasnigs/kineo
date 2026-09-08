@@ -24,6 +24,10 @@ import type {
 } from '../../core/account/sync-contract';
 import type { CheckIn } from '../../core/persistence/persistence-domain';
 import {
+  createRoutineSession,
+  type RoutineSession,
+} from '../../core/persistence/routine-persistence-domain';
+import {
   buildAuthoritativePlan,
   type ApprovedAuthoritativePlan,
 } from '../../core/account/authoritative-plan';
@@ -184,6 +188,7 @@ export class DevelopmentSyncTransport implements SyncTransport {
         : account;
     }
     const changes: SyncChange[] = [];
+    const rejectedMutationIds = new Set<string>();
     let historyEpoch = account.value.historyEpoch;
     for (const mutation of request.mutations) {
       this.cursor += 1;
@@ -245,7 +250,10 @@ export class DevelopmentSyncTransport implements SyncTransport {
             orderedOutcomes: [],
             createdAtMilliseconds: command.checkIn.completedAtMilliseconds ?? command.checkIn.startedAtMilliseconds,
           });
-          if (!authoritative.ok || authoritative.value.kind !== 'approved') continue;
+          if (!authoritative.ok || authoritative.value.kind !== 'approved') {
+            rejectedMutationIds.add(mutation.mutationId);
+            continue;
+          }
           changes.push({
             cursor: String(this.cursor),
             entityKind: 'checkIn',
@@ -265,6 +273,32 @@ export class DevelopmentSyncTransport implements SyncTransport {
             ),
           });
         }
+      } else if (mutation.command.kind === 'startRoutine') {
+        if (!isRoutineSessionCandidate(mutation.command.routine)) {
+          rejectedMutationIds.add(mutation.mutationId);
+          continue;
+        }
+        const routine = createRoutineSession(
+          mutation.command.routine,
+        );
+        if (
+          !routine.ok ||
+          routine.value.status !== 'prepared' ||
+          routine.value.decisionId !== mutation.command.decisionId
+        ) {
+          rejectedMutationIds.add(mutation.mutationId);
+          continue;
+        }
+        changes.push({
+          cursor: String(this.cursor),
+          entityKind: 'routineSession',
+          entityId: routine.value.id,
+          operation: 'upsert',
+          payload: {
+            ownerInstallationId: request.installationId,
+            routine: routine.value,
+          },
+        });
       }
     }
     return {
@@ -272,10 +306,15 @@ export class DevelopmentSyncTransport implements SyncTransport {
       value: {
         accountStatus: 'active',
         historyEpoch,
-        dispositions: request.mutations.map(({ mutationId }) => ({
-          mutationId,
-          kind: 'applied' as const,
-        })),
+        dispositions: request.mutations.map(({ mutationId }) =>
+          rejectedMutationIds.has(mutationId)
+            ? {
+                mutationId,
+                kind: 'rejected' as const,
+                code: 'invalidCommand' as const,
+              }
+            : { mutationId, kind: 'applied' as const },
+        ),
         changes,
         ...(changes.length === 0
           ? {}
@@ -355,6 +394,31 @@ function authenticated(): Extract<AuthState, { kind: 'authenticated' }> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isRoutineSessionCandidate(value: unknown): value is RoutineSession {
+  if (!isRecord(value) || !isRecord(value.snapshot) || !isRecord(value.dayContext)) {
+    return false;
+  }
+  return (
+    typeof value.id === 'string' &&
+    typeof value.decisionId === 'string' &&
+    typeof value.checkInId === 'string' &&
+    typeof value.status === 'string' &&
+    typeof value.snapshot.json === 'string' &&
+    typeof value.snapshot.checksum === 'string' &&
+    Array.isArray(value.snapshot.includedAreas) &&
+    typeof value.currentStepIndex === 'number' &&
+    typeof value.stepElapsedMilliseconds === 'number' &&
+    typeof value.updatedAtMilliseconds === 'number' &&
+    (value.startedAtMilliseconds === undefined ||
+      typeof value.startedAtMilliseconds === 'number') &&
+    (value.endedAtMilliseconds === undefined ||
+      typeof value.endedAtMilliseconds === 'number') &&
+    typeof value.dayContext.localDay === 'string' &&
+    typeof value.dayContext.timeZoneId === 'string' &&
+    typeof value.dayContext.calendarId === 'string'
+  );
 }
 
 function developmentSelectionEnvelope(
