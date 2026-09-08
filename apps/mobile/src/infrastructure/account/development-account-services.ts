@@ -22,7 +22,13 @@ import type {
   SyncRequest,
   SyncResponse,
 } from '../../core/account/sync-contract';
-import type { CheckIn } from '../../core/persistence/persistence-domain';
+import {
+  createCheckIn,
+  createSafetyMutation,
+  type CheckIn,
+  type SafetyEvent,
+  type SafetyMutation,
+} from '../../core/persistence/persistence-domain';
 import {
   createRoutineSession,
   type RoutineSession,
@@ -227,42 +233,68 @@ export class DevelopmentSyncTransport implements SyncTransport {
           operation: 'reset',
           payload: { historyEpoch },
         });
-      } else if (
-        mutation.command.kind === 'submitCheckIn' &&
-        isRecord(mutation.command.checkIn) &&
-        Array.isArray(mutation.command.checkIn.entries)
-      ) {
-        const command = mutation.command as DevelopmentSubmitCheckInCommand;
-        const hasAttention = command.checkIn.entries.some((entry) =>
-          isRecord(entry) &&
-          (entry.conditionalSafetyAnswer === 'yes' ||
-            entry.conditionalSafetyAnswer === 'notSure')
+      } else if (mutation.command.kind === 'submitCheckIn') {
+        const checkIn = parseDevelopmentCheckIn(mutation.command.checkIn);
+        if (checkIn === undefined) {
+          rejectedMutationIds.add(mutation.mutationId);
+          continue;
+        }
+        const command: DevelopmentSubmitCheckInCommand = {
+          ...mutation.command,
+          checkIn,
+        };
+        const transitions = parseDevelopmentSafetyTransitions(
+          checkIn,
+          command.attentionTransitions,
         );
-        if (!hasAttention) {
+        if (transitions === undefined) {
+          rejectedMutationIds.add(mutation.mutationId);
+          continue;
+        }
+        const mutationChanges: SyncChange[] = [{
+          cursor: String(this.cursor),
+          entityKind: 'checkIn',
+          entityId: checkIn.id,
+          operation: 'upsert',
+          payload: checkIn,
+        }];
+        for (const transition of transitions) {
+          this.cursor += 1;
+          mutationChanges.push({
+            cursor: String(this.cursor),
+            entityKind: 'safetyEvent',
+            entityId: transition.event.id,
+            operation: 'upsert',
+            payload: {
+              ...transition.event,
+              statusAfter: transition.statusAfter,
+              ...(transition.expectedAttentionUpdatedAtMilliseconds === undefined
+                ? {}
+                : {
+                    expectedAttentionUpdatedAtMilliseconds:
+                      transition.expectedAttentionUpdatedAtMilliseconds,
+                  }),
+            },
+          });
+        }
+        if (command.suppressPlan !== true && transitions.length === 0) {
           const authoritative = buildAuthoritativePlan({
-            checkIn: command.checkIn,
+            checkIn,
             decisionId: command.decisionId as Parameters<typeof buildAuthoritativePlan>[0]['decisionId'],
             revision: command.decisionRevision,
             duration: command.durationVariant,
             requestedOverride: command.requestedOverride,
-            secondaryArea: command.checkIn.secondaryArea,
+            secondaryArea: checkIn.secondaryArea,
             attentionRequiredAreas: [],
             orderedOutcomes: [],
-            createdAtMilliseconds: command.checkIn.completedAtMilliseconds ?? command.checkIn.startedAtMilliseconds,
+            createdAtMilliseconds: checkIn.completedAtMilliseconds ?? checkIn.startedAtMilliseconds,
           });
           if (!authoritative.ok || authoritative.value.kind !== 'approved') {
             rejectedMutationIds.add(mutation.mutationId);
             continue;
           }
-          changes.push({
-            cursor: String(this.cursor),
-            entityKind: 'checkIn',
-            entityId: command.checkIn.id,
-            operation: 'upsert',
-            payload: command.checkIn,
-          });
           this.cursor += 1;
-          changes.push({
+          mutationChanges.push({
             cursor: String(this.cursor),
             entityKind: 'selectionDecision',
             entityId: command.decisionId,
@@ -273,6 +305,7 @@ export class DevelopmentSyncTransport implements SyncTransport {
             ),
           });
         }
+        changes.push(...mutationChanges);
       } else if (mutation.command.kind === 'startRoutine') {
         if (!isRoutineSessionCandidate(mutation.command.routine)) {
           rejectedMutationIds.add(mutation.mutationId);
@@ -394,6 +427,79 @@ function authenticated(): Extract<AuthState, { kind: 'authenticated' }> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseDevelopmentCheckIn(value: unknown): CheckIn | undefined {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.dayContext) ||
+    !Array.isArray(value.entries) ||
+    !value.entries.every(isRecord) ||
+    (value.correctionSource !== undefined && !isRecord(value.correctionSource))
+  ) {
+    return undefined;
+  }
+  const parsed = createCheckIn(value as CheckIn);
+  return parsed.ok ? parsed.value : undefined;
+}
+
+function parseDevelopmentSafetyTransitions(
+  checkIn: CheckIn,
+  value: unknown,
+): readonly SafetyMutation[] | undefined {
+  if (value !== undefined && !Array.isArray(value)) return undefined;
+  const candidates = value ?? [];
+  const transitions: SafetyMutation[] = [];
+  for (const candidate of candidates) {
+    if (!isRecord(candidate) || !isRecord(candidate.dayContext)) {
+      return undefined;
+    }
+    const {
+      statusAfter,
+      expectedAttentionUpdatedAtMilliseconds,
+      ...event
+    } = candidate;
+    const parsed = createSafetyMutation({
+      event: event as SafetyEvent,
+      statusAfter: statusAfter as SafetyMutation['statusAfter'],
+      expectedAttentionUpdatedAtMilliseconds:
+        expectedAttentionUpdatedAtMilliseconds as number | undefined,
+    });
+    if (!parsed.ok) return undefined;
+    transitions.push(parsed.value);
+  }
+  const expectedEntries = checkIn.entries.filter((entry) =>
+    checkIn.kind === 'attentionCorrection' ||
+    entry.conditionalSafetyAnswer === 'yes' ||
+    entry.conditionalSafetyAnswer === 'notSure'
+  );
+  if (transitions.length !== expectedEntries.length) return undefined;
+  const matchedTransitionIds = new Set<string>();
+  for (const entry of expectedEntries) {
+    const expectedKind = checkIn.kind === 'normal'
+      ? 'attentionEntered'
+      : entry.conditionalSafetyAnswer === 'yes' ||
+          entry.conditionalSafetyAnswer === 'notSure'
+        ? 'attentionReaffirmedCorrection'
+        : 'attentionClearedCorrection';
+    const expectedStatus = expectedKind === 'attentionClearedCorrection'
+      ? 'normal'
+      : 'attentionRequired';
+    const transition = transitions.find(({ event }) =>
+      event.sourceCheckInEntryId === entry.id
+    );
+    if (
+      transition === undefined ||
+      matchedTransitionIds.has(transition.event.id) ||
+      transition.event.area !== entry.area ||
+      transition.event.kind !== expectedKind ||
+      transition.statusAfter !== expectedStatus
+    ) {
+      return undefined;
+    }
+    matchedTransitionIds.add(transition.event.id);
+  }
+  return transitions;
 }
 
 function isRoutineSessionCandidate(value: unknown): value is RoutineSession {

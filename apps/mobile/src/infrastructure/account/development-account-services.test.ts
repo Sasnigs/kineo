@@ -27,10 +27,16 @@ const accountId = '10000000-0000-4000-8000-000000000001';
 const installationId = '20000000-0000-4000-8000-000000000001';
 const submitMutationId = '30000000-0000-4000-8000-000000000001';
 const startMutationId = '30000000-0000-4000-8000-000000000002';
+const attentionMutationId = '30000000-0000-4000-8000-000000000003';
+const correctionMutationId = '30000000-0000-4000-8000-000000000004';
 const checkInId = '40000000-0000-4000-8000-000000000001';
+const correctionCheckInId = '40000000-0000-4000-8000-000000000002';
 const checkInEntryId = '50000000-0000-4000-8000-000000000001';
+const correctionEntryId = '50000000-0000-4000-8000-000000000002';
 const decisionId = '60000000-0000-4000-8000-000000000001';
 const routineId = '70000000-0000-4000-8000-000000000001';
+const attentionEventId = '80000000-0000-4000-8000-000000000001';
+const correctionEventId = '80000000-0000-4000-8000-000000000002';
 const nowMilliseconds = 1_788_300_000_000;
 const firstHistoryEpoch = 1;
 
@@ -53,25 +59,146 @@ function pendingMutation(
   };
 }
 
-describe('DevelopmentSyncTransport', () => {
-  it('projects an installation-owned routine session when a routine starts', async () => {
-    const database = new NodeSqliteTestDatabase();
-    await migrateKineoDatabase(database, nowMilliseconds);
-    const repository = new KineoSqliteSyncRepository(
-      database,
+async function fixture() {
+  const database = new NodeSqliteTestDatabase();
+  await migrateKineoDatabase(database, nowMilliseconds);
+  const repository = new KineoSqliteSyncRepository(
+    database,
+    accountId,
+    installationId,
+  );
+  const initialized = await repository.initialize(nowMilliseconds);
+  if (!initialized.ok) throw new Error('Could not initialize sync fixture.');
+  const transport = new DevelopmentSyncTransport(repository, accountId);
+  return {
+    database,
+    repository,
+    transport,
+    sync: new KineoSyncModule(
       accountId,
       installationId,
-    );
-    expect(await repository.initialize(nowMilliseconds)).toEqual({
+      transport,
+      repository,
+    ),
+    store: new KineoSqliteStore(database),
+  };
+}
+
+describe('DevelopmentSyncTransport', () => {
+  it('projects authoritative attention entry and correction changes', async () => {
+    const { database, repository, store, sync } = await fixture();
+    const dayContext = {
+      localDay: required(parseLocalDay('2026-09-02')),
+      timeZoneId: 'America/Chicago',
+      calendarId: 'gregorian',
+    };
+    const attentionCheckIn: CheckIn = {
+      id: required(parseCheckInId(checkInId)),
+      status: 'completed',
+      kind: 'normal',
+      primaryArea: 'neck',
+      startedAtMilliseconds: nowMilliseconds,
+      completedAtMilliseconds: nowMilliseconds,
+      dayContext,
+      entries: [{
+        id: required(parseCheckInEntryId(checkInEntryId)),
+        area: 'neck',
+        role: 'primary',
+        changeReport: 'worse',
+        movementComfort: 'limited',
+        conditionalSafetyAnswer: 'yes',
+        submittedAtMilliseconds: nowMilliseconds,
+      }],
+    };
+    const attention = pendingMutation(attentionMutationId, {
+      kind: 'submitCheckIn',
+      checkIn: attentionCheckIn,
+      decisionId,
+      decisionRevision: 1,
+      durationVariant: 'standard',
+      attentionTransitions: [{
+        id: attentionEventId,
+        area: 'neck',
+        kind: 'attentionEntered',
+        sourceCheckInEntryId: checkInEntryId,
+        occurredAtMilliseconds: nowMilliseconds,
+        dayContext,
+        statusAfter: 'attentionRequired',
+      }],
+    });
+    expect(await repository.enqueue(attention)).toEqual({
       ok: true,
       value: undefined,
     });
-    const sync = new KineoSyncModule(
-      accountId,
-      installationId,
-      new DevelopmentSyncTransport(repository, accountId),
-      repository,
-    );
+    expect(await sync.synchronize([attention])).toMatchObject({ ok: true });
+
+    expect(await store.loadCheckIn(attentionCheckIn.id)).toEqual({
+      ok: true,
+      value: attentionCheckIn,
+    });
+    expect(await store.loadAttentionStates()).toEqual({
+      ok: true,
+      value: [{ area: 'neck', updatedAtMilliseconds: nowMilliseconds }],
+    });
+
+    const correctionTimeMilliseconds = nowMilliseconds + 1;
+    const correctionCheckIn: CheckIn = {
+      id: required(parseCheckInId(correctionCheckInId)),
+      status: 'completed',
+      kind: 'attentionCorrection',
+      correctionSource: {
+        area: 'neck',
+        triggeringEntryId: required(parseCheckInEntryId(checkInEntryId)),
+      },
+      primaryArea: 'neck',
+      startedAtMilliseconds: correctionTimeMilliseconds,
+      completedAtMilliseconds: correctionTimeMilliseconds,
+      dayContext,
+      entries: [{
+        id: required(parseCheckInEntryId(correctionEntryId)),
+        area: 'neck',
+        role: 'primary',
+        changeReport: 'similar',
+        movementComfort: 'okay',
+        submittedAtMilliseconds: correctionTimeMilliseconds,
+      }],
+    };
+    const correction = pendingMutation(correctionMutationId, {
+      kind: 'submitCheckIn',
+      checkIn: correctionCheckIn,
+      decisionId,
+      decisionRevision: 1,
+      durationVariant: 'standard',
+      suppressPlan: true,
+      attentionTransitions: [{
+        id: correctionEventId,
+        area: 'neck',
+        kind: 'attentionClearedCorrection',
+        sourceCheckInEntryId: correctionEntryId,
+        occurredAtMilliseconds: correctionTimeMilliseconds,
+        dayContext,
+        statusAfter: 'normal',
+        expectedAttentionUpdatedAtMilliseconds: nowMilliseconds,
+      }],
+    });
+    expect(await repository.enqueue(correction)).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(await sync.synchronize([correction])).toMatchObject({ ok: true });
+    expect(await store.loadCheckIn(correctionCheckIn.id)).toEqual({
+      ok: true,
+      value: correctionCheckIn,
+    });
+    expect(await store.loadAttentionStates()).toEqual({
+      ok: true,
+      value: [],
+    });
+    await database.closeAsync();
+  });
+
+  it('projects an installation-owned routine session when a routine starts', async () => {
+    const { database, repository, store, sync } = await fixture();
     const checkIn: CheckIn = {
       id: required(parseCheckInId(checkInId)),
       status: 'completed',
@@ -144,7 +271,6 @@ describe('DevelopmentSyncTransport', () => {
     });
     expect(await sync.synchronize([start])).toMatchObject({ ok: true });
 
-    const store = new KineoSqliteStore(database);
     expect(await store.loadRoutineSession(routine.id)).toEqual({
       ok: true,
       value: routine,
@@ -159,18 +285,7 @@ describe('DevelopmentSyncTransport', () => {
   });
 
   it('rejects a malformed routine start without throwing', async () => {
-    const database = new NodeSqliteTestDatabase();
-    await migrateKineoDatabase(database, nowMilliseconds);
-    const repository = new KineoSqliteSyncRepository(
-      database,
-      accountId,
-      installationId,
-    );
-    expect(await repository.initialize(nowMilliseconds)).toEqual({
-      ok: true,
-      value: undefined,
-    });
-    const transport = new DevelopmentSyncTransport(repository, accountId);
+    const { database, transport } = await fixture();
 
     await expect(transport.synchronize({
       installationId,
@@ -192,6 +307,38 @@ describe('DevelopmentSyncTransport', () => {
         changes: [],
         dispositions: [{
           mutationId: startMutationId,
+          kind: 'rejected',
+          code: 'invalidCommand',
+        }],
+      },
+    });
+    await database.closeAsync();
+  });
+
+  it('rejects a malformed check-in without throwing', async () => {
+    const { database, transport } = await fixture();
+
+    await expect(transport.synchronize({
+      installationId,
+      mutations: [{
+        mutationId: attentionMutationId,
+        installationId,
+        historyEpoch: firstHistoryEpoch,
+        createdAtMilliseconds: nowMilliseconds,
+        command: {
+          kind: 'submitCheckIn',
+          checkIn: {},
+          decisionId,
+          decisionRevision: 1,
+          durationVariant: 'standard',
+        },
+      }],
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        changes: [],
+        dispositions: [{
+          mutationId: attentionMutationId,
           kind: 'rejected',
           code: 'invalidCommand',
         }],
