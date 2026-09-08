@@ -3,6 +3,7 @@ name: First use through routine feedback and deletion
 ---
 - launchApp:
     clearState: true
+    clearKeychain: true
 - extendedWaitUntil:
     visible: "A routine shaped around how you feel now."
     timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}

@@ -3,6 +3,7 @@ name: Routine interruption, alternative, and safety stop
 ---
 - launchApp:
     clearState: true
+    clearKeychain: true
 - extendedWaitUntil:
     visible: "A routine shaped around how you feel now."
     timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
