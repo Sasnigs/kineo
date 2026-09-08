@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — M1–M3 complete; M4–M12 sequentially authorized subject to documented gates |
+| Status | Approved platform contract with Account amendment |
 | Depends on | TD-01 architecture, TD-02 domain/data, TD-05 flows |
 | Owns | Apple-framework adapters and lifecycle behavior |
 | Last updated | August 9, 2026 |
@@ -21,7 +21,7 @@ Version-one services are:
 - local feature configuration;
 - a disabled-by-default HealthKit boundary.
 
-There is no account, sync client, remote-config client, analytics SDK, or server dependency.
+The approved Account implementation adds native Apple/Google authentication, SecureStore, and an allow-listed Supabase client through TD-10 and TD-11. Remote configuration, analytics, and diagnostics SDKs remain excluded.
 
 ### Adapter map
 
@@ -169,7 +169,7 @@ Use privacy-redacted operational logs only in development and diagnostics builds
 
 Do not rely only on OSLog privacy interpolation; the logger interface itself accepts an allow-listed event and code rather than arbitrary metadata. Production log verbosity is minimal.
 
-Adding network access, analytics, remote diagnostics, or a third-party SDK requires a new data-flow design, consent decision, retention and deletion rules, privacy disclosure, network inspection, and explicit approval.
+Network access remains limited to the approved Supabase Auth/Edge Function and provider authentication flows. Adding any other endpoint, analytics, remote diagnostics, or SDK requires a new data-flow design and explicit approval.
 
 ## 9. Feature configuration
 

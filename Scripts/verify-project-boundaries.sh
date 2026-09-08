@@ -8,7 +8,7 @@ readonly EXPECTED_GRDB_VERSION="7.10.0"
 readonly EXPECTED_GRDB_REVISION="36e30a6f1ef10e4194f6af0cff90888526f0c115"
 readonly EXPECTED_PACKAGE_DECLARATION_COUNT="1"
 readonly RELEASE_CONTENT_GATE_MARKER="KINEO-PRODUCTION-CONTENT-REQUIRED"
-readonly APPROVED_EXPO_RUNTIME_DEPENDENCIES="@expo/vector-icons @noble/hashes expo expo-constants expo-crypto expo-linking expo-notifications expo-router expo-splash-screen expo-sqlite expo-status-bar expo-video react react-native react-native-safe-area-context react-native-screens"
+readonly APPROVED_EXPO_RUNTIME_DEPENDENCIES="@expo/vector-icons @noble/hashes @react-native-google-signin/google-signin @supabase/supabase-js expo expo-apple-authentication expo-constants expo-crypto expo-file-system expo-linking expo-notifications expo-router expo-secure-store expo-sharing expo-splash-screen expo-sqlite expo-status-bar expo-video react react-native react-native-safe-area-context react-native-screens react-native-url-polyfill"
 
 fail() {
     printf 'Project boundary check failed: %s\n' "$1" >&2
@@ -71,7 +71,10 @@ fi
 if git grep -n -I -E \
     '(^|[[:space:]])(fetch|XMLHttpRequest|WebSocket)[[:space:](]|from[[:space:]].*(axios|@apollo|firebase|@sentry)|https?://' \
     -- 'apps/mobile/src/**/*.ts' 'apps/mobile/src/**/*.tsx' \
-       'apps/mobile/modules/**/*.ts' 'apps/mobile/modules/**/*.tsx'; then
+       'apps/mobile/modules/**/*.ts' 'apps/mobile/modules/**/*.tsx' \
+       ':(exclude)apps/mobile/src/**/*.test.ts' \
+       ':(exclude)apps/mobile/src/**/*.test.tsx' \
+       ':(exclude)apps/mobile/src/testing/**'; then
     fail "production Expo sources contain a network client or endpoint"
 fi
 

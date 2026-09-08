@@ -1,0 +1,6 @@
+.temp/
+.branches/
+.env
+.env.*
+!.env.example
+functions/_shared/generated/

@@ -79,6 +79,10 @@ import {
 } from '../core/persistence/routine-persistence-domain';
 import { KineoRoutineModule } from './kineo-routine-module';
 import { KineoAttentionModule } from './kineo-attention-module';
+import type {
+  PlanAuthorization,
+  PlanAuthority,
+} from './account/kineo-plan-authority';
 
 export type ProductClock = Readonly<{
   nowMilliseconds(): number;
@@ -221,6 +225,7 @@ export class KineoProductService implements KineoProductServing {
     private readonly clock: ProductClock,
     private readonly runtime: ProductRuntime,
     private readonly reminderScheduler: ReminderScheduling,
+    private readonly planAuthority?: PlanAuthority,
   ) {
     this.routineModule = new KineoRoutineModule(store, {
       nowMilliseconds: () => clock.nowMilliseconds(),
@@ -550,6 +555,27 @@ export class KineoProductService implements KineoProductServing {
       if (!mutation.ok) return { ok: false, error: { code: 'invalidData' } };
       mutations.push(mutation.value);
     }
+    let authorization: PlanAuthorization | undefined;
+    if (this.planAuthority !== undefined) {
+      const decisionId = parseSelectionDecisionId(this.runtime.nextIdentifier());
+      if (!decisionId.ok) return { ok: false, error: { code: 'invalidData' } };
+      const authorized = await this.planAuthority.authorize(
+        completed,
+        decisionId.value,
+        firstDecisionRevision,
+        'standard',
+        undefined,
+        mutations,
+      );
+      if (!authorized.ok) return authorized;
+      authorization = authorized.value;
+      if (
+        (mutations.length > 0 && authorization.kind !== 'noPlan') ||
+        (mutations.length === 0 && authorization.kind !== 'approved')
+      ) {
+        return { ok: false, error: { code: 'serverRejected' } };
+      }
+    }
     const saved = await this.store.completeCheckIn(completed, mutations);
     if (!saved.ok) return persistenceFailure(saved.error);
     if (mutations.length > 0) {
@@ -571,7 +597,12 @@ export class KineoProductService implements KineoProductServing {
             },
           };
     }
-    const plan = await this.preparePlan(draft.checkInId, 'standard');
+    const plan = await this.preparePlan(
+      draft.checkInId,
+      'standard',
+      undefined,
+      authorization?.kind === 'approved' ? authorization : undefined,
+    );
     return plan.ok
       ? { ok: true, value: { kind: 'plan', plan: plan.value } }
       : plan;
@@ -1090,6 +1121,7 @@ export class KineoProductService implements KineoProductServing {
     checkInId: CheckInDraft['checkInId'],
     duration: DurationVariant,
     requestedOverride?: RoutineLevel,
+    preauthorized?: Extract<PlanAuthorization, { kind: 'approved' }>,
   ): Promise<ProductResult<PlanPresentation>> {
     const attention = await this.store.loadAttentionStates();
     if (!attention.ok) return persistenceFailure(attention.error);
@@ -1124,9 +1156,32 @@ export class KineoProductService implements KineoProductServing {
         ? existingResult.value
         : undefined;
     const decisionId = existing === undefined
-      ? parseSelectionDecisionId(this.runtime.nextIdentifier())
+      ? preauthorized === undefined
+        ? parseSelectionDecisionId(this.runtime.nextIdentifier())
+        : { ok: true as const, value: preauthorized.decisionId }
       : { ok: true as const, value: existing.id };
     if (!decisionId.ok) return { ok: false, error: { code: 'invalidData' } };
+    const decisionRevision =
+      existing?.revision ??
+      preauthorized?.decisionRevision ??
+      ((existingResult.value?.revision ?? noExistingRevision) + firstDecisionRevision);
+    let authorization = preauthorized;
+    if (
+      existing === undefined &&
+      authorization === undefined &&
+      this.planAuthority !== undefined
+    ) {
+      const authorized = await this.planAuthority.authorize(
+        checkIn,
+        decisionId.value,
+        decisionRevision,
+        duration,
+        requestedOverride,
+      );
+      if (!authorized.ok) return authorized;
+      if (authorized.value.kind !== 'approved') return invalidState;
+      authorization = authorized.value;
+    }
 
     const historyByArea: Partial<Record<BodyArea, ActiveHistoryState>> = {};
     for (const area of [
@@ -1185,8 +1240,7 @@ export class KineoProductService implements KineoProductServing {
       decisionId: decisionId.value,
       checkInId,
       decisionRevision:
-        existing?.revision ??
-        ((existingResult.value?.revision ?? noExistingRevision) + firstDecisionRevision),
+        decisionRevision,
       primaryArea: checkIn.primaryArea,
       secondaryArea: profile.secondaryArea,
       secondaryParticipation: profile.secondaryArea === undefined
@@ -1226,6 +1280,21 @@ export class KineoProductService implements KineoProductServing {
       return { ok: false, error: { code: 'contentUnavailable' } };
     }
     if (
+      authorization !== undefined &&
+      (
+        authorization.decisionId !== decisionId.value ||
+        authorization.decisionRevision !== decisionRevision ||
+        authorization.rulesVersion !== prototypeSelectionRulesVersion ||
+        authorization.catalogVersion !== catalog.catalogVersion ||
+        authorization.recommendedLevel !== selected.plan.recommendedLevel ||
+        authorization.selectedLevel !== selected.plan.selectedLevel ||
+        authorization.deliveredLevel !== composition.routine.deliveredLevel ||
+        authorization.duration !== duration
+      )
+    ) {
+      return { ok: false, error: { code: 'serverRejected' } };
+    }
+    if (
       existing !== undefined &&
       existing.compositionFingerprint !== composition.routine.fingerprint
     ) return { ok: false, error: { code: 'invalidData' } };
@@ -1233,9 +1302,7 @@ export class KineoProductService implements KineoProductServing {
       const decision = this.makeDecision(
         checkInId,
         decisionId.value,
-        existingResult.value?.revision === undefined
-          ? firstDecisionRevision
-          : existingResult.value.revision + firstDecisionRevision,
+        decisionRevision,
         selected.plan,
         composition.routine,
         historyByArea,

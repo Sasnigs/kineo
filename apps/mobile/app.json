@@ -13,7 +13,8 @@
     "ios": {
       "bundleIdentifier": "app.kineo.expo.prototype",
       "deploymentTarget": "17.0",
-      "supportsTablet": false
+      "supportsTablet": false,
+      "usesAppleSignIn": true
     },
     "plugins": [
       "expo-router",
@@ -25,7 +26,9 @@
       ],
       "expo-sqlite",
       "expo-video",
-      "expo-notifications"
+      "expo-notifications",
+      "expo-secure-store",
+      "expo-apple-authentication"
     ],
     "experiments": {
       "typedRoutes": true

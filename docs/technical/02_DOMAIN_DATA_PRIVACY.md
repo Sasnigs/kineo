@@ -2,17 +2,17 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Approved prototype contract — M1–M3 complete; M4–M12 sequentially authorized subject to documented gates |
-| Scope | Domain model, local persistence, data lifecycle, and privacy enforcement |
+| Status | Local data contract amended by approved Account architecture |
+| Scope | Domain model, protected local cache, data lifecycle, and privacy enforcement |
 | Sources | `../KINEO_PRODUCT_DESIGN.md`, `../KINEO_UX_DESIGN_SPEC.md`, `01_APP_ARCHITECTURE.md` |
 | Last reviewed | August 9, 2026 |
 
-This document defines the source of truth for Kineo’s local state. It specifies no server, account, synchronization, research export, or telemetry implementation.
+This document defines Kineo's product records and protected local cache. TD-11 and TD-12 supersede every local-only, no-account, and Delete All clause with the Account-scoped cloud source of truth, synchronization, export, and Delete Account contracts.
 
 ## 1. Prototype decisions
 
-1. **Durable store:** one migrated SQLite database through GRDB.
-2. **Local-first:** core flows never require or check a network.
+1. **Durable cache:** one migrated protected SQLite database through Expo SQLite.
+2. **Validated online writes:** Check-in submission and new Plan creation require the authenticated server; an active Routine remains locally operable.
 3. **No prototype telemetry:** no SDK, endpoint, queue, identifier, or event transmission.
 4. **No prototype HealthKit data:** store no derived value or speculative health field.
 5. **Immutable catalog input:** user records capture versions and resolved snapshots but never edit catalog content.
@@ -522,7 +522,7 @@ When iOS announces that protected data will become unavailable, the active routi
 ### Other storage channels
 
 - `UserDefaults`: non-sensitive presentation toggles only; preferably none in v1.
-- Keychain: not required because there is no account, token, or encryption key managed by Kineo.
+- Keychain: refresh tokens use the non-synchronizing SecureStore adapter defined by TD-10; product records and access tokens do not.
 - Logs: allow-listed fixed category codes only, private/redacted by default.
 - Notifications: neutral copy without area, report, routine level, or HealthKit detail.
 - Pasteboard, Spotlight, widgets, Live Activities, Siri/App Intents, and file export: out of scope.
@@ -566,7 +566,7 @@ It retains:
 
 Retaining only current Attention Required state prevents an ordinary history reset from becoming a safety bypass without retaining prior cleared-event history. The confirmation screen must disclose this exception and distinguish Reset History from Delete All Data.
 
-### Delete all Kineo data
+### Legacy local Delete All behavior
 
 Delete All crosses database, filesystem, and platform-service boundaries. It is an idempotent, verified erasure workflow, not one transaction:
 
@@ -585,7 +585,7 @@ Kineo creates no cloud copy and marks its local private directory for backup exc
 
 ## 10. Offline behavior
 
-Offline is the normal architecture, not a degraded replica.
+Offline is a bounded mode after Account hydration. TD-11 owns the current offline contract; the broader local-only list below is retained as historical behavior that must not be assumed for new Plans.
 
 The installed app must support without connectivity:
 

@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -34,9 +35,12 @@ import type {
   ProfilePresentation,
   ProgressPresentation,
   ProductFlowError,
+  ProductResult,
   ProductStartState,
   RoutinePresentation,
 } from '@/core/product/product-flow';
+import type { AuthProvider } from '@/core/account/auth-module';
+import { minimumPasswordCharacterCount } from '@/core/account/account-domain';
 import {
   colors,
   layout,
@@ -84,7 +88,10 @@ type LocalScreen =
   | Readonly<{ kind: 'profile'; profile: ProfilePresentation }>
   | Readonly<{ kind: 'profileAreas'; profile: ProfilePresentation }>
   | Readonly<{ kind: 'confirmReset'; profile: ProfilePresentation }>
+  | Readonly<{ kind: 'confirmExport'; profile: ProfilePresentation }>
+  | Readonly<{ kind: 'changePassword'; profile: ProfilePresentation }>
   | Readonly<{ kind: 'confirmDelete'; profile: ProfilePresentation }>
+  | Readonly<{ kind: 'confirmLogout'; profile: ProfilePresentation }>
   | Readonly<{
       kind: 'feedback';
       routine: RoutinePresentation;
@@ -95,6 +102,17 @@ type LocalScreen =
 type KineoProductAppProps = Readonly<{
   service: KineoProductServing;
   onStoreRestartRequired: () => void;
+  accountActions?: Readonly<{
+    provider: AuthProvider;
+    resetHistory(password?: string): Promise<ProductResult<void>>;
+    exportData(password?: string): Promise<ProductResult<void>>;
+    changePassword(
+      currentPassword: string,
+      newPassword: string,
+    ): Promise<ProductResult<void>>;
+    deleteAccount(password?: string): Promise<ProductResult<void>>;
+    logout(discardPendingChanges: boolean): Promise<ProductResult<void>>;
+  }>;
 }>;
 
 type MainTab = 'today' | 'progress' | 'profile';
@@ -106,6 +124,7 @@ const areaLabels: Readonly<Record<BodyArea, string>> = Object.freeze({
 });
 
 const minutesPerHour = 60;
+const exportDownloadLifetimeMinutes = 15;
 const morningReminderWindow = Object.freeze({
   startMinutes: 8 * minutesPerHour,
   endMinutes: 9 * minutesPerHour,
@@ -123,6 +142,15 @@ function errorMessage(error: ProductFlowError): string {
   if (error.code === 'contentUnavailable') return 'No approved prototype routine is available for this plan.';
   if (error.code === 'attentionRequired') return 'Attention Required is active. Review it before another routine.';
   if (error.code === 'reminderUnavailable') return "Kineo couldn't update reminders. Try again.";
+  if (error.code === 'onlineValidationRequired') {
+    return 'Connect to the internet so Kineo can validate this check-in and create your plan.';
+  }
+  if (error.code === 'accountUnavailable') {
+    return 'Your account session needs to be refreshed. Close and reopen Kineo.';
+  }
+  if (error.code === 'serverRejected') {
+    return 'Kineo could not safely validate this plan. Review your answers and try again.';
+  }
   switch (error.cause.code) {
     case 'protectedDataUnavailable':
       return 'Unlock this iPhone, then try again.';
@@ -136,12 +164,16 @@ function errorMessage(error: ProductFlowError): string {
 export function KineoProductApp({
   service,
   onStoreRestartRequired,
+  accountActions,
 }: KineoProductAppProps) {
   const [screen, setScreen] = useState<LocalScreen>({ kind: 'loading' });
   const [selectedPrimaryArea, setSelectedPrimaryArea] = useState<BodyArea>();
   const [selectedSecondaryArea, setSelectedSecondaryArea] = useState<BodyArea>();
   const [isSecondaryCleared, setIsSecondaryCleared] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [accountPassword, setAccountPassword] = useState('');
+  const [replacementPassword, setReplacementPassword] = useState('');
+  const [replacementPasswordConfirmation, setReplacementPasswordConfirmation] = useState('');
   const submissionGate = useRef(createExclusiveActionGate());
   const [reminderReconciliationFailed, setReminderReconciliationFailed] = useState(false);
 
@@ -1026,13 +1058,143 @@ export function KineoProductApp({
             Any current Attention Required area remains so Reset cannot bypass it. Your areas and reminder preference also remain.
           </Text>
         </View>
+        {accountActions?.provider === 'email' ? (
+          <TextInput
+            autoComplete="current-password"
+            onChangeText={setAccountPassword}
+            placeholder="Confirm your password"
+            placeholderTextColor={colors.secondaryInk}
+            secureTextEntry
+            style={styles.textInput}
+            value={accountPassword}
+          />
+        ) : null}
         <SecondaryButton
           danger
           disabled={isSubmitting}
           label="Reset history"
           onPress={() => void (async () => {
-            const result = await submit(() => service.resetHistory());
+            const result = await submit(() =>
+              accountActions?.resetHistory(accountPassword) ??
+              service.resetHistory()
+            );
             if (result?.ok) setScreen({ kind: 'profile', profile: screen.profile });
+          })()}
+        />
+        <SecondaryButton
+          label="Cancel"
+          onPress={() => setScreen({ kind: 'profile', profile: screen.profile })}
+        />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'confirmExport') {
+    return (
+      <Shell key="confirm-export">
+        <PageHeader eyebrow="PRIVACY & DATA" title="Export your Kineo data?" />
+        <Text style={styles.supporting}>
+          Kineo will create a private JSON file and open the iPhone share sheet. The one-time server copy expires after {exportDownloadLifetimeMinutes} minutes.
+        </Text>
+        {accountActions?.provider === 'email' ? (
+          <TextInput
+            autoComplete="current-password"
+            onChangeText={setAccountPassword}
+            placeholder="Confirm your password"
+            placeholderTextColor={colors.secondaryInk}
+            secureTextEntry
+            style={styles.textInput}
+            value={accountPassword}
+          />
+        ) : null}
+        <PrimaryButton
+          disabled={isSubmitting}
+          label="Create private export"
+          onPress={() => void (async () => {
+            const result = await submit(() =>
+              accountActions?.exportData(accountPassword) ??
+              Promise.resolve({ ok: false, error: { code: 'accountUnavailable' } })
+            );
+            if (result?.ok) {
+              setAccountPassword('');
+              setScreen({ kind: 'profile', profile: screen.profile });
+            }
+          })()}
+        />
+        <SecondaryButton
+          label="Cancel"
+          onPress={() => setScreen({ kind: 'profile', profile: screen.profile })}
+        />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'changePassword') {
+    const passwordIsLongEnough =
+      [...replacementPassword].length >= minimumPasswordCharacterCount;
+    const passwordsMatch = replacementPassword === replacementPasswordConfirmation;
+    return (
+      <Shell key="change-password">
+        <PageHeader eyebrow="ACCOUNT SECURITY" title="Change your password" />
+        <Text style={styles.supporting}>
+          Confirm your current password, then use at least {minimumPasswordCharacterCount} characters for the new one.
+        </Text>
+        <TextInput
+          autoComplete="current-password"
+          onChangeText={setAccountPassword}
+          placeholder="Current password"
+          placeholderTextColor={colors.secondaryInk}
+          secureTextEntry
+          style={styles.textInput}
+          value={accountPassword}
+        />
+        <TextInput
+          autoComplete="new-password"
+          onChangeText={setReplacementPassword}
+          placeholder="New password"
+          placeholderTextColor={colors.secondaryInk}
+          secureTextEntry
+          style={styles.textInput}
+          value={replacementPassword}
+        />
+        <TextInput
+          autoComplete="new-password"
+          onChangeText={setReplacementPasswordConfirmation}
+          placeholder="Confirm new password"
+          placeholderTextColor={colors.secondaryInk}
+          secureTextEntry
+          style={styles.textInput}
+          value={replacementPasswordConfirmation}
+        />
+        {!passwordsMatch && replacementPasswordConfirmation.length > 0 ? (
+          <Text accessibilityRole="alert" style={styles.safetyCue}>
+            The passwords do not match.
+          </Text>
+        ) : null}
+        <PrimaryButton
+          disabled={
+            isSubmitting ||
+            accountPassword.length === 0 ||
+            !passwordIsLongEnough ||
+            !passwordsMatch
+          }
+          label="Update password"
+          onPress={() => void (async () => {
+            const result = await submit(() =>
+              accountActions?.changePassword(
+                accountPassword,
+                replacementPassword,
+              ) ?? Promise.resolve({
+                ok: false,
+                error: { code: 'accountUnavailable' },
+              })
+            );
+            if (result?.ok) {
+              setAccountPassword('');
+              setReplacementPassword('');
+              setReplacementPasswordConfirmation('');
+              setScreen({ kind: 'profile', profile: screen.profile });
+            }
           })()}
         />
         <SecondaryButton
@@ -1053,15 +1215,67 @@ export function KineoProductApp({
         <Text style={styles.cardBody}>
           It does not change iPhone notification permission history or data and diagnostics held independently by Apple.
         </Text>
+        {accountActions?.provider === 'email' ? (
+          <TextInput
+            autoComplete="current-password"
+            onChangeText={setAccountPassword}
+            placeholder="Confirm your password"
+            placeholderTextColor={colors.secondaryInk}
+            secureTextEntry
+            style={styles.textInput}
+            value={accountPassword}
+          />
+        ) : null}
         <SecondaryButton
           danger
           disabled={isSubmitting}
           label="Delete all data"
           onPress={() => void (async () => {
-            const result = await submit(() => service.deleteAllData());
+            const result = await submit(() =>
+              accountActions?.deleteAccount(accountPassword) ??
+              service.deleteAllData()
+            );
             if (result?.ok || result?.error.code === 'persistence') {
               onStoreRestartRequired();
             }
+          })()}
+        />
+        <SecondaryButton
+          label="Cancel"
+          onPress={() => setScreen({ kind: 'profile', profile: screen.profile })}
+        />
+      </Shell>
+    );
+  }
+
+  if (screen.kind === 'confirmLogout') {
+    return (
+      <Shell key="confirm-logout">
+        <PageHeader eyebrow="ACCOUNT" title="Sign out of Kineo?" />
+        <Text style={styles.supporting}>
+          Kineo will first upload changes saved on this iPhone, revoke this installation, and remove its local data.
+        </Text>
+        <PrimaryButton
+          disabled={isSubmitting}
+          label="Sync and sign out"
+          onPress={() => void (async () => {
+            const result = await submit(() =>
+              accountActions?.logout(false) ??
+              Promise.resolve({ ok: false, error: { code: 'accountUnavailable' } })
+            );
+            if (result?.ok) onStoreRestartRequired();
+          })()}
+        />
+        <SecondaryButton
+          danger
+          disabled={isSubmitting}
+          label="Discard unsynced changes and sign out"
+          onPress={() => void (async () => {
+            const result = await submit(() =>
+              accountActions?.logout(true) ??
+              Promise.resolve({ ok: false, error: { code: 'accountUnavailable' } })
+            );
+            if (result?.ok) onStoreRestartRequired();
           })()}
         />
         <SecondaryButton
@@ -1164,12 +1378,38 @@ export function KineoProductApp({
           </Text>
         </View>
         <View style={styles.historyCard}>
+          <Text style={styles.cardTitle}>Account security</Text>
+          <Text style={styles.cardBody}>
+            Signed in with {accountActions?.provider ?? 'a local test profile'}.
+          </Text>
+          {accountActions?.provider === 'email' ? (
+            <SecondaryButton
+              label="Change password"
+              onPress={() => setScreen({ kind: 'changePassword', profile: screen.profile })}
+            />
+          ) : null}
+        </View>
+        <View style={styles.historyCard}>
           <Text style={styles.cardTitle}>Privacy & data</Text>
-          <Text style={styles.cardBody}>Your Kineo history stays on this device. Reset keeps your profile and any current Attention gate.</Text>
+          <Text style={styles.cardBody}>
+            Your Kineo history follows your account across signed-in devices. Reset keeps your profile and any current Attention gate.
+          </Text>
           <SecondaryButton
             label="Reset History"
             onPress={() => setScreen({ kind: 'confirmReset', profile: screen.profile })}
           />
+          {accountActions === undefined ? null : (
+            <>
+              <SecondaryButton
+                label="Export my data"
+                onPress={() => setScreen({ kind: 'confirmExport', profile: screen.profile })}
+              />
+              <SecondaryButton
+                label="Sign out"
+                onPress={() => setScreen({ kind: 'confirmLogout', profile: screen.profile })}
+              />
+            </>
+          )}
           <SecondaryButton
             danger
             label="Delete All Data"
@@ -1189,7 +1429,9 @@ export function KineoProductApp({
         <View style={styles.historyCard}>
           <Text style={styles.cardTitle}>App information</Text>
           <Text style={styles.cardBody}>Kineo internal prototype · Expo build</Text>
-          <Text style={styles.cardBody}>No account, telemetry, or remote synchronization is enabled.</Text>
+          <Text style={styles.cardBody}>
+            Account synchronization is enabled. Telemetry remains disabled.
+          </Text>
         </View>
       </Shell>
     );
@@ -2119,6 +2361,16 @@ const styles = StyleSheet.create({
   infoPill: { alignItems: 'center', backgroundColor: colors.elevatedSurface, borderColor: colors.border, borderRadius: radius.status, borderWidth: layout.borderWidth, flexDirection: 'row', gap: spacing.compact, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
   infoPillText: { color: colors.accentDeep, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
   welcomeFootnote: { color: colors.secondaryInk, fontSize: typography.captionSize, lineHeight: typography.captionLineHeight, textAlign: 'center' },
+  textInput: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.button,
+    borderWidth: layout.borderWidth,
+    color: colors.ink,
+    fontSize: typography.bodySize,
+    minHeight: layout.controlMinimumHeight,
+    paddingHorizontal: spacing.standard,
+  },
   primaryButton: { ...raisedSurfaceShadow, alignItems: 'center', backgroundColor: colors.accentDark, borderRadius: radius.button, justifyContent: 'center', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.roomy, paddingVertical: spacing.controlVertical },
   primaryButtonText: { color: colors.inverseInk, fontSize: typography.bodySize, fontWeight: typography.buttonWeight },
   secondaryButton: { alignItems: 'center', borderColor: colors.border, borderRadius: radius.button, borderWidth: layout.borderWidth, justifyContent: 'center', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.roomy, paddingVertical: spacing.controlVertical },
