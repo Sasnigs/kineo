@@ -17,10 +17,16 @@ import type {
   PrivacyResult,
 } from '../../core/account/account-privacy-module';
 import type {
+  SyncCommand,
   SyncChange,
   SyncRequest,
   SyncResponse,
 } from '../../core/account/sync-contract';
+import type { CheckIn } from '../../core/persistence/persistence-domain';
+import {
+  buildAuthoritativePlan,
+  type ApprovedAuthoritativePlan,
+} from '../../core/account/authoritative-plan';
 import type {
   BootstrapPage,
   SyncResult,
@@ -29,8 +35,6 @@ import type {
 import type { RefreshTokenVault } from './secure-refresh-token-vault';
 import type { KineoSqliteSyncRepository } from './kineo-sqlite-sync-repository';
 import { randomUUID } from 'expo-crypto';
-import { selectAreaLevel } from '../../core/selection/area-level-rule';
-import type { RoutineLevel } from '../../core/domain/selection-domain';
 
 export const developmentAccountId =
   '10000000-0000-4000-8000-000000000001';
@@ -43,6 +47,10 @@ const secondsPerMinute = 60;
 const reauthenticationLifetimeMinutes = 5;
 const reauthenticationLifetimeMilliseconds =
   reauthenticationLifetimeMinutes * secondsPerMinute * millisecondsPerSecond;
+type DevelopmentSubmitCheckInCommand = Omit<
+  Extract<SyncCommand, { kind: 'submitCheckIn' }>,
+  'checkIn'
+> & Readonly<{ checkIn: CheckIn }>;
 
 export class DevelopmentIdentityProvider implements IdentityTokenProvider {
   async acquireIdentityToken() {
@@ -219,77 +227,42 @@ export class DevelopmentSyncTransport implements SyncTransport {
         isRecord(mutation.command.checkIn) &&
         Array.isArray(mutation.command.checkIn.entries)
       ) {
-        const levels = mutation.command.checkIn.entries.flatMap((entry) =>
-          isRecord(entry) &&
-          (entry.changeReport === 'better' ||
-            entry.changeReport === 'similar' ||
-            entry.changeReport === 'worse') &&
-          (entry.movementComfort === 'limited' ||
-            entry.movementComfort === 'okay' ||
-            entry.movementComfort === 'good')
-            ? [selectAreaLevel({
-                changeReport: entry.changeReport,
-                movementComfort: entry.movementComfort,
-                activeUnlocked: false,
-              })]
-            : [],
-        );
-        const hasAttention = mutation.command.checkIn.entries.some((entry) =>
+        const command = mutation.command as DevelopmentSubmitCheckInCommand;
+        const hasAttention = command.checkIn.entries.some((entry) =>
           isRecord(entry) &&
           (entry.conditionalSafetyAnswer === 'yes' ||
             entry.conditionalSafetyAnswer === 'notSure')
         );
-        const recommendedLevel = levels.reduce<RoutineLevel>(
-          gentlerLevel,
-          'active',
-        );
-        const selectedLevel = mutation.command.requestedOverride === undefined
-          ? recommendedLevel
-          : gentlerLevel(
-              recommendedLevel,
-              mutation.command.requestedOverride,
-            );
         if (!hasAttention) {
-          const entries = mutation.command.checkIn.entries;
+          const authoritative = buildAuthoritativePlan({
+            checkIn: command.checkIn,
+            decisionId: command.decisionId as Parameters<typeof buildAuthoritativePlan>[0]['decisionId'],
+            revision: command.decisionRevision,
+            duration: command.durationVariant,
+            requestedOverride: command.requestedOverride,
+            secondaryArea: command.checkIn.secondaryArea,
+            attentionRequiredAreas: [],
+            orderedOutcomes: [],
+            createdAtMilliseconds: command.checkIn.completedAtMilliseconds ?? command.checkIn.startedAtMilliseconds,
+          });
+          if (!authoritative.ok || authoritative.value.kind !== 'approved') continue;
+          changes.push({
+            cursor: String(this.cursor),
+            entityKind: 'checkIn',
+            entityId: command.checkIn.id,
+            operation: 'upsert',
+            payload: command.checkIn,
+          });
+          this.cursor += 1;
           changes.push({
             cursor: String(this.cursor),
             entityKind: 'selectionDecision',
-            entityId: mutation.command.decisionId,
+            entityId: command.decisionId,
             operation: 'upsert',
-            payload: {
-              decisionId: mutation.command.decisionId,
-              checkInId: mutation.command.checkIn.id,
-              revision: mutation.command.decisionRevision,
-              rulesVersion: 'selection-v1.0.0-prototype',
-              catalogVersion: '0.1.0',
-              catalogVersionDelivered: '0.1.0',
-              outcome: 'selected',
-              recommendedLevel,
-              requestedOverride: mutation.command.requestedOverride,
-              overrideDisposition: mutation.command.requestedOverride === undefined
-                ? 'none'
-                : mutation.command.requestedOverride === recommendedLevel
-                  ? 'sameAsRecommended'
-                  : 'rejectedHigher',
-              selectedLevel,
-              deliveredLevel: selectedLevel,
-              durationVariant: mutation.command.durationVariant,
-              validationResult: 'fallback',
-              primaryTemplateId: 'kineo.primary.prototype',
-              primaryTemplateRevision: 1,
-              compositionFingerprint: 'a'.repeat(64),
-              areaInputs: entries.map((entry, index) => ({
-                area: entry.area,
-                role: entry.role,
-                checkInEntryId: entry.id,
-                baseLevel: selectedLevel,
-                activeUnlocked: false,
-                qualifyingCount: 0,
-                included: index === 0,
-              })),
-              reasons: [],
-              notices: [],
-            },
+            payload: developmentSelectionEnvelope(
+              command,
+              authoritative.value,
+            ),
           });
         }
       }
@@ -380,15 +353,25 @@ function authenticated(): Extract<AuthState, { kind: 'authenticated' }> {
   };
 }
 
-function gentlerLevel(left: RoutineLevel, right: RoutineLevel): RoutineLevel {
-  const rank: Readonly<Record<RoutineLevel, number>> = {
-    gentle: 0,
-    balanced: 1,
-    active: 2,
-  };
-  return rank[left] <= rank[right] ? left : right;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function developmentSelectionEnvelope(
+  command: DevelopmentSubmitCheckInCommand,
+  authoritative: ApprovedAuthoritativePlan,
+): Readonly<Record<string, unknown>> {
+  const decision = authoritative.decision;
+  return {
+    decisionId: authoritative.decisionId,
+    checkInId: command.checkIn.id,
+    revision: authoritative.decisionRevision,
+    rulesVersion: authoritative.rulesVersion,
+    catalogVersion: authoritative.catalogVersion,
+    recommendedLevel: authoritative.recommendedLevel,
+    selectedLevel: authoritative.selectedLevel,
+    deliveredLevel: authoritative.deliveredLevel,
+    durationVariant: authoritative.duration,
+    canonicalDecision: decision,
+  };
 }
