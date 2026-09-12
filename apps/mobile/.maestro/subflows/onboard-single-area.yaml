@@ -10,7 +10,7 @@ appId: app.kineo.expo.prototype
     file: tap-visible-control.yaml
     env:
       CONTROL_LABEL: "Yes, I’m 18 or older"
-- assertVisible: "Keep your progress with you"
+- assertVisible: "Your Kineo account"
 - runFlow:
     file: tap-visible-control.yaml
     env:
