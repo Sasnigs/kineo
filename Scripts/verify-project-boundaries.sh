@@ -8,7 +8,7 @@ readonly EXPECTED_GRDB_VERSION="7.10.0"
 readonly EXPECTED_GRDB_REVISION="36e30a6f1ef10e4194f6af0cff90888526f0c115"
 readonly EXPECTED_PACKAGE_DECLARATION_COUNT="1"
 readonly RELEASE_CONTENT_GATE_MARKER="KINEO-PRODUCTION-CONTENT-REQUIRED"
-readonly APPROVED_EXPO_RUNTIME_DEPENDENCIES="@expo/vector-icons @noble/hashes @react-native-google-signin/google-signin @supabase/supabase-js expo expo-apple-authentication expo-constants expo-crypto expo-file-system expo-linking expo-notifications expo-router expo-secure-store expo-sharing expo-splash-screen expo-sqlite expo-status-bar expo-video react react-native react-native-safe-area-context react-native-screens react-native-url-polyfill"
+readonly APPROVED_EXPO_RUNTIME_DEPENDENCIES="@expo/vector-icons @noble/hashes @react-native-google-signin/google-signin @supabase/supabase-js expo expo-apple-authentication expo-constants expo-crypto expo-file-system expo-linking expo-notifications expo-router expo-secure-store expo-sharing expo-splash-screen expo-sqlite expo-status-bar expo-video react react-native react-native-reanimated react-native-safe-area-context react-native-screens react-native-url-polyfill react-native-worklets"
 
 fail() {
     printf 'Project boundary check failed: %s\n' "$1" >&2
