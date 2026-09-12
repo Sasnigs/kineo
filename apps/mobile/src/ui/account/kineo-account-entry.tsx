@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -56,6 +57,35 @@ type EntryState =
 
 type AuthMode = 'options' | 'emailSignIn' | 'emailSignUp' | 'reset';
 
+const accessibilityAuthLayoutFontScale = 2;
+
+const authPresentation: Record<AuthMode, Readonly<{
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+}>> = {
+  options: {
+    eyebrow: 'YOUR KINEO ACCOUNT',
+    title: 'Your Kineo account',
+    subtitle: 'Keep your check-ins and routines together.',
+  },
+  emailSignIn: {
+    eyebrow: 'WELCOME BACK',
+    title: 'Sign in',
+    subtitle: 'Pick up where you left off.',
+  },
+  emailSignUp: {
+    eyebrow: 'GETTING STARTED',
+    title: 'Create an account',
+    subtitle: 'Keep your progress across devices.',
+  },
+  reset: {
+    eyebrow: 'ACCOUNT RECOVERY',
+    title: 'Reset password',
+    subtitle: 'We’ll email a reset link if your account exists.',
+  },
+};
+
 type Props = Readonly<{
   service: KineoProductServing;
   runtime: KineoAccountRuntime;
@@ -81,18 +111,27 @@ export function KineoAccountEntry({
   createAuthorizedService,
   onStoreRestartRequired,
 }: Props) {
+  const hasAlternativeSignIn = runtime.usesDevelopmentServices ||
+    runtime.signInProviders?.apple === true || runtime.signInProviders?.google === true;
   const [state, setState] = useState<EntryState>({
     kind: 'loading',
     message: accountCopy.loading,
   });
   const [busy, setBusy] = useState(false);
-  const [authMode, setAuthMode] = useState<AuthMode>('options');
+  const [authMode, setAuthMode] = useState<AuthMode>(
+    hasAlternativeSignIn ? 'options' : 'emailSignIn',
+  );
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [notice, setNotice] = useState<string>();
   const incomingUrl = useURL();
+
+  const showAuthMode = (mode: AuthMode) => {
+    setNotice(undefined);
+    setAuthMode(mode);
+  };
 
   const enterProduct = useCallback(async (
     session: KineoAccountSession,
@@ -635,22 +674,28 @@ export function KineoAccountEntry({
     );
   }
 
+  const presentation = authPresentation[authMode];
   return (
-    <AccountShell eyebrow="WELCOME TO KINEO" title="Keep your progress with you">
+    <AccountShell
+      eyebrow={presentation.eyebrow}
+      title={presentation.title}
+      subtitle={presentation.subtitle}
+      authLayout
+    >
       {runtime.usesDevelopmentServices ? (
         <View style={styles.developmentBadge}>
           <Text style={styles.developmentText}>INTERNAL TEST ACCOUNT</Text>
         </View>
       ) : null}
       {authMode === 'options' ? (
-        <>
+        <View style={styles.authPanel}>
           {runtime.usesDevelopmentServices ? (
             <ActionButton
               label="Continue with test account"
               disabled={busy}
               onPress={() => void runAuth(() => runtime.auth.signInWithApple())}
             />
-          ) : (
+          ) : runtime.signInProviders?.apple ? (
             <AppleAuthentication.AppleAuthenticationButton
               buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
               buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
@@ -658,92 +703,184 @@ export function KineoAccountEntry({
               onPress={() => void runAuth(() => runtime.auth.signInWithApple())}
               style={styles.appleButton}
             />
-          )}
-          {!runtime.usesDevelopmentServices ? (
+          ) : null}
+          {runtime.signInProviders?.google ? (
             <SecondaryButton
               label="Continue with Google"
               disabled={busy}
               onPress={() => void runAuth(() => runtime.auth.signInWithGoogle())}
             />
           ) : null}
+          <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.authDivider}>
+            <View style={styles.authDividerLine} />
+            <Text style={styles.authDividerText}>OR</Text>
+            <View style={styles.authDividerLine} />
+          </View>
           <SecondaryButton
             label="Continue with email"
-            onPress={() => setAuthMode('emailSignIn')}
+            disabled={busy}
+            onPress={() => showAuthMode('emailSignIn')}
           />
-        </>
+        </View>
       ) : (
         <>
-          <TextInput
-            autoCapitalize="none"
-            autoComplete="email"
-            keyboardType="email-address"
-            onChangeText={setEmail}
-            placeholder="Email address"
-            placeholderTextColor={colors.secondaryInk}
-            style={styles.input}
-            value={email}
-          />
-          {authMode !== 'reset' ? (
-            <TextInput
-              autoCapitalize="none"
-              autoComplete={authMode === 'emailSignUp' ? 'new-password' : 'current-password'}
-              onChangeText={setPassword}
-              placeholder="Password"
-              placeholderTextColor={colors.secondaryInk}
-              secureTextEntry
-              style={styles.input}
-              value={password}
+          <View style={styles.authPanel}>
+            <View style={styles.authField}>
+              <Text style={styles.authFieldLabel}>Email address</Text>
+              <TextInput
+                accessibilityLabel="Email address"
+                autoCapitalize="none"
+                autoComplete="email"
+                autoCorrect={false}
+                keyboardType="email-address"
+                onChangeText={setEmail}
+                placeholder="you@example.com"
+                placeholderTextColor={colors.secondaryInk}
+                style={styles.input}
+                value={email}
+              />
+            </View>
+            {authMode !== 'reset' ? (
+              <View style={styles.authField}>
+                <Text style={styles.authFieldLabel}>Password</Text>
+                <TextInput
+                  accessibilityLabel="Password"
+                  autoCapitalize="none"
+                  autoComplete={authMode === 'emailSignUp' ? 'new-password' : 'current-password'}
+                  onChangeText={setPassword}
+                  placeholder="Enter your password"
+                  placeholderTextColor={colors.secondaryInk}
+                  secureTextEntry
+                  style={styles.input}
+                  value={password}
+                />
+              </View>
+            ) : null}
+            {authMode === 'emailSignIn' ? (
+              <TextButton
+                label="Forgot password?"
+                alignEnd
+                disabled={busy}
+                onPress={() => showAuthMode('reset')}
+              />
+            ) : null}
+            {authMode === 'emailSignUp' ? (
+              <Text style={styles.caption}>
+                Use at least {minimumPasswordCharacterCount} characters. Passphrases and password managers work well.
+              </Text>
+            ) : null}
+            <ActionButton
+              disabled={busy}
+              label={authMode === 'emailSignUp'
+                ? 'Create account'
+                : authMode === 'reset'
+                  ? 'Send reset link'
+                  : 'Sign in'}
+              onPress={() => void (authMode === 'reset'
+                ? runSimpleAuthAction(
+                    () => runtime.auth.requestPasswordReset(email),
+                    setBusy,
+                    setNotice,
+                    'If that account exists, a reset link is on its way.',
+                  )
+                : runAuth(() => authMode === 'emailSignUp'
+                    ? runtime.auth.signUpWithEmail({ email, password })
+                    : runtime.auth.signInWithEmail({ email, password })))}
+            />
+          </View>
+          {authMode === 'emailSignIn' || authMode === 'emailSignUp' ? (
+            <InlineAuthAction
+              prompt={authMode === 'emailSignIn' ? 'New to Kineo?' : 'Already have an account?'}
+              label={authMode === 'emailSignIn' ? 'Create an account' : 'Sign in'}
+              disabled={busy}
+              onPress={() => showAuthMode(authMode === 'emailSignIn' ? 'emailSignUp' : 'emailSignIn')}
             />
           ) : null}
-          {authMode === 'emailSignUp' ? (
-            <Text style={styles.caption}>
-              Use at least {minimumPasswordCharacterCount} characters. Passphrases and password managers work well.
-            </Text>
+          {authMode === 'reset' ? (
+            <TextButton
+              label="Back to sign in"
+              disabled={busy}
+              onPress={() => showAuthMode('emailSignIn')}
+            />
+          ) : hasAlternativeSignIn ? (
+            <TextButton
+              label="All sign-in options"
+              disabled={busy}
+              onPress={() => showAuthMode('options')}
+            />
           ) : null}
-          <ActionButton
-            disabled={busy}
-            label={authMode === 'emailSignUp'
-              ? 'Create account'
-              : authMode === 'reset'
-                ? 'Send reset link'
-                : 'Sign in'}
-            onPress={() => void (authMode === 'reset'
-              ? runSimpleAuthAction(
-                  () => runtime.auth.requestPasswordReset(email),
-                  setBusy,
-                  setNotice,
-                  'If that account exists, a reset link is on its way.',
-                )
-              : runAuth(() => authMode === 'emailSignUp'
-                  ? runtime.auth.signUpWithEmail({ email, password })
-                  : runtime.auth.signInWithEmail({ email, password })))}
-          />
-          {authMode === 'emailSignIn' ? (
-            <>
-              <SecondaryButton label="Create an account" onPress={() => setAuthMode('emailSignUp')} />
-              <SecondaryButton label="Forgot password?" onPress={() => setAuthMode('reset')} />
-            </>
-          ) : null}
-          <SecondaryButton label="Back" onPress={() => setAuthMode('options')} />
         </>
       )}
       {notice === undefined ? null : <Notice message={notice} />}
-      <Text style={styles.caption}>
-        Your wellness history is private and is not included in email messages.
-      </Text>
+      {authMode === 'options' ? (
+        <Text style={styles.authPrivacyNote}>
+          Your wellness history is private and is not included in email messages.
+        </Text>
+      ) : null}
     </AccountShell>
+  );
+}
+
+function InlineAuthAction({
+  prompt,
+  label,
+  onPress,
+  disabled = false,
+}: Readonly<{ prompt: string; label: string; onPress: () => void; disabled?: boolean }>) {
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [styles.authInlineAction, disabled && styles.disabled, pressed && styles.pressed]}
+    >
+      <Text style={styles.authInlinePrompt}>{prompt} </Text>
+      <Text style={styles.authInlineLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function TextButton({
+  label,
+  onPress,
+  disabled = false,
+  alignEnd = false,
+}: Readonly<{ label: string; onPress: () => void; disabled?: boolean; alignEnd?: boolean }>) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.textButton,
+        alignEnd && styles.textButtonEnd,
+        disabled && styles.disabled,
+        pressed && styles.pressed,
+      ]}
+    >
+      <Text style={styles.textButtonLabel}>{label}</Text>
+    </Pressable>
   );
 }
 
 function AccountShell({
   eyebrow,
   title,
+  subtitle,
+  authLayout = false,
   children,
 }: Readonly<{
   eyebrow?: string;
   title?: string;
+  subtitle?: string;
+  authLayout?: boolean;
   children: React.ReactNode;
 }>) {
+  const { fontScale } = useWindowDimensions();
+  const simplifyAuthLayout = authLayout && fontScale >= accessibilityAuthLayoutFontScale;
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
@@ -754,14 +891,28 @@ function AccountShell({
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.brandRow}>
-            <View style={styles.brandDot} />
-            <Text style={styles.brand}>Kineo</Text>
-          </View>
-          <View style={styles.content}>
-            {eyebrow === undefined ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
-            {title === undefined ? null : (
-              <Text accessibilityRole="header" style={styles.title}>{title}</Text>
+          {simplifyAuthLayout ? null : (
+            <View style={styles.brandRow}>
+              <View style={styles.brandDot} />
+              <Text style={styles.brand}>Kineo</Text>
+            </View>
+          )}
+          <View style={[styles.content, authLayout && styles.authContent]}>
+            {authLayout ? (
+              <View style={styles.authHeading}>
+                {eyebrow === undefined || simplifyAuthLayout ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
+                {title === undefined ? null : (
+                  <Text accessibilityRole="header" style={styles.title}>{title}</Text>
+                )}
+                {subtitle === undefined ? null : <Text style={styles.authSubtitle}>{subtitle}</Text>}
+              </View>
+            ) : (
+              <>
+                {eyebrow === undefined ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
+                {title === undefined ? null : (
+                  <Text accessibilityRole="header" style={styles.title}>{title}</Text>
+                )}
+              </>
             )}
             {children}
           </View>
@@ -956,6 +1107,88 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.section,
     width: '100%',
   },
+  authContent: {
+    gap: spacing.roomy,
+    justifyContent: 'flex-start',
+    paddingTop: spacing.hero,
+  },
+  authHeading: { gap: spacing.small },
+  authSubtitle: {
+    color: colors.secondaryInk,
+    fontSize: typography.bodySize,
+    lineHeight: typography.bodyLineHeight,
+  },
+  authPanel: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    borderWidth: layout.borderWidth,
+    gap: spacing.standard,
+    padding: spacing.roomy,
+  },
+  authField: { gap: spacing.compact },
+  authFieldLabel: {
+    color: colors.ink,
+    fontSize: typography.detailSize,
+    fontWeight: typography.strongWeight,
+    lineHeight: typography.detailLineHeight,
+  },
+  authDivider: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.small,
+    paddingVertical: spacing.compact,
+  },
+  authDividerLine: {
+    backgroundColor: colors.border,
+    flex: 1,
+    height: layout.borderWidth,
+  },
+  authDividerText: {
+    color: colors.secondaryInk,
+    fontSize: typography.captionSize,
+    fontWeight: typography.strongWeight,
+  },
+  authInlineAction: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    minHeight: layout.controlMinimumHeight,
+  },
+  authInlinePrompt: {
+    color: colors.secondaryInk,
+    fontSize: typography.detailSize,
+    lineHeight: typography.detailLineHeight,
+  },
+  authInlineLabel: {
+    color: colors.accentDark,
+    fontSize: typography.detailSize,
+    fontWeight: typography.strongWeight,
+    lineHeight: typography.detailLineHeight,
+  },
+  textButton: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    justifyContent: 'center',
+    minHeight: layout.controlMinimumHeight,
+    paddingHorizontal: spacing.compact,
+  },
+  textButtonEnd: { alignSelf: 'flex-end' },
+  textButtonLabel: {
+    color: colors.accentDark,
+    fontSize: typography.detailSize,
+    fontWeight: typography.strongWeight,
+    lineHeight: typography.detailLineHeight,
+  },
+  authPrivacyNote: {
+    borderColor: colors.border,
+    borderTopWidth: layout.borderWidth,
+    color: colors.secondaryInk,
+    fontSize: typography.captionSize,
+    lineHeight: typography.captionLineHeight,
+    paddingTop: spacing.standard,
+  },
   centered: { alignItems: 'center', gap: spacing.standard },
   eyebrow: {
     color: colors.accentDark,
@@ -1065,9 +1298,15 @@ const styles = StyleSheet.create({
     lineHeight: typography.detailLineHeight,
   },
   notice: {
-    color: colors.danger,
+    backgroundColor: colors.accentSoft,
+    borderColor: colors.border,
+    borderRadius: radius.button,
+    borderWidth: layout.borderWidth,
+    color: colors.ink,
     fontSize: typography.detailSize,
     lineHeight: typography.detailLineHeight,
+    overflow: 'hidden',
+    padding: spacing.standard,
   },
   developmentBadge: {
     alignSelf: 'flex-start',

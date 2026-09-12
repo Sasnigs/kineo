@@ -42,6 +42,73 @@ const bootstrap = {
 };
 
 describe('KineoAccountEntry', () => {
+  it('keeps email sign-in, signup, and recovery easy to navigate with visible field labels', async () => {
+    const service = {
+      loadStartState: async () => ({ ok: true, value: { kind: 'ready' } }),
+    } as unknown as KineoProductServing;
+    const runtime = {
+      usesDevelopmentServices: false,
+      signInProviders: { apple: true, google: true },
+      resumePendingDeletion: async () => ({ ok: true, value: undefined }),
+      resumePendingLogout: async () => ({ ok: true, value: { kind: 'none' } }),
+      auth: {
+        restoreSession: async () => ({ ok: true, value: { kind: 'signedOut' } }),
+      },
+    } as unknown as KineoAccountRuntime;
+    const view = await render(<KineoAccountEntry runtime={runtime} service={service}
+      createAuthorizedService={async () => ({ ok: true, value: service })}
+      onStoreRestartRequired={() => undefined} />);
+
+    expect(await view.findByText('Your Kineo account')).toBeTruthy();
+    await fireEvent.press(view.getByRole('button', { name: 'Continue with email' }));
+    expect(view.getByRole('header', { name: 'Sign in' })).toBeTruthy();
+    expect(view.getByText('Email address')).toBeTruthy();
+    expect(view.getByText('Password')).toBeTruthy();
+    expect(view.getByLabelText('Email address')).toBeTruthy();
+    expect(view.getByLabelText('Password')).toBeTruthy();
+
+    await fireEvent.press(view.getByRole('button', { name: 'Create an account' }));
+    expect(view.getByRole('header', { name: 'Create an account' })).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Create account' })).toBeTruthy();
+    await fireEvent.press(view.getByRole('button', { name: 'Sign in' }));
+    expect(view.getByRole('header', { name: 'Sign in' })).toBeTruthy();
+
+    await fireEvent.press(view.getByRole('button', { name: 'Forgot password?' }));
+    expect(view.getByRole('header', { name: 'Reset password' })).toBeTruthy();
+    expect(view.queryByLabelText('Password')).toBeNull();
+    expect(view.getByRole('button', { name: 'Send reset link' })).toBeTruthy();
+    await fireEvent.press(view.getByRole('button', { name: 'Back to sign in' }));
+    await fireEvent.press(view.getByRole('button', { name: 'All sign-in options' }));
+    expect(view.getByRole('header', { name: 'Your Kineo account' })).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Continue with Google' })).toBeTruthy();
+  });
+
+  it('opens email directly when social providers are not configured', async () => {
+    const service = {
+      loadStartState: async () => ({ ok: true, value: { kind: 'ready' } }),
+    } as unknown as KineoProductServing;
+    const runtime = {
+      usesDevelopmentServices: false,
+      signInProviders: { apple: false, google: false },
+      resumePendingDeletion: async () => ({ ok: true, value: undefined }),
+      resumePendingLogout: async () => ({ ok: true, value: { kind: 'none' } }),
+      auth: {
+        restoreSession: async () => ({ ok: true, value: { kind: 'signedOut' } }),
+      },
+    } as unknown as KineoAccountRuntime;
+    const view = await render(<KineoAccountEntry runtime={runtime} service={service}
+      createAuthorizedService={async () => ({ ok: true, value: service })}
+      onStoreRestartRequired={() => undefined} />);
+
+    expect(await view.findByRole('header', { name: 'Sign in' })).toBeTruthy();
+    expect(view.getByLabelText('Email address')).toBeTruthy();
+    expect(view.getByLabelText('Password')).toBeTruthy();
+    expect(view.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
+    expect(view.queryByRole('button', { name: 'All sign-in options' })).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: 'Forgot password?' }));
+    expect(view.getByRole('button', { name: 'Back to sign in' })).toBeTruthy();
+  });
+
   it('finishes expired logout through explicit isolated sign-in without hydrating history', async () => {
     const loadStartState = jest.fn<KineoProductServing['loadStartState']>();
     const restoreSession = jest.fn<KineoAccountRuntime['auth']['restoreSession']>();
@@ -274,7 +341,7 @@ describe('KineoAccountEntry', () => {
     expect(view.getByText('Are you 18 or older?')).toBeTruthy();
 
     await fireEvent.press(view.getByText('Yes, I’m 18 or older'));
-    expect(await view.findByText('Keep your progress with you')).toBeTruthy();
+    expect(await view.findByText('Your Kineo account')).toBeTruthy();
 
     await fireEvent.press(view.getByText('Continue with test account'));
     expect(await view.findByText('Review before continuing')).toBeTruthy();
