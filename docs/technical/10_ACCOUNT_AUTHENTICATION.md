@@ -54,7 +54,9 @@ Expected failures are discriminated values: `cancelled`, `invalidInput`, `verifi
 
 ## Configuration
 
-Development, staging, and production have separate Supabase projects and OAuth credentials. Public Expo environment values may contain only the project URL and publishable key; provider secrets, Resend credentials, and database credentials remain server-side.
+Development, staging, and production have separate Supabase projects and OAuth credentials. Public Expo environment values may contain only the project URL, publishable key, non-secret provider client IDs and URL scheme, and availability flags; provider secrets, Resend credentials, and database credentials remain server-side.
+
+The account screen offers Apple or Google only when its explicit public enablement flag is set. Google also requires both client IDs and its iOS URL scheme. These flags hide unconfigured actions; they do not replace provider and backend qualification.
 
 ## Verification
 
@@ -62,4 +64,3 @@ Development, staging, and production have separate Supabase projects and OAuth c
 - Email verification, resend, reset, weak/compromised password, rate limit, and enumeration resistance.
 - Session restore, serialized refresh, expiry, reauthentication timeout, and logout with pending mutations.
 - SecureStore failures block authenticated bootstrap and never fall back to AsyncStorage.
-

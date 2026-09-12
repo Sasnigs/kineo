@@ -56,6 +56,7 @@ export type KineoAccountRuntime = Readonly<{
   auth: AuthModule;
   exportSharer: PersonalDataExportSharer;
   usesDevelopmentServices: boolean;
+  signInProviders: Readonly<{ apple: boolean; google: boolean }>;
   resumePendingDeletion(): Promise<PrivacyResult<DeletionStatus | undefined>>;
   resumePendingLogout(): Promise<AuthResult<LogoutRecoveryState>>;
   reauthenticatePendingLogout(method:
@@ -196,6 +197,13 @@ export async function createKineoAccountRuntime(
           webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
           iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
         });
+  const signInProviders = {
+    apple: !development && process.env.EXPO_PUBLIC_APPLE_SIGN_IN_ENABLED === 'true',
+    google: !development && process.env.EXPO_PUBLIC_GOOGLE_SIGN_IN_ENABLED === 'true' &&
+      Boolean(process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID &&
+        process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID &&
+        process.env.EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME),
+  };
   const auth = new KineoAuthModule(
     gateway,
     appleIdentity,
@@ -228,6 +236,7 @@ export async function createKineoAccountRuntime(
       auth,
       exportSharer: new ExpoPersonalDataExportSharer(),
       usesDevelopmentServices: development,
+      signInProviders,
       resumePendingLogout,
       async reauthenticatePendingLogout(method) {
         const recovered = await logoutWorkflow.reauthenticatePendingLogout(async (intent) => {
