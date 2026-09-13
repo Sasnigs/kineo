@@ -177,7 +177,7 @@ export function KineoProductApp({
   const submissionGate = useRef(createExclusiveActionGate());
   const [reminderReconciliationFailed, setReminderReconciliationFailed] = useState(false);
   const { fontScale } = useWindowDimensions();
-  const usesAccessibleRowLayout = fontScale > layout.fixedBottomBarMaximumFontScale;
+  const usesLargeTextLayout = fontScale > layout.fixedBottomBarMaximumFontScale;
 
   const load = useCallback(async () => {
     setScreen({ kind: 'loading' });
@@ -1689,7 +1689,7 @@ export function KineoProductApp({
       </View>
       <View style={styles.todayIntro}>
         <Text style={styles.eyebrow}>TODAY</Text>
-        <Text accessibilityRole="header" maxFontSizeMultiplier={layout.displayMaximumFontScale} style={styles.todayTitle}>How are you moving?</Text>
+        <Text accessibilityRole="header" style={styles.todayTitle}>{usesLargeTextLayout ? 'Check in' : 'How are you moving?'}</Text>
         <Text style={styles.supporting}>Start with how you feel. Your answers guide what comes next.</Text>
       </View>
       <View style={styles.todayCard}>
@@ -1699,7 +1699,7 @@ export function KineoProductApp({
           </View>
           <Text style={styles.todayCardStepLabel}>FIRST STEP</Text>
         </View>
-        <Text maxFontSizeMultiplier={layout.displayMaximumFontScale} style={styles.todayCardTitle}>Check in with yourself</Text>
+        <Text style={styles.todayCardTitle}>{usesLargeTextLayout ? 'Start here' : 'Check in with yourself'}</Text>
         <Text style={styles.todayCardBody}>Tell Kineo what feels different today. Your answers decide what, if anything, comes next.</Text>
         <PrimaryButton
           disabled={isSubmitting}
@@ -1711,7 +1711,7 @@ export function KineoProductApp({
       {primaryArea === undefined ? null : (
         <View style={styles.todayAreaRow}>
           <Ionicons color={colors.accentDark} name="location-outline" size={layout.smallIconSize} />
-          <View style={[styles.todayAreaContent, usesAccessibleRowLayout && styles.todayAreaContentAccessible]}>
+          <View style={[styles.todayAreaContent, usesLargeTextLayout && styles.todayAreaContentAccessible]}>
             <Text style={styles.todayAreaText}>Your focus area</Text>
             <Text style={styles.todayAreaValue}>{areaLabels[primaryArea]}</Text>
           </View>
@@ -1765,7 +1765,7 @@ function PageHeader({ eyebrow, title }: Readonly<{ eyebrow: string; title: strin
   return (
     <View style={styles.header}>
       <Text style={styles.eyebrow}>{eyebrow}</Text>
-      <Text accessibilityRole="header" maxFontSizeMultiplier={layout.displayMaximumFontScale} style={styles.title}>{title}</Text>
+      <Text accessibilityRole="header" style={styles.title}>{title}</Text>
     </View>
   );
 }
@@ -1774,7 +1774,7 @@ function SectionHeading({ title, detail }: Readonly<{ title: string; detail?: st
   const { fontScale } = useWindowDimensions();
   return (
     <View style={[styles.sectionHeading, fontScale > layout.fixedBottomBarMaximumFontScale && styles.sectionHeadingAccessible]}>
-      <Text accessibilityRole="header" maxFontSizeMultiplier={layout.displayMaximumFontScale} style={styles.sectionHeadingText}>{title}</Text>
+      <Text accessibilityRole="header" style={styles.sectionHeadingText}>{title}</Text>
       {detail === undefined ? null : <Text style={styles.sectionHeadingDetail}>{detail}</Text>}
     </View>
   );
@@ -1842,7 +1842,7 @@ function BrandMark({ inverse = false }: Readonly<{ inverse?: boolean }>) {
           size={layout.smallIconSize}
         />
       </View>
-      <Text maxFontSizeMultiplier={layout.displayMaximumFontScale} style={[styles.brandName, inverse && styles.brandNameInverse]}>KINEO</Text>
+      <Text style={[styles.brandName, inverse && styles.brandNameInverse]}>KINEO</Text>
     </View>
   );
 }
@@ -1887,7 +1887,7 @@ function ConsistencyMeter({ current, goal }: Readonly<{ current: number; goal: n
         <Ionicons color={colors.accentDark} name="calendar-clear-outline" size={layout.iconSize} />
       </View>
       <View style={styles.metricValueRow}>
-        <Text maxFontSizeMultiplier={layout.displayMaximumFontScale} style={styles.metricValue}>{current}</Text>
+        <Text style={styles.metricValue}>{current}</Text>
         <Text style={styles.metricGoal}>of {goal} days</Text>
       </View>
       <Text style={styles.metricCaption}>Days you took part</Text>
