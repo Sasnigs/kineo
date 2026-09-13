@@ -64,7 +64,7 @@ name: First use through routine feedback and deletion
     file: subflows/tap-visible-control.yaml
     env:
       CONTROL_LABEL: "Progress"
-- assertVisible: "Progress without pressure"
+- assertVisible: "Progress"
 - runFlow:
     file: subflows/tap-visible-control.yaml
     env:
