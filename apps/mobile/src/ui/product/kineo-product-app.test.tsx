@@ -1,5 +1,6 @@
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import { describe, expect, it, jest } from '@jest/globals';
+import * as ReactNative from 'react-native';
 
 import type { KineoProductServing } from '@/application/kineo-product-service';
 import type { RoutineSessionId } from '@/core/content/routine-session-snapshot';
@@ -345,6 +346,25 @@ class SkippedSecondaryPlanService extends OnboardingService {
 }
 
 describe('Kineo product app', () => {
+  it('places tabs in the scrollable page when accessibility text is very large', async () => {
+    const accessibilityTestFontScale = 3;
+    const windowDimensions = ReactNative.Dimensions.get('window');
+    const dimensionSpy = jest.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({
+      ...windowDimensions,
+      fontScale: accessibilityTestFontScale,
+    });
+    try {
+      const service = new OnboardingService();
+      await service.completeOnboarding();
+      const view = await render(<KineoProductApp service={service} onStoreRestartRequired={jest.fn()} />);
+      await view.findByText('How are you moving?');
+      const tabList = view.getByRole('tab', { name: 'Today' }).parent;
+      expect(ReactNative.StyleSheet.flatten(tabList?.props.style)?.flexDirection).toBe('column');
+    } finally {
+      dimensionSpy.mockRestore();
+    }
+  });
+
   it('runs the complete durable onboarding flow', async () => {
     const view = await render(
       <KineoProductApp service={new OnboardingService()} onStoreRestartRequired={() => undefined} />,
@@ -388,7 +408,8 @@ describe('Kineo product app', () => {
     );
 
     await view.findByText('How are you moving?');
-    await fireEvent.press(view.getByRole('button', { name: 'Reset demo to first use' }));
+    await fireEvent.press(view.getByRole('tab', { name: 'Profile' }));
+    await fireEvent.press(await view.findByRole('button', { name: 'Reset demo to first use' }));
     await waitFor(() => expect(onStoreRestartRequired).toHaveBeenCalledTimes(1));
   });
 
@@ -423,10 +444,14 @@ describe('Kineo product app', () => {
     await fireEvent.press(view.getByRole('button', { name: 'Done' }));
     await view.findByText('How are you moving?');
     await fireEvent.press(view.getByRole('tab', { name: 'Progress' }));
-    await view.findByText('Progress without pressure');
+    await view.findByRole('header', { name: 'Progress' });
+    expect(view.getByText('Days you took part')).toBeTruthy();
     expect(view.getByText('Your patterns will appear here')).toBeTruthy();
     await fireEvent.press(view.getByRole('tab', { name: 'Profile' }));
     await waitFor(() => expect(view.getByRole('header', { name: 'Profile' })).toBeTruthy());
+    expect(view.getByRole('button', { name: 'Change areas' })).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Reset History' })).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Delete All Data' })).toBeTruthy();
     expect(view.getByText('Health app context')).toBeTruthy();
     expect(view.getByText('App information')).toBeTruthy();
   });
@@ -550,7 +575,10 @@ describe('Kineo product app', () => {
 
     await view.findByText('How are you moving?');
     await fireEvent.press(view.getByRole('tab', { name: 'Progress' }));
-    await fireEvent.press(await view.findByRole('button', { name: 'Neck · 1 check-ins' }));
+    expect(view.getByRole('header', { name: 'Your areas' })).toBeTruthy();
+    expect(view.getByText('1 check-in')).toBeTruthy();
+    await fireEvent.press(await view.findByRole('button', { name: 'View Neck history' }));
+    expect(view.getByText('Jun 15, 2025')).toBeTruthy();
     expect(view.getByText('Similar · Okay')).toBeTruthy();
     expect(view.getByText(/does not claim that one caused another/)).toBeTruthy();
   });
