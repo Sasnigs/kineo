@@ -176,6 +176,8 @@ export function KineoProductApp({
   const [replacementPasswordConfirmation, setReplacementPasswordConfirmation] = useState('');
   const submissionGate = useRef(createExclusiveActionGate());
   const [reminderReconciliationFailed, setReminderReconciliationFailed] = useState(false);
+  const { fontScale } = useWindowDimensions();
+  const usesAccessibleRowLayout = fontScale > layout.fixedBottomBarMaximumFontScale;
 
   const load = useCallback(async () => {
     setScreen({ kind: 'loading' });
@@ -909,44 +911,66 @@ export function KineoProductApp({
         bottomBar={<NavigationBar active="progress" onSelect={(tab) => void openTab(tab)} />}
         key="progress"
       >
-        <PageHeader eyebrow="YOUR HISTORY" title="Progress without pressure" />
+        <View style={styles.tabIntro}>
+          <PageHeader eyebrow="YOUR HISTORY" title="Progress" />
+          <Text style={styles.supporting}>A private view of your check-ins, routines, and responses.</Text>
+        </View>
         <ConsistencyMeter
           current={screen.progress.weeklyParticipationDayCount}
           goal={screen.progress.weeklyGoalDays}
         />
-        <Text style={styles.cardBody}>
-          {screen.progress.participationDayCount} total participation days. Completed routines, intentional stops, and eligible Pause Today choices count equally.
-        </Text>
         {!hasHistory ? (
-          <View style={styles.historyCard}>
+          <View style={styles.emptyStateCard}>
+            <View style={styles.emptyStateIcon}>
+              <Ionicons color={colors.accentDark} name="time-outline" size={layout.iconSize} />
+            </View>
             <Text style={styles.cardTitle}>Your patterns will appear here</Text>
-            <Text style={styles.cardBody}>Complete a check-in to begin your private history.</Text>
+            <Text style={styles.cardBody}>After your first check-in, you can revisit each area and routine here.</Text>
           </View>
         ) : (
           <>
-            <Text style={styles.cardTitle}>Areas</Text>
-            {screen.progress.areas.filter(({ checkInCount }) => checkInCount > 0).map((area) => (
-              <ChoiceButton
-                key={area.area}
-                label={`${areaLabels[area.area]} · ${area.checkInCount} check-ins`}
-                onPress={() => setScreen({
-                  kind: 'progressArea',
-                  progress: screen.progress,
-                  area: area.area,
-                })}
-              />
-            ))}
-            <Text style={styles.cardTitle}>Recent sessions</Text>
-            {screen.progress.recentSessions.map((session) => (
-              <View key={session.sessionId} style={styles.historyCard}>
-                <Text style={styles.cardTitle}>{session.localDay} · {levelLabel(session.deliveredLevel)}</Text>
-                <Text style={styles.cardBody}>
-                  {session.areas.map((area) => areaLabels[area]).join(' + ')} · {routineStatusLabel(session.status)}
-                </Text>
+            <View style={styles.tabSection}>
+              <SectionHeading title="Your areas" detail="Check-ins by area" />
+              <View style={styles.groupedList}>
+                {screen.progress.areas.filter(({ checkInCount }) => checkInCount > 0).map((area) => (
+                  <ListRow
+                    key={area.area}
+                    icon="body-outline"
+                    label={areaLabels[area.area]}
+                    value={`${area.checkInCount} ${area.checkInCount === 1 ? 'check-in' : 'check-ins'}`}
+                    accessibilityLabel={`View ${areaLabels[area.area]} history`}
+                    onPress={() => setScreen({
+                      kind: 'progressArea',
+                      progress: screen.progress,
+                      area: area.area,
+                    })}
+                  />
+                ))}
               </View>
-            ))}
+            </View>
+            {screen.progress.recentSessions.length > 0 ? (
+              <View style={styles.tabSection}>
+                <SectionHeading title="Recent sessions" />
+                <View style={styles.groupedList}>
+                  {screen.progress.recentSessions.map((session) => (
+                    <ListRow
+                      key={session.sessionId}
+                      icon="walk-outline"
+                      label={session.areas.map((area) => areaLabels[area]).join(' + ')}
+                      subtitle={`${levelLabel(session.deliveredLevel)} · ${routineStatusLabel(session.status)}`}
+                      value={localDayLabel(session.localDay)}
+                    />
+                  ))}
+                </View>
+              </View>
+            ) : null}
           </>
         )}
+        {hasHistory ? (
+          <Text style={styles.sectionFootnote}>
+            {screen.progress.participationDayCount} participation {screen.progress.participationDayCount === 1 ? 'day' : 'days'} in total. Completed routines, intentional stops, and eligible Pause Today choices count equally.
+          </Text>
+        ) : null}
       </Shell>
     );
   }
@@ -969,38 +993,47 @@ export function KineoProductApp({
         bottomBar={<NavigationBar active="progress" onSelect={(tab) => void openTab(tab)} />}
         key="progress-area"
       >
-        <PageHeader eyebrow="AREA DETAIL" title={areaLabels[area.area]} />
-        <View style={styles.historyCard}>
-          <Text style={styles.cardTitle}>{area.participationCount} participation choices</Text>
-          <Text style={styles.cardBody}>{area.completedRoutineCount} completed routines</Text>
-          <Text style={styles.cardBody}>
-            Responses: {area.responses.better} better · {area.responses.same} same · {area.responses.worse} worse
-          </Text>
-          <Text style={styles.cardBody}>
-            {area.activeUnlocked ? 'Active option available' : 'Active remains locked'}
-          </Text>
+        <Pressable
+          accessibilityLabel="Back to Progress"
+          accessibilityRole="button"
+          onPress={() => setScreen({ kind: 'progress', progress: screen.progress })}
+          style={styles.backLink}
+        >
+          <Ionicons color={colors.accentDark} name="chevron-back" size={layout.smallIconSize} />
+          <Text style={styles.backLinkText}>Progress</Text>
+        </Pressable>
+        <PageHeader eyebrow="AREA HISTORY" title={areaLabels[area.area]} />
+        <View style={styles.groupedList}>
+          <ListRow icon="calendar-outline" label="Participation choices" value={`${area.participationCount}`} />
+          <ListRow icon="checkmark-circle-outline" label="Completed routines" value={`${area.completedRoutineCount}`} />
+          <ListRow
+            icon="chatbubble-outline"
+            label="After-routine responses"
+            subtitle={`${area.responses.better} better · ${area.responses.same} same · ${area.responses.worse} worse`}
+          />
         </View>
-        <Text style={styles.cardTitle}>Check-in and level history</Text>
-        {[...area.history].reverse().map((entry, index) => (
-          <View key={`${entry.localDay}-${index}`} style={styles.historyCard}>
-            <Text style={styles.cardTitle}>{entry.localDay}</Text>
-            <Text style={styles.cardBody}>
-              {changeReportLabel(entry.changeReport)} · {movementComfortLabel(entry.movementComfort)}
-            </Text>
-            {entry.routine === undefined ? null : (
+        <Text style={styles.sectionFootnote}>
+          {area.activeUnlocked ? 'Active option is available.' : 'Active option is not available yet.'}
+        </Text>
+        <SectionHeading title="Check-in history" />
+        <View style={styles.groupedList}>
+          {[...area.history].reverse().map((entry, index) => (
+            <View key={`${entry.localDay}-${index}`} style={styles.areaHistoryEntry}>
+              <Text style={styles.cardTitle}>{localDayLabel(entry.localDay)}</Text>
               <Text style={styles.cardBody}>
-                {levelLabel(entry.routine.deliveredLevel)} · {routineStatusLabel(entry.routine.status)} · {entry.routine.response ?? 'No response'}
+                {changeReportLabel(entry.changeReport)} · {movementComfortLabel(entry.movementComfort)}
               </Text>
-            )}
-          </View>
-        ))}
-        <Text style={styles.cardBody}>
+              {entry.routine === undefined ? null : (
+                <Text style={styles.cardBody}>
+                  {levelLabel(entry.routine.deliveredLevel)} · {routineStatusLabel(entry.routine.status)} · {entry.routine.response === undefined ? 'No response' : displayValueLabel(entry.routine.response)}
+                </Text>
+              )}
+            </View>
+          ))}
+        </View>
+        <Text style={styles.sectionFootnote}>
           These events occurred in your history. Kineo does not claim that one caused another.
         </Text>
-        <PrimaryButton
-          label="Back to Progress"
-          onPress={() => setScreen({ kind: 'progress', progress: screen.progress })}
-        />
       </Shell>
     );
   }
@@ -1289,6 +1322,17 @@ export function KineoProductApp({
   if (screen.kind === 'profile') {
     const profile = screen.profile.profile;
     const reminder = screen.profile.reminderSettings;
+    const reminderIsOn = reminder?.enabled === true && (
+      screen.profile.reminderAuthorization === 'authorized' ||
+      screen.profile.reminderAuthorization === 'provisional'
+    );
+    const reminderStatusText = reminderIsOn
+      ? 'One generic reminder is scheduled each day.'
+      : screen.profile.reminderAuthorization === 'denied'
+        ? 'Notifications are off in iPhone Settings. Kineo still works without them.'
+        : screen.profile.reminderAuthorization === 'unavailable'
+          ? 'Reminder settings are temporarily unavailable. Kineo still works without them.'
+          : 'Optional. Kineo asks for notification access only after you choose a time.';
     const updateReminder = async (
       window: typeof morningReminderWindow,
     ) => {
@@ -1300,138 +1344,114 @@ export function KineoProductApp({
         bottomBar={<NavigationBar active="profile" onSelect={(tab) => void openTab(tab)} />}
         key="profile"
       >
-        <PageHeader eyebrow="SETTINGS" title="Profile" />
-        <View style={styles.historyCard}>
-          <Text style={styles.cardTitle}>Areas</Text>
-          <Text style={styles.cardBody}>
-            {profile.primaryArea === undefined ? 'Not set' : areaLabels[profile.primaryArea]}
-            {profile.secondaryArea === undefined ? '' : ` · ${areaLabels[profile.secondaryArea]}`}
+        <PageHeader eyebrow="YOUR SPACE" title="Profile" />
+        <View style={styles.tabSection}>
+          <SectionHeading title="Your routine" />
+          <View style={styles.groupedList}>
+            <ListRow
+              icon="body-outline"
+              label="Change areas"
+              subtitle={profile.primaryArea === undefined ? 'No primary area yet' :
+                [profile.primaryArea, profile.secondaryArea]
+                  .filter((area): area is BodyArea => area !== undefined)
+                  .map((area) => areaLabels[area]).join(' · ')}
+              onPress={() => {
+                setSelectedPrimaryArea(profile.primaryArea);
+                setSelectedSecondaryArea(profile.secondaryArea);
+                setIsSecondaryCleared(profile.secondaryArea === undefined);
+                setScreen({ kind: 'profileAreas', profile: screen.profile });
+              }}
+            />
+            <ListRow icon="calendar-outline" label="Weekly goal" value={`${profile.weeklyGoalDays} days`} />
+          </View>
+          <Text style={styles.sectionFootnote}>
+            Check-ins choose the level. Quick or Standard changes duration only.
           </Text>
-          <SecondaryButton label="Change areas" onPress={() => {
-            setSelectedPrimaryArea(profile.primaryArea);
-            setSelectedSecondaryArea(profile.secondaryArea);
-            setIsSecondaryCleared(profile.secondaryArea === undefined);
-            setScreen({ kind: 'profileAreas', profile: screen.profile });
-          }} />
         </View>
-        <View style={styles.historyCard}>
-          <Text style={styles.cardTitle}>Routine preferences</Text>
-          <Text style={styles.cardBody}>
-            Your daily check-in selects the level. Choose Quick or Standard on each plan; available time never changes the selected level.
-          </Text>
-          <Text style={styles.cardBody}>Weekly consistency goal: {profile.weeklyGoalDays} days</Text>
-        </View>
-        <View style={styles.historyCard}>
-          <Text style={styles.cardTitle}>Reminders</Text>
-          <Text style={styles.cardBody}>
-            {reminder?.enabled && (
-              screen.profile.reminderAuthorization === 'authorized' ||
-              screen.profile.reminderAuthorization === 'provisional'
-            )
-              ? 'One generic daily reminder is scheduled.'
-              : screen.profile.reminderAuthorization === 'denied'
-                ? 'Notifications are off in iPhone Settings. Kineo still works without them.'
-                : screen.profile.reminderAuthorization === 'unavailable'
-                  ? 'Reminder settings are temporarily unavailable. Kineo still works without them.'
-                  : 'Optional. Kineo asks for notification access only after you choose a time.'}
+        <View style={styles.tabSection}>
+          <SectionHeading title="Reminders" />
+          <View style={styles.groupedList}>
+            <ListRow
+              icon="notifications-outline"
+              label="Daily reminder"
+              value={reminderIsOn ? 'On' : 'Off'}
+            />
+            {screen.profile.reminderAuthorization === 'denied' ? (
+              <ListRow icon="settings-outline" label="Open iPhone Settings" onPress={() => void submit(() => service.openReminderSettings())} />
+            ) : null}
+            {reminderIsOn ? (
+              <ListRow
+                icon="notifications-off-outline"
+                label="Turn reminders off"
+                disabled={isSubmitting}
+                onPress={() => void (async () => {
+                  const result = await submit(() => service.disableReminder());
+                  if (result?.ok) setScreen({ kind: 'profile', profile: result.value });
+                })()}
+              />
+            ) : screen.profile.reminderAuthorization === 'denied' ? null : (
+              <>
+                <ListRow icon="sunny-outline" label="Morning · 8:00 AM" onPress={() => void updateReminder(morningReminderWindow)} />
+                <ListRow icon="moon-outline" label="Evening · 6:00 PM" onPress={() => void updateReminder(eveningReminderWindow)} />
+              </>
+            )}
+          </View>
+          <Text style={styles.sectionFootnote}>
+            {reminderStatusText}
           </Text>
           {reminderReconciliationFailed ? (
             <Text style={styles.safetyCue}>
               Kineo could not reconcile reminders after returning to the app. Try again from Profile.
             </Text>
           ) : null}
-          {screen.profile.reminderAuthorization === 'denied' ? (
-            <SecondaryButton
-              label="Open iPhone Settings"
-              onPress={() => void submit(() => service.openReminderSettings())}
-            />
-          ) : null}
-          {reminder?.enabled && (
-            screen.profile.reminderAuthorization === 'authorized' ||
-            screen.profile.reminderAuthorization === 'provisional'
-          ) ? (
-            <SecondaryButton
-              label="Turn reminders off"
-              disabled={isSubmitting}
-              onPress={() => void (async () => {
-                const result = await submit(() => service.disableReminder());
-                if (result?.ok) setScreen({ kind: 'profile', profile: result.value });
-              })()}
-            />
-          ) : (
-            <>
-              <ChoiceButton
-                label="Morning · 8:00 AM"
-                onPress={() => void updateReminder(morningReminderWindow)}
-              />
-              <ChoiceButton
-                label="Evening · 6:00 PM"
-                onPress={() => void updateReminder(eveningReminderWindow)}
-              />
-            </>
-          )}
         </View>
-        <View style={styles.historyCard}>
-          <Text style={styles.cardTitle}>Health app context</Text>
-          <Text style={styles.cardBody}>
-            Disabled in this prototype. Health data does not select or change Kineo routines.
+        <View style={styles.tabSection}>
+          <SectionHeading title="Account & privacy" />
+          <View style={styles.groupedList}>
+            <ListRow icon="person-circle-outline" label="Sign-in method" value={accountActions?.provider ?? 'Local test profile'} />
+            {accountActions?.provider === 'email' ? (
+              <ListRow icon="key-outline" label="Change password" onPress={() => setScreen({ kind: 'changePassword', profile: screen.profile })} />
+            ) : null}
+            <ListRow icon="refresh-outline" label="Reset History" onPress={() => setScreen({ kind: 'confirmReset', profile: screen.profile })} />
+            {accountActions === undefined ? null : (
+              <>
+                <ListRow icon="download-outline" label="Export my data" onPress={() => setScreen({ kind: 'confirmExport', profile: screen.profile })} />
+                <ListRow icon="log-out-outline" label="Sign out" onPress={() => setScreen({ kind: 'confirmLogout', profile: screen.profile })} />
+              </>
+            )}
+          </View>
+          <Text style={styles.sectionFootnote}>
+            Your history follows your account across signed-in devices. Reset keeps your profile and any current Attention gate.
           </Text>
+          <View style={styles.destructiveGroup}>
+            <ListRow danger icon="trash-outline" label="Delete All Data" onPress={() => setScreen({ kind: 'confirmDelete', profile: screen.profile })} />
+          </View>
         </View>
-        <View style={styles.historyCard}>
-          <Text style={styles.cardTitle}>Account security</Text>
-          <Text style={styles.cardBody}>
-            Signed in with {accountActions?.provider ?? 'a local test profile'}.
-          </Text>
-          {accountActions?.provider === 'email' ? (
-            <SecondaryButton
-              label="Change password"
-              onPress={() => setScreen({ kind: 'changePassword', profile: screen.profile })}
-            />
-          ) : null}
+        <View style={styles.tabSection}>
+          <SectionHeading title="About Kineo" />
+          <View style={styles.groupedList}>
+            <ListRow icon="heart-outline" label="Health app context" subtitle="Disabled in this prototype. Health data does not select or change Kineo routines." />
+            <ListRow icon="help-circle-outline" label="Safety and support" subtitle="General wellness movement planning; not diagnosis or treatment. Contact the Kineo product team for internal-test support." />
+            <ListRow icon="information-circle-outline" label="App information" subtitle="Internal Expo prototype · telemetry off" />
+          </View>
+          <Text style={styles.sectionFootnote}>Prototype exercise media is not ready for public release.</Text>
         </View>
-        <View style={styles.historyCard}>
-          <Text style={styles.cardTitle}>Privacy & data</Text>
-          <Text style={styles.cardBody}>
-            Your Kineo history follows your account across signed-in devices. Reset keeps your profile and any current Attention gate.
-          </Text>
+        <View style={styles.testSection}>
+          <View style={styles.testHeading}>
+            <Ionicons color={colors.secondaryInk} name="flask-outline" size={layout.smallIconSize} />
+            <Text style={styles.testLabel}>INTERNAL TESTING</Text>
+          </View>
           <SecondaryButton
-            label="Reset History"
-            onPress={() => setScreen({ kind: 'confirmReset', profile: screen.profile })}
+            icon="refresh-outline"
+            label="Reset demo to first use"
+            disabled={isSubmitting}
+            onPress={() => void (async () => {
+              const result = await submit(() => service.deleteAllData());
+              if (result?.ok || result?.error.code === 'persistence') {
+                onStoreRestartRequired();
+              }
+            })()}
           />
-          {accountActions === undefined ? null : (
-            <>
-              <SecondaryButton
-                label="Export my data"
-                onPress={() => setScreen({ kind: 'confirmExport', profile: screen.profile })}
-              />
-              <SecondaryButton
-                label="Sign out"
-                onPress={() => setScreen({ kind: 'confirmLogout', profile: screen.profile })}
-              />
-            </>
-          )}
-          <SecondaryButton
-            danger
-            label="Delete All Data"
-            onPress={() => setScreen({ kind: 'confirmDelete', profile: screen.profile })}
-          />
-        </View>
-        <View style={styles.historyCard}>
-          <Text style={styles.cardTitle}>Safety and support</Text>
-          <Text style={styles.cardBody}>
-            Kineo provides movement planning for general wellness. It does not diagnose or treat a condition.
-          </Text>
-          <Text style={styles.cardBody}>
-            This build uses prototype exercise media and is not ready for public release.
-          </Text>
-          <Text style={styles.cardBody}>For app support during internal testing, contact the Kineo product team.</Text>
-        </View>
-        <View style={styles.historyCard}>
-          <Text style={styles.cardTitle}>App information</Text>
-          <Text style={styles.cardBody}>Kineo internal prototype · Expo build</Text>
-          <Text style={styles.cardBody}>
-            Account synchronization is enabled. Telemetry remains disabled.
-          </Text>
         </View>
       </Shell>
     );
@@ -1666,29 +1686,21 @@ export function KineoProductApp({
     >
       <View style={styles.todayTopRow}>
         <BrandMark />
-        <View style={styles.areaBadge}>
-          <Ionicons color={colors.accentDark} name="location-outline" size={layout.smallIconSize} />
-          <Text style={styles.areaBadgeText}>{primaryArea ? areaLabels[primaryArea] : 'Kineo'}</Text>
-        </View>
       </View>
       <View style={styles.todayIntro}>
         <Text style={styles.eyebrow}>TODAY</Text>
-        <Text accessibilityRole="header" style={styles.todayTitle}>How are you moving?</Text>
-        <Text style={styles.supporting}>Take a moment, then let today’s answers shape what comes next.</Text>
+        <Text accessibilityRole="header" maxFontSizeMultiplier={layout.displayMaximumFontScale} style={styles.todayTitle}>How are you moving?</Text>
+        <Text style={styles.supporting}>Start with how you feel. Your answers guide what comes next.</Text>
       </View>
       <View style={styles.todayCard}>
         <View style={styles.todayCardTopRow}>
           <View style={styles.todayCardIcon}>
-            <Ionicons color={colors.forest} name="sparkles" size={layout.iconSize} />
+            <Ionicons color={colors.accentDark} name="body-outline" size={layout.iconSize} />
           </View>
-          <View style={styles.todayCardPill}>
-            <Ionicons color={colors.accentDeep} name="time-outline" size={layout.smallIconSize} />
-            <Text style={styles.todayCardPillText}>Brief check-in</Text>
-          </View>
+          <Text style={styles.todayCardStepLabel}>FIRST STEP</Text>
         </View>
-        <Text style={styles.todayCardEyebrow}>YOUR NEXT ROUTINE</Text>
-        <Text style={styles.todayCardTitle}>Start with how today feels.</Text>
-        <Text style={styles.todayCardBody}>Short, focused, and shaped by your answers—not a library to search.</Text>
+        <Text maxFontSizeMultiplier={layout.displayMaximumFontScale} style={styles.todayCardTitle}>Check in with yourself</Text>
+        <Text style={styles.todayCardBody}>Tell Kineo what feels different today. Your answers decide what, if anything, comes next.</Text>
         <PrimaryButton
           disabled={isSubmitting}
           icon="arrow-forward"
@@ -1696,23 +1708,15 @@ export function KineoProductApp({
           onPress={() => void startCheckIn()}
         />
       </View>
-      <View style={styles.testSection}>
-        <View style={styles.testHeading}>
-          <Ionicons color={colors.secondaryInk} name="flask-outline" size={layout.smallIconSize} />
-          <Text style={styles.testLabel}>INTERNAL TESTING</Text>
+      {primaryArea === undefined ? null : (
+        <View style={styles.todayAreaRow}>
+          <Ionicons color={colors.accentDark} name="location-outline" size={layout.smallIconSize} />
+          <View style={[styles.todayAreaContent, usesAccessibleRowLayout && styles.todayAreaContentAccessible]}>
+            <Text style={styles.todayAreaText}>Your focus area</Text>
+            <Text style={styles.todayAreaValue}>{areaLabels[primaryArea]}</Text>
+          </View>
         </View>
-        <SecondaryButton
-          icon="refresh-outline"
-          label="Reset demo to first use"
-          disabled={isSubmitting}
-          onPress={() => void (async () => {
-            const result = await submit(() => service.deleteAllData());
-            if (result?.ok || result?.error.code === 'persistence') {
-              onStoreRestartRequired();
-            }
-          })()}
-        />
-      </View>
+      )}
     </Shell>
   );
 }
@@ -1746,7 +1750,7 @@ function Shell({
             ) : null}
           </View>
         </ScrollView>
-        {bottomBar === undefined && persistentBottomBar === undefined ? null : (
+        {(bottomBar === undefined || shouldInlineBottomBar) && persistentBottomBar === undefined ? null : (
           <View style={styles.bottomBar}>
             {shouldInlineBottomBar ? null : bottomBar}
             {persistentBottomBar}
@@ -1761,8 +1765,70 @@ function PageHeader({ eyebrow, title }: Readonly<{ eyebrow: string; title: strin
   return (
     <View style={styles.header}>
       <Text style={styles.eyebrow}>{eyebrow}</Text>
-      <Text accessibilityRole="header" style={styles.title}>{title}</Text>
+      <Text accessibilityRole="header" maxFontSizeMultiplier={layout.displayMaximumFontScale} style={styles.title}>{title}</Text>
     </View>
+  );
+}
+
+function SectionHeading({ title, detail }: Readonly<{ title: string; detail?: string }>) {
+  const { fontScale } = useWindowDimensions();
+  return (
+    <View style={[styles.sectionHeading, fontScale > layout.fixedBottomBarMaximumFontScale && styles.sectionHeadingAccessible]}>
+      <Text accessibilityRole="header" maxFontSizeMultiplier={layout.displayMaximumFontScale} style={styles.sectionHeadingText}>{title}</Text>
+      {detail === undefined ? null : <Text style={styles.sectionHeadingDetail}>{detail}</Text>}
+    </View>
+  );
+}
+
+function ListRow({
+  icon, label, subtitle, value, accessibilityLabel, danger = false, disabled = false, onPress,
+}: Readonly<{
+  icon: KineoIconName;
+  label: string;
+  subtitle?: string;
+  value?: string;
+  accessibilityLabel?: string;
+  danger?: boolean;
+  disabled?: boolean;
+  onPress?: () => void;
+}>) {
+  const { fontScale } = useWindowDimensions();
+  const usesAccessibleRowLayout = fontScale > layout.fixedBottomBarMaximumFontScale;
+  const content = (
+    <>
+      <View style={[styles.listRowIcon, danger && styles.listRowIconDanger]}>
+        <Ionicons color={danger ? colors.danger : colors.accentDark} name={icon} size={layout.iconSize} />
+      </View>
+      <View style={styles.listRowContent}>
+        <Text style={[styles.listRowLabel, danger && styles.dangerText]}>{label}</Text>
+        {subtitle === undefined ? null : <Text style={styles.listRowSubtitle}>{subtitle}</Text>}
+        {usesAccessibleRowLayout && value !== undefined ? <Text style={styles.listRowValueAccessible}>{value}</Text> : null}
+      </View>
+      {value === undefined || usesAccessibleRowLayout ? null : <Text style={styles.listRowValue}>{value}</Text>}
+      {onPress === undefined ? null : (
+        <Ionicons
+          accessibilityElementsHidden
+          color={colors.secondaryInk}
+          importantForAccessibility="no-hide-descendants"
+          name="chevron-forward"
+          size={layout.smallIconSize}
+        />
+      )}
+    </>
+  );
+  if (onPress === undefined) return <View style={styles.listRow}>{content}</View>;
+  return (
+    <Pressable
+      accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityHint={[subtitle, value].filter((detail) => detail !== undefined).join(', ') || undefined}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [styles.listRow, disabled && styles.buttonDisabled, pressed && styles.listRowPressed]}
+    >
+      {content}
+    </Pressable>
   );
 }
 
@@ -1776,7 +1842,7 @@ function BrandMark({ inverse = false }: Readonly<{ inverse?: boolean }>) {
           size={layout.smallIconSize}
         />
       </View>
-      <Text style={[styles.brandName, inverse && styles.brandNameInverse]}>KINEO</Text>
+      <Text maxFontSizeMultiplier={layout.displayMaximumFontScale} style={[styles.brandName, inverse && styles.brandNameInverse]}>KINEO</Text>
     </View>
   );
 }
@@ -1815,20 +1881,16 @@ function InfoPill({ icon, label }: Readonly<{ icon: KineoIconName; label: string
 function ConsistencyMeter({ current, goal }: Readonly<{ current: number; goal: number }>) {
   const days = Array.from({ length: goal }, (_, index) => index < current);
   return (
-    <View
-      accessibilityLabel={`${current} of ${goal} consistency days this week`}
-      style={styles.consistencyMeter}
-    >
+    <View accessibilityLabel={`${current} of ${goal} participation days this week`} style={styles.consistencyMeter}>
       <View style={styles.metricHeader}>
-        <View style={styles.metricIcon}>
-          <Ionicons color={colors.forest} name="calendar-clear-outline" size={layout.iconSize} />
-        </View>
         <Text style={styles.metricEyebrow}>THIS WEEK</Text>
+        <Ionicons color={colors.accentDark} name="calendar-clear-outline" size={layout.iconSize} />
       </View>
       <View style={styles.metricValueRow}>
-        <Text style={styles.metricValue}>{current}</Text>
-        <Text style={styles.metricGoal}>of {goal} consistency days</Text>
+        <Text maxFontSizeMultiplier={layout.displayMaximumFontScale} style={styles.metricValue}>{current}</Text>
+        <Text style={styles.metricGoal}>of {goal} days</Text>
       </View>
+      <Text style={styles.metricCaption}>Days you took part</Text>
       <View
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
@@ -2150,6 +2212,8 @@ function NavigationBar({
   active,
   onSelect,
 }: Readonly<{ active: MainTab; onSelect: (tab: MainTab) => void }>) {
+  const { fontScale } = useWindowDimensions();
+  const usesAccessibleTabLayout = fontScale > layout.fixedBottomBarMaximumFontScale;
   const tabs: readonly Readonly<{
     id: MainTab;
     label: string;
@@ -2161,7 +2225,7 @@ function NavigationBar({
     { id: 'profile', label: 'Profile', icon: 'person-outline', selectedIcon: 'person' },
   ];
   return (
-    <View accessibilityRole="tablist" style={styles.navigationBar}>
+    <View accessibilityRole="tablist" style={[styles.navigationBar, usesAccessibleTabLayout && styles.navigationBarAccessible]}>
       {tabs.map((tab) => (
         <Pressable
           accessibilityLabel={tab.label}
@@ -2169,7 +2233,7 @@ function NavigationBar({
           accessibilityState={{ selected: active === tab.id }}
           key={tab.id}
           onPress={() => onSelect(tab.id)}
-          style={({ pressed }) => [styles.navigationItem, pressed && styles.navigationItemPressed]}
+          style={({ pressed }) => [styles.navigationItem, usesAccessibleTabLayout && styles.navigationItemAccessible, pressed && styles.navigationItemPressed]}
         >
           <Ionicons
             color={active === tab.id ? colors.accentDark : colors.secondaryInk}
@@ -2192,6 +2256,17 @@ const countdownRoundingOffsetMilliseconds = millisecondsPerSecond - 1;
 const routineRefreshIntervalMilliseconds = millisecondsPerSecond;
 const noElapsedMilliseconds = 0;
 const displayIndexOffset = 1;
+const localDayDisplayTimeSuffix = 'T12:00:00';
+const localDayFormatter = new Intl.DateTimeFormat('en-US', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+});
+
+function localDayLabel(localDay: string): string {
+  const date = new Date(`${localDay}${localDayDisplayTimeSuffix}`);
+  return Number.isNaN(date.getTime()) ? localDay : localDayFormatter.format(date);
+}
 
 function levelLabel(level: PlanPresentation['deliveredLevel']): string {
   return level[0].toUpperCase() + level.slice(1);
@@ -2328,19 +2403,42 @@ const styles = StyleSheet.create({
   shell: { flex: 1 },
   page: { flexGrow: 1, paddingBottom: spacing.roomy, paddingHorizontal: spacing.screenHorizontal, paddingTop: spacing.screenVertical },
   readable: { alignSelf: 'center', flexGrow: 1, gap: spacing.large, maxWidth: layout.readableWidth, width: '100%' },
-  bottomBar: { backgroundColor: colors.canvas, borderTopColor: colors.border, borderTopWidth: layout.borderWidth, gap: spacing.compact, paddingBottom: spacing.micro, paddingHorizontal: spacing.screenHorizontal, paddingTop: spacing.compact },
+  bottomBar: { backgroundColor: colors.surface, borderTopColor: colors.border, borderTopWidth: layout.borderWidth, gap: spacing.compact, paddingBottom: spacing.micro, paddingHorizontal: spacing.screenHorizontal, paddingTop: spacing.micro },
   inlineBottomBar: { borderTopColor: colors.border, borderTopWidth: layout.borderWidth, marginTop: spacing.standard, paddingTop: spacing.standard },
   actionStack: { gap: spacing.compact },
   centered: { alignItems: 'center', flex: 1, gap: spacing.standard, justifyContent: 'center' },
   header: { gap: spacing.compact },
+  tabIntro: { gap: spacing.compact },
+  tabSection: { gap: spacing.compact },
+  sectionHeading: { alignItems: 'baseline', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.compact, justifyContent: 'space-between' },
+  sectionHeadingAccessible: { alignItems: 'flex-start', flexDirection: 'column' },
+  sectionHeadingText: { color: colors.ink, fontSize: typography.subtitleSize, fontWeight: typography.strongWeight },
+  sectionHeadingDetail: { color: colors.secondaryInk, fontSize: typography.captionSize },
+  backLink: { alignItems: 'center', alignSelf: 'flex-start', flexDirection: 'row', gap: spacing.micro, minHeight: layout.controlMinimumHeight },
+  backLinkText: { color: colors.accentDark, fontSize: typography.bodySize },
+  sectionFootnote: { color: colors.secondaryInk, fontSize: typography.captionSize, paddingHorizontal: spacing.micro },
+  groupedList: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.option, borderWidth: layout.borderWidth, overflow: 'hidden' },
+  destructiveGroup: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.option, borderWidth: layout.borderWidth, marginTop: spacing.standard, overflow: 'hidden' },
+  listRow: { alignItems: 'center', borderBottomColor: colors.border, borderBottomWidth: layout.borderWidth, flexDirection: 'row', gap: spacing.standard, minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
+  listRowPressed: { backgroundColor: colors.accentSoft },
+  listRowIcon: { alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: radius.icon, height: spacing.hero, justifyContent: 'center', width: spacing.hero },
+  listRowIconDanger: { backgroundColor: colors.attentionSurface },
+  listRowContent: { flex: 1, gap: spacing.micro },
+  listRowLabel: { color: colors.ink, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
+  listRowSubtitle: { color: colors.secondaryInk, fontSize: typography.captionSize },
+  listRowValue: { color: colors.secondaryInk, fontSize: typography.detailSize, maxWidth: '42%', textAlign: 'right' },
+  listRowValueAccessible: { color: colors.secondaryInk, fontSize: typography.detailSize },
+  emptyStateCard: { alignItems: 'flex-start', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.compact, padding: spacing.roomy },
+  emptyStateIcon: { alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: radius.icon, height: spacing.hero, justifyContent: 'center', width: spacing.hero },
+  areaHistoryEntry: { backgroundColor: colors.surface, borderBottomColor: colors.border, borderBottomWidth: layout.borderWidth, gap: spacing.micro, paddingHorizontal: spacing.standard, paddingVertical: spacing.standard },
   eyebrow: { color: colors.accentDark, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   progress: { color: colors.secondaryInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   progressHeader: { gap: spacing.compact },
   progressTrack: { flexDirection: 'row', gap: spacing.micro },
   progressSegment: { backgroundColor: colors.mutedSurface, borderRadius: radius.status, flex: 1, height: spacing.micro },
   progressSegmentComplete: { backgroundColor: colors.accentDark },
-  title: { color: colors.ink, fontSize: typography.titleSize, fontWeight: typography.displayWeight, lineHeight: typography.titleLineHeight },
-  supporting: { color: colors.secondaryInk, fontSize: typography.bodySize, lineHeight: typography.bodyLineHeight },
+  title: { color: colors.ink, fontSize: typography.titleSize, fontWeight: typography.displayWeight },
+  supporting: { color: colors.secondaryInk, fontSize: typography.bodySize },
   brandMark: { alignItems: 'center', flexDirection: 'row', gap: spacing.compact },
   brandGlyph: { alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: radius.icon, height: spacing.section, justifyContent: 'center', width: spacing.section },
   brandGlyphInverse: { backgroundColor: colors.accent },
@@ -2348,8 +2446,8 @@ const styles = StyleSheet.create({
   brandNameInverse: { color: colors.onDark },
   welcomeHero: { ...raisedSurfaceShadow, backgroundColor: colors.forest, borderRadius: radius.hero, gap: spacing.large, overflow: 'hidden', padding: spacing.roomy },
   welcomeEyebrow: { color: colors.accent, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
-  welcomeTitle: { color: colors.onDark, fontSize: typography.heroSize, fontWeight: typography.displayWeight, lineHeight: typography.heroLineHeight },
-  welcomeBody: { color: colors.onDark, fontSize: typography.bodySize, lineHeight: typography.bodyLineHeight, opacity: layout.subtleOpacity },
+  welcomeTitle: { color: colors.onDark, fontSize: typography.heroSize, fontWeight: typography.displayWeight },
+  welcomeBody: { color: colors.onDark, fontSize: typography.bodySize, opacity: layout.subtleOpacity },
   heroArtwork: { alignItems: 'center', height: layout.heroArtworkHeight, justifyContent: 'center', position: 'relative' },
   heroPath: { backgroundColor: colors.accent, borderRadius: radius.status, height: layout.heroPathHeight, position: 'absolute', transform: [{ rotate: layout.heroPathRotation }], width: layout.heroPathWidth },
   heroPathTrailing: { opacity: layout.subtleOpacity, transform: [{ rotate: layout.heroPathTrailingRotation }] },
@@ -2360,7 +2458,7 @@ const styles = StyleSheet.create({
   infoPillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.compact },
   infoPill: { alignItems: 'center', backgroundColor: colors.elevatedSurface, borderColor: colors.border, borderRadius: radius.status, borderWidth: layout.borderWidth, flexDirection: 'row', gap: spacing.compact, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
   infoPillText: { color: colors.accentDeep, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
-  welcomeFootnote: { color: colors.secondaryInk, fontSize: typography.captionSize, lineHeight: typography.captionLineHeight, textAlign: 'center' },
+  welcomeFootnote: { color: colors.secondaryInk, fontSize: typography.captionSize, textAlign: 'center' },
   textInput: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
@@ -2395,20 +2493,23 @@ const styles = StyleSheet.create({
   optionTextSelected: { color: colors.accentDark },
   safetyCard: { backgroundColor: colors.attentionSurface, borderLeftColor: colors.attentionInk, borderLeftWidth: spacing.compact, borderRadius: radius.card, gap: spacing.compact, padding: spacing.roomy },
   cardTitle: { color: colors.ink, fontSize: typography.bodySize, fontWeight: typography.strongWeight },
-  cardBody: { color: colors.secondaryInk, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight },
-  todayTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  cardBody: { color: colors.secondaryInk, fontSize: typography.detailSize },
+  todayTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.compact },
   todayIntro: { gap: spacing.compact },
-  todayTitle: { color: colors.ink, fontSize: typography.titleSize, fontWeight: typography.displayWeight, lineHeight: typography.titleLineHeight },
+  todayTitle: { color: colors.ink, fontSize: typography.titleSize, fontWeight: typography.displayWeight },
   areaBadge: { alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: radius.status, flexDirection: 'row', gap: spacing.compact, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
   areaBadgeText: { color: colors.accentDark, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
-  todayCard: { ...raisedSurfaceShadow, backgroundColor: colors.accentSoft, borderRadius: radius.card, gap: spacing.standard, padding: spacing.roomy },
-  todayCardTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  todayCardIcon: { alignItems: 'center', backgroundColor: colors.accent, borderRadius: radius.icon, height: layout.controlMinimumHeight, justifyContent: 'center', width: layout.controlMinimumHeight },
-  todayCardPill: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.status, flexDirection: 'row', gap: spacing.micro, paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
-  todayCardPillText: { color: colors.accentDeep, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
-  todayCardEyebrow: { color: colors.accentDeep, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
-  todayCardTitle: { color: colors.ink, fontSize: typography.subtitleSize, fontWeight: typography.displayWeight, lineHeight: typography.subtitleLineHeight },
-  todayCardBody: { color: colors.secondaryInk, fontSize: typography.bodySize, lineHeight: typography.bodyLineHeight },
+  todayCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.standard, padding: spacing.roomy },
+  todayCardTopRow: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.compact, justifyContent: 'space-between' },
+  todayCardIcon: { alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: radius.icon, height: layout.controlMinimumHeight, justifyContent: 'center', width: layout.controlMinimumHeight },
+  todayCardStepLabel: { color: colors.secondaryInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  todayCardTitle: { color: colors.ink, fontSize: typography.subtitleSize, fontWeight: typography.displayWeight },
+  todayCardBody: { color: colors.secondaryInk, fontSize: typography.bodySize },
+  todayAreaRow: { alignItems: 'center', borderBottomColor: colors.border, borderBottomWidth: layout.borderWidth, flexDirection: 'row', gap: spacing.compact, paddingHorizontal: spacing.micro, paddingVertical: spacing.standard },
+  todayAreaContent: { flex: 1, flexDirection: 'row', gap: spacing.compact, justifyContent: 'space-between' },
+  todayAreaContentAccessible: { flexDirection: 'column' },
+  todayAreaText: { color: colors.secondaryInk, fontSize: typography.detailSize },
+  todayAreaValue: { color: colors.ink, fontSize: typography.detailSize, fontWeight: typography.strongWeight },
   planHero: { ...raisedSurfaceShadow, backgroundColor: colors.accent, borderRadius: radius.card, gap: spacing.compact, padding: spacing.roomy },
   planHeroTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   planLevelIcon: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.icon, height: layout.controlMinimumHeight, justifyContent: 'center', width: layout.controlMinimumHeight },
@@ -2416,26 +2517,26 @@ const styles = StyleSheet.create({
   planDurationBadgeText: { color: colors.onDark, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
   planKicker: { color: colors.accentDeep, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   planLevel: { color: colors.forest, fontSize: typography.titleSize, fontWeight: typography.displayWeight },
-  planMeta: { color: colors.accentDeep, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight },
+  planMeta: { color: colors.accentDeep, fontSize: typography.detailSize },
   planReasonCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.standard, padding: spacing.roomy },
   planReasonRow: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.standard },
-  planReasonText: { color: colors.secondaryInk, flex: 1, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight },
+  planReasonText: { color: colors.secondaryInk, flex: 1, fontSize: typography.detailSize },
   sectionLabel: { color: colors.accentDeep, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   durationSelector: { gap: spacing.micro },
   segmentedControl: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.button, borderWidth: layout.borderWidth, flexDirection: 'row', padding: spacing.compact },
   segment: { alignItems: 'center', borderRadius: radius.button, flex: 1, flexDirection: 'row', gap: spacing.compact, justifyContent: 'center', minHeight: layout.controlMinimumHeight, paddingHorizontal: spacing.standard },
   segmentSelected: { backgroundColor: colors.accentSoft, borderColor: colors.accentDark, borderWidth: layout.selectedBorderWidth },
   segmentText: { color: colors.accentDark, fontSize: typography.detailSize, fontWeight: typography.strongWeight },
-  consistencyMeter: { ...raisedSurfaceShadow, backgroundColor: colors.forest, borderRadius: radius.card, gap: spacing.standard, padding: spacing.roomy },
-  metricHeader: { alignItems: 'center', flexDirection: 'row', gap: spacing.compact },
-  metricIcon: { alignItems: 'center', backgroundColor: colors.accent, borderRadius: radius.icon, height: spacing.hero, justifyContent: 'center', width: spacing.hero },
-  metricEyebrow: { color: colors.accent, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
+  consistencyMeter: { backgroundColor: colors.accentSoft, borderRadius: radius.card, gap: spacing.compact, padding: spacing.roomy },
+  metricHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  metricEyebrow: { color: colors.accentDeep, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   metricValueRow: { alignItems: 'flex-end', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.compact },
-  metricValue: { color: colors.onDark, fontSize: typography.heroSize, fontWeight: typography.displayWeight, lineHeight: typography.heroLineHeight },
-  metricGoal: { color: colors.onDark, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight, opacity: layout.subtleOpacity, paddingBottom: spacing.compact },
+  metricValue: { color: colors.ink, fontSize: typography.heroSize, fontWeight: typography.displayWeight },
+  metricGoal: { color: colors.secondaryInk, fontSize: typography.detailSize, paddingBottom: spacing.compact },
+  metricCaption: { color: colors.secondaryInk, fontSize: typography.detailSize },
   consistencyDots: { flexDirection: 'row', gap: spacing.compact },
-  consistencyDot: { backgroundColor: colors.mutedSurface, borderRadius: radius.status, flex: 1, height: spacing.compact, opacity: layout.subtleOpacity },
-  consistencyDotComplete: { backgroundColor: colors.accent, opacity: 1 },
+  consistencyDot: { backgroundColor: colors.mutedSurface, borderRadius: radius.status, flex: 1, height: spacing.compact },
+  consistencyDotComplete: { backgroundColor: colors.accentDark },
   historyCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.compact, padding: spacing.roomy },
   routineProgressRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   routineActionRow: { flexDirection: 'row', gap: spacing.compact },
@@ -2446,7 +2547,7 @@ const styles = StyleSheet.create({
   routineVideo: { height: '100%', width: '100%' },
   prototypeMediaBadge: { backgroundColor: colors.forest, borderRadius: radius.status, bottom: spacing.compact, left: spacing.compact, paddingHorizontal: spacing.compact, paddingVertical: spacing.compact, position: 'absolute' },
   prototypeMediaBadgeText: { color: colors.onDark, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
-  safetyCue: { backgroundColor: colors.attentionSurface, borderLeftColor: colors.attentionInk, borderLeftWidth: spacing.compact, borderRadius: radius.card, color: colors.attentionInk, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight, padding: spacing.standard },
+  safetyCue: { backgroundColor: colors.attentionSurface, borderLeftColor: colors.attentionInk, borderLeftWidth: spacing.compact, borderRadius: radius.card, color: colors.attentionInk, fontSize: typography.detailSize, padding: spacing.standard },
   routineTimerCard: { alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, flexDirection: 'row', gap: spacing.standard, padding: spacing.standard },
   routineTimerIcon: { alignItems: 'center', backgroundColor: colors.accentSoft, borderRadius: radius.icon, height: spacing.hero, justifyContent: 'center', width: spacing.hero },
   routineTimerContent: { flex: 1, gap: spacing.micro },
@@ -2454,8 +2555,10 @@ const styles = StyleSheet.create({
   testSection: { borderTopColor: colors.border, borderTopWidth: layout.borderWidth, gap: spacing.compact, marginTop: spacing.section, paddingTop: spacing.standard },
   testHeading: { alignItems: 'center', flexDirection: 'row', gap: spacing.compact },
   testLabel: { color: colors.secondaryInk, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
-  navigationBar: { ...raisedSurfaceShadow, backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, flexDirection: 'row', padding: spacing.compact },
+  navigationBar: { backgroundColor: colors.surface, flexDirection: 'row' },
+  navigationBarAccessible: { flexDirection: 'column' },
   navigationItem: { alignItems: 'center', flex: 1, gap: spacing.micro, justifyContent: 'center', minHeight: layout.tabMinimumHeight },
+  navigationItemAccessible: { flex: 0, flexDirection: 'row', gap: spacing.standard, justifyContent: 'flex-start', paddingHorizontal: spacing.standard, paddingVertical: spacing.compact },
   navigationItemPressed: { opacity: layout.pressedOpacity },
   navigationText: { color: colors.secondaryInk, fontSize: typography.captionSize, fontWeight: typography.strongWeight },
   navigationTextSelected: { color: colors.accentDark },

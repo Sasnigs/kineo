@@ -92,4 +92,5 @@ export const layout = {
   shadowOffsetY: 10,
   elevation: 4,
   fixedBottomBarMaximumFontScale: 1.6,
+  displayMaximumFontScale: 2,
 } as const;
