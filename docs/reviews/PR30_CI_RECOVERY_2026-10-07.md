@@ -13,7 +13,7 @@ Status: compatibility repaired locally; required security gate remains blocked. 
 
 - Online compatibility check passes after the SDK patch update.
 - TypeScript, lint, and all 51 app suites/406 tests pass. Harness: 13 regression tests pass. Project boundaries and diff whitespace checks pass.
-- Initial audit: 70 reported package findings (17 moderate, 52 high, one critical). Compatible updates remove the critical shell-quote advisory and reduce the result to 67 (17 moderate, 50 high). Counts include propagated dependent-package findings; they are not 67 separate root vulnerabilities.
+- Initial audit: 70 reported package findings (17 moderate, 52 high, one critical). Compatible updates remove the critical shell-quote advisory. The intermediate JSON audit reported 67 (17 moderate, 50 high); the final required `npm run audit` reported 68 (17 moderate, 51 high) and exited nonzero. Counts include propagated dependent-package findings and can change with the online advisory/resolution metadata; they are not separate root vulnerabilities.
 - Remaining high-severity roots include [braces](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) and [node-forge](https://github.com/advisories/GHSA-86w9-cpqp-85rv). Registry checks show latest releases 3.0.3 and 1.4.0; the advisories list no patched version. Other moderate roots remain. The audit's proposed Expo 44/Jest-major changes are not safe patch fixes.
 - The required high-severity audit gate therefore still fails. No new full CI build is useful against the same known blocker. Keep PR 30 unmerged; investigate upstream replacements/remediation separately. Any security exception or framework migration requires an explicit reviewed decision, not automatic acceptance to obtain green CI.
 
