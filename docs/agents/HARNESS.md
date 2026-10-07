@@ -60,6 +60,8 @@ Stop on missing authorization, scope drift, unavailable required services, faile
 
 Publish a concise draft PR after local checks and review. The standing owner authorization permits merge only after **all** expected CI jobs succeed and the reviewed head is unchanged. Preserve logical commits, then sync main with `--ff-only`. Never auto-submit to the App Store or alter production credentials.
 
+A failed CI run blocks merge, not authorized diagnosis. Continue a bounded repair/test/CI loop when the fix is in scope. Do not end delivery just because a fail-fast shell watcher exited. A watcher is not a recurring agent wakeup: register a supported scheduler before claiming autonomous follow-ups; otherwise remain in the active loop until success or a genuine blocker. Do not rerun unchanged failing checks or incur new builds when a required security gate is already known to fail.
+
 ## Foundation acceptance
 
 1. Repo entry points and current delivery state are discoverable without chat history.
