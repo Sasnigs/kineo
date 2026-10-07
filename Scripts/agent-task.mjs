@@ -198,21 +198,27 @@ export async function executeTask(action, taskFile, { root = process.cwd(), run 
     let actionError;
     try {
       let result;
-      if (action === 'check') {
-        result = await run(process.execPath, ['Scripts/agent-check.mjs', '--controller-group', ...task.checks], { cwd: root, timeoutMs: allowance });
-      } else {
-        const prompt = `You are the ${phase} agent for one approved Kineo task. Read AGENTS.md and owning contracts.\n`
-          + `${raw}\nOnly edit the exact scope above. Do not edit the task, commit, push, merge, install dependencies, or change production services.\n`
-          + (phase === 'review' ? 'Review the diff against the base. Do not edit. Report blockers with file/evidence and acceptance gaps.'
-            : 'Implement the smallest correct change. Check factual claims against existing evidence. Report changes, tests, and open gates.');
-        await writeFile(path.join(directory, `turn-${state.agentTurns}-prompt.txt`), prompt, { mode: PRIVATE_FILE_MODE });
-        trace = await open(path.join(directory, `turn-${state.agentTurns}.jsonl`), 'wx', PRIVATE_FILE_MODE);
-        result = await run('codex', ['exec', '--sandbox', phase === 'review' ? 'read-only' : 'workspace-write', '--json',
-          '--output-last-message', path.join(directory, `turn-${state.agentTurns}-result.txt`), prompt],
-        { cwd: root, timeoutMs: allowance, outputFd: trace.fd });
+      let commandError;
+      try {
+        if (action === 'check') {
+          result = await run(process.execPath, ['Scripts/agent-check.mjs', '--controller-group', ...task.checks], { cwd: root, timeoutMs: allowance });
+        } else {
+          const prompt = `You are the ${phase} agent for one approved Kineo task. Read AGENTS.md and owning contracts.\n`
+            + `${raw}\nOnly edit the exact scope above. Do not edit the task, commit, push, merge, install dependencies, or change production services.\n`
+            + (phase === 'review' ? 'Review the diff against the base. Do not edit. Report blockers with file/evidence and acceptance gaps.'
+              : 'Implement the smallest correct change. Check factual claims against existing evidence. Report changes, tests, and open gates.');
+          await writeFile(path.join(directory, `turn-${state.agentTurns}-prompt.txt`), prompt, { mode: PRIVATE_FILE_MODE });
+          trace = await open(path.join(directory, `turn-${state.agentTurns}.jsonl`), 'wx', PRIVATE_FILE_MODE);
+          result = await run('codex', ['exec', '--sandbox', phase === 'review' ? 'read-only' : 'workspace-write', '--json',
+            '--output-last-message', path.join(directory, `turn-${state.agentTurns}-result.txt`), prompt],
+          { cwd: root, timeoutMs: allowance, outputFd: trace.fd });
+        }
+      } catch (error) {
+        commandError = error;
       }
-      if (result.code !== 0) fail(action === 'check' ? 'CHECK_FAILED' : 'AGENT_FAILED', 'Command failed; no passing evidence was recorded.');
       const after = await fingerprint(root, task);
+      if (commandError) throw commandError;
+      if (result.code !== 0) fail(action === 'check' ? 'CHECK_FAILED' : 'AGENT_FAILED', 'Command failed; no passing evidence was recorded.');
       if (action === 'check' && before !== after) fail('STALE_CHECK', 'Files changed while checks ran; rerun against stable code.');
       if (action === 'agent' && phase === 'review' && before !== after) fail('SCOPE_DRIFT', 'Read-only review changed files.');
       state.phase = action === 'check' ? 'checks-passed' : 'needs-checks-and-review';

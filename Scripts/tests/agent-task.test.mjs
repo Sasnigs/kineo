@@ -115,6 +115,24 @@ test('failure cannot retain prior passing check evidence', async (t) => {
   assert.equal((await state()).phase, 'failed');
 });
 
+test('failed actions still report scope drift created during the command', async (t) => {
+  const { root, invoke } = await fixture(t);
+  await invoke('start');
+  await assert.rejects(invoke('agent', { run: async () => {
+    await writeFile(path.join(root, 'outside.md'), 'unapproved\n');
+    return { code: 1 };
+  } }), { code: 'SCOPE_DRIFT' });
+});
+
+test('throwing actions still report scope drift created during the command', async (t) => {
+  const { root, invoke } = await fixture(t);
+  await invoke('start');
+  await assert.rejects(invoke('agent', { run: async () => {
+    await writeFile(path.join(root, 'outside.md'), 'unapproved\n');
+    throw new Error('command infrastructure failed');
+  } }), { code: 'SCOPE_DRIFT' });
+});
+
 test('failed checks can be retried without retaining failed evidence', async (t) => {
   const { invoke, state } = await fixture(t);
   await invoke('start');
