@@ -243,16 +243,21 @@ export async function executeTask(action, taskFile, { root = process.cwd(), run 
 }
 
 export async function checkDocs(root) {
-  const required = ['AGENTS.md', 'docs/STATUS.md', 'docs/agents/HARNESS.md', 'docs/agents/issue-tracker.md',
-    'docs/KINEO_PRODUCT_DESIGN.md', 'docs/KINEO_IMPLEMENTATION_MILESTONES.md', 'docs/technical/00_TECHNICAL_DESIGN_INDEX.md'];
-  for (const file of required) {
-    if (!(await readFile(path.join(root, file), 'utf8')).trim()) fail('DOCS_FAILED', `Missing or empty entry point: ${file}`);
-  }
-  for (const file of await readdir(path.join(root, 'docs/agent-tasks'))) {
-    if (file.endsWith('.json')) {
-      const raw = await readFile(path.join(root, 'docs/agent-tasks', file), 'utf8');
-      validateTask(parseJson(raw, 'INVALID_TASK', `Task contract is not valid JSON: ${file}`));
+  try {
+    const required = ['AGENTS.md', 'docs/STATUS.md', 'docs/agents/HARNESS.md', 'docs/agents/issue-tracker.md',
+      'docs/KINEO_PRODUCT_DESIGN.md', 'docs/KINEO_IMPLEMENTATION_MILESTONES.md', 'docs/technical/00_TECHNICAL_DESIGN_INDEX.md'];
+    for (const file of required) {
+      if (!(await readFile(path.join(root, file), 'utf8')).trim()) fail('DOCS_FAILED', `Missing or empty entry point: ${file}`);
     }
+    for (const file of await readdir(path.join(root, 'docs/agent-tasks'))) {
+      if (file.endsWith('.json')) {
+        const raw = await readFile(path.join(root, 'docs/agent-tasks', file), 'utf8');
+        validateTask(parseJson(raw, 'INVALID_TASK', `Task contract is not valid JSON: ${file}`));
+      }
+    }
+  } catch (cause) {
+    if (cause instanceof HarnessError) throw cause;
+    fail('DOCS_FAILED', 'Documentation validation could not read required paths.', cause);
   }
 }
 

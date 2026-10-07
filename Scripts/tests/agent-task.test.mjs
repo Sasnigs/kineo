@@ -17,6 +17,8 @@ const PRIVATE_DIRECTORY_MODE = 0o700;
 const RESTRICTED_DIRECTORY_MODE = 0o500;
 const FILE_MODE_MASK = 0o777;
 const COMMIT_SHA_HEX_LENGTH = 40;
+const REQUIRED_DOCUMENT_PATHS = ['AGENTS.md', 'docs/STATUS.md', 'docs/agents/HARNESS.md', 'docs/agents/issue-tracker.md',
+  'docs/KINEO_PRODUCT_DESIGN.md', 'docs/KINEO_IMPLEMENTATION_MILESTONES.md', 'docs/technical/00_TECHNICAL_DESIGN_INDEX.md'];
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'kineo-harness-test-'));
@@ -138,15 +140,33 @@ test('malformed task and checkpoint JSON map to typed harness failures', async (
 test('documentation checks map malformed task contracts to a typed failure', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'kineo-harness-docs-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const required = ['AGENTS.md', 'docs/STATUS.md', 'docs/agents/HARNESS.md', 'docs/agents/issue-tracker.md',
-    'docs/KINEO_PRODUCT_DESIGN.md', 'docs/KINEO_IMPLEMENTATION_MILESTONES.md', 'docs/technical/00_TECHNICAL_DESIGN_INDEX.md'];
-  for (const file of required) {
+  for (const file of REQUIRED_DOCUMENT_PATHS) {
     await mkdir(path.dirname(path.join(root, file)), { recursive: true });
     await writeFile(path.join(root, file), 'fixture\n');
   }
   await mkdir(path.join(root, 'docs/agent-tasks'), { recursive: true });
   await writeFile(path.join(root, 'docs/agent-tasks/malformed.json'), '{');
   await assert.rejects(checkDocs(root), { code: 'INVALID_TASK' });
+});
+
+test('documentation checks map missing paths to typed failures', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'kineo-harness-missing-docs-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await assert.rejects(checkDocs(root), (error) => {
+    assert.equal(error.code, 'DOCS_FAILED');
+    assert.equal(error.cause?.code, 'ENOENT');
+    return true;
+  });
+
+  for (const file of REQUIRED_DOCUMENT_PATHS) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), 'fixture\n');
+  }
+  await assert.rejects(checkDocs(root), (error) => {
+    assert.equal(error.code, 'DOCS_FAILED');
+    assert.equal(error.cause?.code, 'ENOENT');
+    return true;
+  });
 });
 
 test('checkpoint data and its directory use private modes', async (t) => {
