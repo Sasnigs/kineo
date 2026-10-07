@@ -9,11 +9,14 @@ const MAX_AGENT_TURNS = 3;
 const MAX_TASK_MINUTES = 60;
 const AGENT_TURN_TIMEOUT_MS = 5 * MINUTE_MS;
 const TERMINATION_GRACE_MS = 1_000;
-const CHECKPOINT_VERSION = 1;
+const CHECKPOINT_VERSION = 2;
 const COMMIT_SHA_HEX_LENGTH = 40;
+const SHA256_HEX_LENGTH = 64;
 const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const COMMIT_SHA_PATTERN = new RegExp(`^[a-f0-9]{${COMMIT_SHA_HEX_LENGTH}}$`);
+const SHA256_PATTERN = new RegExp(`^[a-f0-9]{${SHA256_HEX_LENGTH}}$`);
+const CHECKPOINT_PHASES = new Set(['started', 'running', 'checks-passed', 'needs-checks-and-review', 'failed']);
 export const CHECK_PROFILES = ['docs', 'tooling', 'mobile', 'database'];
 
 export class HarnessError extends Error {
@@ -67,11 +70,29 @@ async function assertNoSymlinks(root, relative) {
   }
 }
 
-async function fingerprint(root, task) {
+async function ignoredState(root, task) {
+  const paths = git(root, 'ls-files', '--others', '--ignored', '--exclude-standard', '-z').split('\0')
+    .filter((file) => file && !file.startsWith('.agent-runs/')).sort();
+  const outside = [];
+  const scopedFiles = [];
+  for (const file of paths) {
+    if (task.scope.includes(file)) {
+      scopedFiles.push(file);
+    } else {
+      const stats = await lstat(path.join(root, file), { bigint: true });
+      outside.push(file, stats.mode.toString(), stats.size.toString(), stats.mtimeNs.toString());
+    }
+  }
+  return { outsideFingerprint: hash(JSON.stringify(outside)), scopedFiles };
+}
+
+async function fingerprint(root, task, ignoredBaseline) {
   const changed = git(root, 'diff', '--no-renames', '--name-only', '-z', task.base).split('\0').filter(Boolean);
   const staged = git(root, 'diff', '--cached', '--no-renames', '--name-only', '-z', task.base).split('\0').filter(Boolean);
   const untracked = git(root, 'ls-files', '--others', '--exclude-standard', '-z').split('\0').filter(Boolean);
-  const files = [...new Set([...changed, ...staged, ...untracked])].sort();
+  const ignored = await ignoredState(root, task);
+  if (ignored.outsideFingerprint !== ignoredBaseline) fail('SCOPE_DRIFT', 'Ignored files outside the task scope changed.');
+  const files = [...new Set([...changed, ...staged, ...untracked, ...ignored.scopedFiles])].sort();
   const outside = files.filter((file) => !task.scope.includes(file));
   if (outside.length) fail('SCOPE_DRIFT', `Unapproved changes: ${outside.join(', ')}`);
   const content = [git(root, 'rev-parse', 'HEAD'), git(root, 'diff', '--no-renames', '--binary', task.base),
@@ -85,6 +106,17 @@ async function fingerprint(root, task) {
     }
   }
   return hash(JSON.stringify(content));
+}
+
+function validCheckpointChecks(checks, phase, task) {
+  if (checks === null) return phase !== 'checks-passed';
+  const completedAtMs = Date.parse(checks?.completedAt);
+  return phase === 'checks-passed' && checks && typeof checks === 'object' && !Array.isArray(checks)
+    && SHA256_PATTERN.test(checks.fingerprint)
+    && Array.isArray(checks.profiles) && checks.profiles.length === task.checks.length
+    && checks.profiles.every((profile, index) => profile === task.checks[index])
+    && nonempty(checks.completedAt) && Number.isFinite(completedAtMs)
+    && new Date(completedAtMs).toISOString() === checks.completedAt;
 }
 
 export function runCommand(command, args, { cwd, timeoutMs, outputFd, ownProcessGroup = true } = {}) {
@@ -170,14 +202,17 @@ export async function executeTask(action, taskFile, { root = process.cwd(), run 
     catch (error) {
       if (error.code !== 'ENOENT') throw error;
       if (action !== 'start') fail('NOT_STARTED', 'Start the approved task before continuing.');
-      state = { version: CHECKPOINT_VERSION, taskHash: hash(raw), branch, agentTurns: 0, reservedMs: 0, checks: null, phase: 'started' };
+      state = { version: CHECKPOINT_VERSION, taskHash: hash(raw), branch, agentTurns: 0, reservedMs: 0,
+        ignoredBaseline: (await ignoredState(root, task)).outsideFingerprint, checks: null, phase: 'started' };
     }
     if (!state || typeof state !== 'object' || Array.isArray(state)
       || state.version !== CHECKPOINT_VERSION || state.taskHash !== hash(raw) || state.branch !== branch
-      || !Number.isFinite(state.reservedMs) || state.reservedMs < 0 || !Number.isInteger(state.agentTurns) || state.agentTurns < 0) {
+      || !Number.isFinite(state.reservedMs) || state.reservedMs < 0 || !Number.isInteger(state.agentTurns) || state.agentTurns < 0
+      || !SHA256_PATTERN.test(state.ignoredBaseline) || !CHECKPOINT_PHASES.has(state.phase)
+      || !validCheckpointChecks(state.checks, state.phase, task)) {
       fail('CHECKPOINT_MISMATCH', 'Checkpoint does not match this contract and branch; do not reuse its evidence.');
     }
-    const before = await fingerprint(root, task);
+    const before = await fingerprint(root, task, state.ignoredBaseline);
     if (state.checks?.fingerprint !== before) {
       state.checks = null;
       if (state.phase === 'checks-passed') state.phase = 'needs-checks-and-review';
@@ -216,7 +251,7 @@ export async function executeTask(action, taskFile, { root = process.cwd(), run 
       } catch (error) {
         commandError = error;
       }
-      const after = await fingerprint(root, task);
+      const after = await fingerprint(root, task, state.ignoredBaseline);
       if (commandError) throw commandError;
       if (result.code !== 0) fail(action === 'check' ? 'CHECK_FAILED' : 'AGENT_FAILED', 'Command failed; no passing evidence was recorded.');
       if (action === 'check' && before !== after) fail('STALE_CHECK', 'Files changed while checks ran; rerun against stable code.');

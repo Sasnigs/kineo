@@ -27,7 +27,7 @@ async function fixture(t) {
   git('init', '-b', 'main');
   git('config', 'user.email', 'fixture@example.invalid');
   git('config', 'user.name', 'Harness fixture');
-  await writeFile(path.join(root, '.gitignore'), '.agent-runs/\n');
+  await writeFile(path.join(root, '.gitignore'), '.agent-runs/\nignored.txt\n');
   await writeFile(path.join(root, 'allowed.md'), 'before\n');
   git('add', '.');
   git('commit', '-m', 'Fixture baseline');
@@ -72,6 +72,28 @@ test('scope gates reject untracked files, deleted paths, and both sides of renam
   await rm(path.join(root, 'outside.md'));
   git('mv', 'allowed.md', 'outside.md');
   await assert.rejects(invoke('check'), { code: 'SCOPE_DRIFT' });
+});
+
+test('scope gates reject ignored files outside the exact task scope', async (t) => {
+  const { root, invoke } = await fixture(t);
+  await invoke('start');
+  await writeFile(path.join(root, 'ignored.txt'), 'unapproved\n');
+  await assert.rejects(invoke('check'), { code: 'SCOPE_DRIFT' });
+});
+
+test('pre-existing ignored files are allowed but later changes are scope drift', async (t) => {
+  const modified = await fixture(t);
+  await writeFile(path.join(modified.root, 'ignored.txt'), 'before\n');
+  await modified.invoke('start');
+  assert.equal((await modified.invoke('status')).phase, 'started');
+  await writeFile(path.join(modified.root, 'ignored.txt'), 'after modification\n');
+  await assert.rejects(modified.invoke('check'), { code: 'SCOPE_DRIFT' });
+
+  const deleted = await fixture(t);
+  await writeFile(path.join(deleted.root, 'ignored.txt'), 'before\n');
+  await deleted.invoke('start');
+  await rm(path.join(deleted.root, 'ignored.txt'));
+  await assert.rejects(deleted.invoke('check'), { code: 'SCOPE_DRIFT' });
 });
 
 test('unapproved staged changes remain blocked when removed from the worktree', async (t) => {
@@ -153,6 +175,39 @@ test('malformed task and checkpoint JSON map to typed harness failures', async (
   await assert.rejects(next.invoke('status'), { code: 'CHECKPOINT_MISMATCH' });
   await writeFile(path.join(next.root, '.agent-runs/fixture/checkpoint.json'), 'null');
   await assert.rejects(next.invoke('status'), { code: 'CHECKPOINT_MISMATCH' });
+});
+
+test('semantically corrupt checkpoint evidence cannot appear current', async (t) => {
+  const { root, invoke, state } = await fixture(t);
+  await invoke('start');
+  await invoke('check');
+  const checkpoint = await state();
+  checkpoint.phase = 'failed';
+  await writeFile(path.join(root, '.agent-runs/fixture/checkpoint.json'), JSON.stringify(checkpoint));
+  await assert.rejects(invoke('status'), { code: 'CHECKPOINT_MISMATCH' });
+
+  const next = await fixture(t);
+  await next.invoke('start');
+  await next.invoke('check');
+  const nextCheckpoint = await next.state();
+  nextCheckpoint.checks.profiles = ['mobile'];
+  await writeFile(path.join(next.root, '.agent-runs/fixture/checkpoint.json'), JSON.stringify(nextCheckpoint));
+  await assert.rejects(next.invoke('status'), { code: 'CHECKPOINT_MISMATCH' });
+
+  const invalidTimestamp = await fixture(t);
+  await invalidTimestamp.invoke('start');
+  await invalidTimestamp.invoke('check');
+  const invalidTimestampCheckpoint = await invalidTimestamp.state();
+  invalidTimestampCheckpoint.checks.completedAt = 'not-a-timestamp';
+  await writeFile(path.join(invalidTimestamp.root, '.agent-runs/fixture/checkpoint.json'), JSON.stringify(invalidTimestampCheckpoint));
+  await assert.rejects(invalidTimestamp.invoke('status'), { code: 'CHECKPOINT_MISMATCH' });
+
+  const unknownPhase = await fixture(t);
+  await unknownPhase.invoke('start');
+  const unknownPhaseCheckpoint = await unknownPhase.state();
+  unknownPhaseCheckpoint.phase = 'unknown';
+  await writeFile(path.join(unknownPhase.root, '.agent-runs/fixture/checkpoint.json'), JSON.stringify(unknownPhaseCheckpoint));
+  await assert.rejects(unknownPhase.invoke('status'), { code: 'CHECKPOINT_MISMATCH' });
 });
 
 test('documentation checks map malformed task contracts to a typed failure', async (t) => {
