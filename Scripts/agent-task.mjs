@@ -89,10 +89,13 @@ export function runCommand(command, args, { cwd, timeoutMs, outputFd, ownProcess
       try { if (ownProcessGroup) process.kill(-child.pid, signal); else child.kill(signal); }
       catch (error) { if (error.code !== 'ESRCH') reject(new HarnessError('COMMAND_FAILED', 'Could not stop command group.', error)); }
     };
-    const timer = setTimeout(() => {
+    const timer = timeoutMs === undefined ? undefined : setTimeout(() => {
       timedOut = true;
       stop('SIGTERM');
-      forceTimer = setTimeout(() => stop('SIGKILL'), TERMINATION_GRACE_MS);
+      forceTimer = setTimeout(() => {
+        stop('SIGKILL');
+        reject(new HarnessError('TIMEOUT', `${command} exceeded its runtime allowance.`));
+      }, TERMINATION_GRACE_MS);
     }, timeoutMs);
     child.once('error', (cause) => {
       clearTimeout(timer);
@@ -101,9 +104,9 @@ export function runCommand(command, args, { cwd, timeoutMs, outputFd, ownProcess
     });
     child.once('close', (code, signal) => {
       clearTimeout(timer);
-      clearTimeout(forceTimer);
-      if (timedOut) reject(new HarnessError('TIMEOUT', `${command} exceeded its runtime allowance.`));
-      else resolve({ code, signal });
+      // The leader can exit before a stubborn descendant. Keep group escalation
+      // and do not release the task lock until SIGKILL has been sent.
+      if (!timedOut) { clearTimeout(forceTimer); resolve({ code, signal }); }
     });
   });
 }
@@ -114,9 +117,24 @@ async function save(checkpointPath, state) {
   await rename(temporary, checkpointPath);
 }
 
+async function cleanup(operation, primaryError, code, message) {
+  try { await operation(); }
+  catch (cause) {
+    const failure = new HarnessError(code, message, cause);
+    if (!primaryError) return failure;
+    // Preserve the action failure, but surface every failed cleanup. The safe
+    // state is a retained checkpoint/reservation and a lock requiring inspection.
+    primaryError.cleanupFailures ??= [];
+    primaryError.cleanupFailures.push(failure);
+    primaryError.message += ` ${message}`;
+  }
+  return primaryError;
+}
+
 /** Public task boundary. Infrastructure failures are mapped here once. */
 export async function executeTask(action, taskFile, { root = process.cwd(), run = runCommand, phase = 'implement', now = Date.now } = {}) {
   let lock;
+  let primaryError;
   try {
     if (!['start', 'status', 'check', 'agent'].includes(action) || !safePath(taskFile)) fail('INVALID_TASK', 'Use start, status, check, or agent with a relative task path.');
     await assertNoSymlinks(root, taskFile);
@@ -165,10 +183,11 @@ export async function executeTask(action, taskFile, { root = process.cwd(), run 
     await save(checkpointPath, state);
     const started = now();
     let trace;
+    let actionError;
     try {
       let result;
       if (action === 'check') {
-        result = await run(process.execPath, ['Scripts/agent-check.mjs', ...task.checks], { cwd: root, timeoutMs: allowance });
+        result = await run(process.execPath, ['Scripts/agent-check.mjs', '--controller-group', ...task.checks], { cwd: root, timeoutMs: allowance });
       } else {
         const prompt = `You are the ${phase} agent for one approved Kineo task. Read AGENTS.md and owning contracts.\n`
           + `${raw}\nOnly edit the exact scope above. Do not edit the task, commit, push, merge, install dependencies, or change production services.\n`
@@ -189,18 +208,25 @@ export async function executeTask(action, taskFile, { root = process.cwd(), run 
     } catch (error) {
       state.phase = 'failed';
       state.checks = null;
-      throw error;
+      actionError = error;
     } finally {
       state.reservedMs -= allowance - Math.min(allowance, Math.max(0, now() - started));
-      await save(checkpointPath, state);
-      if (trace) await trace.close();
+      actionError = await cleanup(() => save(checkpointPath, state), actionError, 'CHECKPOINT_FAILED',
+        'Checkpoint write failed; do not trust prior evidence.');
+      if (trace) actionError = await cleanup(() => trace.close(), actionError, 'CLEANUP_FAILED', 'Trace closure failed.');
     }
+    if (actionError) throw actionError;
     return state;
   } catch (error) {
-    if (error instanceof HarnessError) throw error;
-    fail('COMMAND_FAILED', 'Harness could not complete; inspect its checkpoint and environment.', error);
+    primaryError = error instanceof HarnessError ? error : new HarnessError('COMMAND_FAILED',
+      'Harness could not complete; inspect its checkpoint and environment.', error);
+    throw primaryError;
   } finally {
-    if (lock) await rm(lock, { recursive: true });
+    if (lock) {
+      const failure = await cleanup(() => rm(lock, { recursive: true }), primaryError, 'CLEANUP_FAILED',
+        'Task lock removal failed; inspect processes before recovery.');
+      if (failure && !primaryError) throw failure;
+    }
   }
 }
 

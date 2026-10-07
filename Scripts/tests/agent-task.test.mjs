@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, chmod } from 'node:fs/promises';
+import { fstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { test } from 'node:test';
 import { executeTask, runCommand, validateTask } from '../agent-task.mjs';
+
+const TEST_TIMEOUT_MS = 100;
+const FIXTURE_MINUTE_MS = 60_000;
+const DESCENDANT_START_TIMEOUT_MS = 1_000;
+const HEARTBEAT_INTERVAL_MS = 10;
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'kineo-harness-test-'));
@@ -136,13 +142,59 @@ test('interrupted reservation cannot be reused and a main branch cannot start', 
   assert.equal((await state()).phase, 'failed');
   // A killed coordinator leaves the pre-reserved full allowance on disk.
   const checkpoint = await state();
-  checkpoint.reservedMs = 60_000;
+  checkpoint.reservedMs = FIXTURE_MINUTE_MS;
   await writeFile(path.join(root, '.agent-runs/fixture/checkpoint.json'), JSON.stringify(checkpoint));
   await assert.rejects(invoke('check'), { code: 'LIMIT_REACHED' });
 });
 
 test('process runner reports spawn failure and terminates a timed-out process', async () => {
-  await assert.rejects(runCommand('kineo-nonexistent-executable', [], { cwd: tmpdir(), timeoutMs: 100 }), { code: 'COMMAND_FAILED' });
+  await assert.rejects(runCommand('kineo-nonexistent-executable', [], { cwd: tmpdir(), timeoutMs: TEST_TIMEOUT_MS }), { code: 'COMMAND_FAILED' });
   await assert.rejects(runCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'],
-    { cwd: tmpdir(), timeoutMs: 100 }), { code: 'TIMEOUT' });
+    { cwd: tmpdir(), timeoutMs: TEST_TIMEOUT_MS }), { code: 'TIMEOUT' });
+});
+
+test('checkpoint and lock cleanup failures preserve primary error and close traces', async (t) => {
+  const { root, invoke, state } = await fixture(t);
+  await invoke('start');
+  const directory = path.join(root, '.agent-runs/fixture');
+  let traceFd;
+  try {
+    await assert.rejects(invoke('agent', { run: async (_command, _args, options) => {
+      traceFd = options.outputFd;
+      await chmod(directory, 0o500);
+      return { code: 1 };
+    } }), (error) => {
+      assert.equal(error.code, 'AGENT_FAILED');
+      assert.deepEqual(error.cleanupFailures.map((failure) => failure.code), ['CHECKPOINT_FAILED', 'CLEANUP_FAILED']);
+      return true;
+    });
+    assert.throws(() => fstatSync(traceFd), { code: 'EBADF' });
+    assert.equal((await state()).phase, 'running', 'Pre-launch reservation remains conservative on disk');
+  } finally {
+    await chmod(directory, 0o700);
+  }
+});
+
+test('timeout kills stubborn descendants even after their leader exits', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'kineo-harness-process-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const pidFile = path.join(root, 'child.pid');
+  const heartbeatFile = path.join(root, 'heartbeat');
+  const descendant = `process.on('SIGTERM', () => {});
+    setInterval(() => require('node:fs').appendFileSync(${JSON.stringify(heartbeatFile)}, '.'), ${HEARTBEAT_INTERVAL_MS});`;
+  const leader = `const { spawn } = require('node:child_process');
+    const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], { stdio: 'ignore' });
+    require('node:fs').writeFileSync(process.argv[1], String(child.pid));
+    setInterval(() => {}, 1000);`;
+  await assert.rejects(runCommand(process.execPath, ['-e', leader, pidFile],
+    { cwd: root, timeoutMs: DESCENDANT_START_TIMEOUT_MS }), { code: 'TIMEOUT' });
+  const pid = Number(await readFile(pidFile, 'utf8'));
+  t.after(() => {
+    try { process.kill(pid, 'SIGKILL'); }
+    catch (error) { if (error.code !== 'ESRCH') throw error; }
+  });
+  const stoppedHeartbeat = await readFile(heartbeatFile, 'utf8');
+  assert.ok(stoppedHeartbeat.length > 0, 'Descendant ran before the deadline');
+  await new Promise((resolve) => setTimeout(resolve, TEST_TIMEOUT_MS));
+  assert.equal(await readFile(heartbeatFile, 'utf8'), stoppedHeartbeat, 'Descendant kept writing after timeout');
 });

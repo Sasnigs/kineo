@@ -3,7 +3,8 @@ import { checkDocs, CHECK_PROFILES, HarnessError, runCommand } from './agent-tas
 
 const CHECK_TIMEOUT_MS = 30 * 60_000;
 const root = process.cwd();
-const profiles = [...new Set(process.argv.slice(2))];
+const controllerGroup = process.argv.includes('--controller-group');
+const profiles = [...new Set(process.argv.slice(2).filter((argument) => argument !== '--controller-group'))];
 try {
   if (!profiles.length || !profiles.every((profile) => CHECK_PROFILES.includes(profile))) {
     throw new HarnessError('INVALID_PROFILE', `Choose one or more: ${CHECK_PROFILES.join(', ')}.`);
@@ -19,8 +20,10 @@ try {
   }
   if (profiles.includes('database')) commands.push([process.execPath, ['Scripts/test-account-api.mjs'], root]);
   for (const [command, args, cwd] of commands) {
-    // Join the controller's process group so its deadline also terminates nested checks.
-    const result = await runCommand(command, args, { cwd, timeoutMs: CHECK_TIMEOUT_MS, ownProcessGroup: false });
+    // A controller owns the whole group and its total deadline. Standalone
+    // checks must instead own a group so npm/test descendants cannot escape.
+    const result = await runCommand(command, args, { cwd,
+      timeoutMs: controllerGroup ? undefined : CHECK_TIMEOUT_MS, ownProcessGroup: !controllerGroup });
     if (result.code !== 0) throw new HarnessError('CHECK_FAILED', `${command} ${args.join(' ')} failed.`);
   }
   console.log(`PASS profiles: ${profiles.join(', ')}`);
