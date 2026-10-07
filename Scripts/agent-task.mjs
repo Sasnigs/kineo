@@ -10,6 +10,10 @@ const MAX_TASK_MINUTES = 60;
 const AGENT_TURN_TIMEOUT_MS = 5 * MINUTE_MS;
 const TERMINATION_GRACE_MS = 1_000;
 const CHECKPOINT_VERSION = 1;
+const COMMIT_SHA_HEX_LENGTH = 40;
+const PRIVATE_FILE_MODE = 0o600;
+const PRIVATE_DIRECTORY_MODE = 0o700;
+const COMMIT_SHA_PATTERN = new RegExp(`^[a-f0-9]{${COMMIT_SHA_HEX_LENGTH}}$`);
 export const CHECK_PROFILES = ['docs', 'tooling', 'mobile', 'database'];
 
 export class HarnessError extends Error {
@@ -21,6 +25,10 @@ export class HarnessError extends Error {
 }
 
 const fail = (code, message, cause) => { throw new HarnessError(code, message, cause); };
+const parseJson = (raw, code, message) => {
+  try { return JSON.parse(raw); }
+  catch (cause) { fail(code, message, cause); }
+};
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const nonempty = (value) => typeof value === 'string' && value.trim().length > 0;
 const safePath = (value) => nonempty(value) && !value.includes('\\') && !/[\x00-\x1f*?\[\]]/.test(value)
@@ -29,7 +37,7 @@ const safePath = (value) => nonempty(value) && !value.includes('\\') && !/[\x00-
 
 export function validateTask(task) {
   if (!task || !nonempty(task.id) || !/^[a-z0-9][a-z0-9-]*$/.test(task.id) || !nonempty(task.goal)
-    || !/^[a-f0-9]{40}$/.test(task.base)
+    || !COMMIT_SHA_PATTERN.test(task.base)
     || !Array.isArray(task.scope) || !task.scope.length || !task.scope.every(safePath)
     || new Set(task.scope).size !== task.scope.length
     || !Array.isArray(task.acceptance) || !task.acceptance.length || !task.acceptance.every(nonempty)
@@ -113,7 +121,7 @@ export function runCommand(command, args, { cwd, timeoutMs, outputFd, ownProcess
 
 async function save(checkpointPath, state) {
   const temporary = `${checkpointPath}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: PRIVATE_FILE_MODE });
   await rename(temporary, checkpointPath);
 }
 
@@ -139,13 +147,13 @@ export async function executeTask(action, taskFile, { root = process.cwd(), run 
     if (!['start', 'status', 'check', 'agent'].includes(action) || !safePath(taskFile)) fail('INVALID_TASK', 'Use start, status, check, or agent with a relative task path.');
     await assertNoSymlinks(root, taskFile);
     const raw = await readFile(path.join(root, taskFile), 'utf8');
-    const task = validateTask(JSON.parse(raw));
+    const task = validateTask(parseJson(raw, 'INVALID_TASK', 'Task contract is not valid JSON.'));
     const branch = git(root, 'branch', '--show-current').trim();
     if (!branch || ['main', 'master'].includes(branch)) fail('UNSAFE_BRANCH', 'Use a dedicated feature branch, not main or detached HEAD.');
     git(root, 'merge-base', '--is-ancestor', task.base, 'HEAD');
     const directory = path.join(root, '.agent-runs', task.id);
     await assertNoSymlinks(root, `.agent-runs/${task.id}`);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
     const checkpointPath = path.join(directory, 'checkpoint.json');
     await assertNoSymlinks(root, `.agent-runs/${task.id}/checkpoint.json`);
     await assertNoSymlinks(root, `.agent-runs/${task.id}/checkpoint.json.tmp`);
@@ -155,13 +163,17 @@ export async function executeTask(action, taskFile, { root = process.cwd(), run 
       catch (cause) { if (cause.code === 'EEXIST') fail('BUSY', 'Task is locked. Inspect the active process before recovery.'); throw cause; }
     }
     let state;
-    try { state = JSON.parse(await readFile(checkpointPath, 'utf8')); }
+    try {
+      state = parseJson(await readFile(checkpointPath, 'utf8'), 'CHECKPOINT_MISMATCH',
+        'Checkpoint is corrupt; do not reuse its evidence.');
+    }
     catch (error) {
       if (error.code !== 'ENOENT') throw error;
       if (action !== 'start') fail('NOT_STARTED', 'Start the approved task before continuing.');
       state = { version: CHECKPOINT_VERSION, taskHash: hash(raw), branch, agentTurns: 0, reservedMs: 0, checks: null, phase: 'started' };
     }
-    if (state.version !== CHECKPOINT_VERSION || state.taskHash !== hash(raw) || state.branch !== branch
+    if (!state || typeof state !== 'object' || Array.isArray(state)
+      || state.version !== CHECKPOINT_VERSION || state.taskHash !== hash(raw) || state.branch !== branch
       || !Number.isFinite(state.reservedMs) || state.reservedMs < 0 || !Number.isInteger(state.agentTurns) || state.agentTurns < 0) {
       fail('CHECKPOINT_MISMATCH', 'Checkpoint does not match this contract and branch; do not reuse its evidence.');
     }
@@ -193,8 +205,8 @@ export async function executeTask(action, taskFile, { root = process.cwd(), run 
           + `${raw}\nOnly edit the exact scope above. Do not edit the task, commit, push, merge, install dependencies, or change production services.\n`
           + (phase === 'review' ? 'Review the diff against the base. Do not edit. Report blockers with file/evidence and acceptance gaps.'
             : 'Implement the smallest correct change. Check factual claims against existing evidence. Report changes, tests, and open gates.');
-        await writeFile(path.join(directory, `turn-${state.agentTurns}-prompt.txt`), prompt, { mode: 0o600 });
-        trace = await open(path.join(directory, `turn-${state.agentTurns}.jsonl`), 'wx', 0o600);
+        await writeFile(path.join(directory, `turn-${state.agentTurns}-prompt.txt`), prompt, { mode: PRIVATE_FILE_MODE });
+        trace = await open(path.join(directory, `turn-${state.agentTurns}.jsonl`), 'wx', PRIVATE_FILE_MODE);
         result = await run('codex', ['exec', '--sandbox', phase === 'review' ? 'read-only' : 'workspace-write', '--json',
           '--output-last-message', path.join(directory, `turn-${state.agentTurns}-result.txt`), prompt],
         { cwd: root, timeoutMs: allowance, outputFd: trace.fd });
@@ -237,7 +249,10 @@ export async function checkDocs(root) {
     if (!(await readFile(path.join(root, file), 'utf8')).trim()) fail('DOCS_FAILED', `Missing or empty entry point: ${file}`);
   }
   for (const file of await readdir(path.join(root, 'docs/agent-tasks'))) {
-    if (file.endsWith('.json')) validateTask(JSON.parse(await readFile(path.join(root, 'docs/agent-tasks', file), 'utf8')));
+    if (file.endsWith('.json')) {
+      const raw = await readFile(path.join(root, 'docs/agent-tasks', file), 'utf8');
+      validateTask(parseJson(raw, 'INVALID_TASK', `Task contract is not valid JSON: ${file}`));
+    }
   }
 }
 
