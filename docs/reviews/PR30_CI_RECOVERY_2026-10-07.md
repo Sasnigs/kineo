@@ -20,3 +20,10 @@ Status: compatibility repaired locally; required security gate remains blocked. 
 ## Monitoring correction
 
 The previous shell watcher polled every 30 seconds but exited on failure. The coordinator then ended delivery without scheduling repair; this was a workflow defect, not a polling-frequency issue. Local owner rules and the delivery skill now require failures to transition into bounded repair without another owner prompt. This session exposes no recurring-task creation tool; an actual 20-minute scheduled task has not been registered and must not be claimed as active.
+
+## Subsequent coordinator evidence
+
+- Published head `6430044` triggered [CI run 37674502873](https://github.com/Sasnigs/kineo/actions/runs/37674502873). The harness and account-database jobs passed. Expo compatibility passed, then the required audit failed with 67 findings (17 moderate, 50 high). The count differs from the local result because advisory metadata can change; the blocking roots did not change.
+- A fresh online local audit on October 7, 2026 failed with 68 findings (17 moderate, 51 high). Registry queries still reported `braces` 3.0.3 and `node-forge` 1.4.0 as latest; the latest `micromatch` and `@expo/code-signing-certificates` releases still depend on those versions. No compatible patched release was available.
+- Independent standards review found one separate harness boundary defect: missing documentation paths escaped as raw `ENOENT` errors. Commit `b159c38` maps them to typed `DOCS_FAILED` failures and adds focused regressions. `node Scripts/agent-check.mjs tooling` then passed all 18 tests; `git diff --check` passed.
+- Independent spec review found no product, UI, provider, production-service, credential, audit-threshold, framework-major, or Expo-downgrade scope creep. The upstream high-severity findings remain a Critical merge blocker; no exception was made.

@@ -25,9 +25,11 @@ Status: **pilot implemented and locally verified; publication uses the PR's CI g
 ## Coordinator follow-up
 
 - Foundation review base: `c5b0974`; implementation head: `6dd241f`. The pilot task's base is deliberately narrower (`f5ec097`).
-- `node Scripts/agent-check.mjs tooling`: 13 integration tests pass. `Scripts/verify-project-boundaries.sh` and full-diff whitespace checks pass. Product code and the local wireframe are unchanged.
+- `node Scripts/agent-check.mjs tooling`: 13 integration tests passed at implementation head `6dd241f`. `Scripts/verify-project-boundaries.sh` and full-diff whitespace checks passed. Product code and the local wireframe were unchanged.
 - Independent standards/spec review identified a timeout-descendant escape. Standards review also found standalone check group ownership and error-overwriting cleanup failures. `293a254` fixes all three; process-heartbeat and permission-denial regressions pass.
 - Independent standards and spec reviewers rechecked `6dd241f` and reported no remaining implementation blocker. The subsequent change only expands this dated evidence. The foundation PR retains all existing Expo/database CI jobs plus the new harness job; pending/failed checks prohibit merge. Simulator artifact uploads contain only internal-test fixtures.
 - Publication: [PR 30](https://github.com/Sasnigs/kineo/pull/30). Its [current CI checks](https://github.com/Sasnigs/kineo/pull/30/checks) and merge record are the publication gate evidence, not a duplicated prediction in this report. External gates listed below remain open even after those checks pass.
+
+Subsequent PR repair head `6430044` expanded the focused suite to 17 tests for retry, corrupt-state, and private-permission boundaries. Independent review found that missing documentation paths could still escape `checkDocs()` as raw file-system errors. Repair commit `b159c38` maps those failures to `DOCS_FAILED` with the original cause and adds entry-point and task-directory regressions. On October 7, 2026, `node Scripts/agent-check.mjs tooling` passed all 18 tests and `git diff --check` passed. The required dependency audit remains a separate blocker described in `PR30_CI_RECOVERY_2026-10-07.md`.
 
 Configured Apple/Google providers, production email and abuse controls, physical-device protection and accessibility, privacy/legal review, licensed production content, exact-archive qualification, App Review, and public release remain open.
