@@ -1,6 +1,6 @@
 # Agent harness pilot — account status — October 7, 2026
 
-Status: **documentation reconciled in the task working tree; this task's independent review and publication remain pending**. This pilot records implementation status and does not qualify the product for release.
+Status: **pilot implemented and locally verified; publication uses the PR's CI gate**. This pilot records implementation status and does not qualify the product for release.
 
 ## Evidence basis
 
@@ -8,7 +8,7 @@ Status: **documentation reconciled in the task working tree; this task's indepen
 - Task-definition head before implementation: `4a3f00c7b8a77f7a9117c08f0cd50a7da841c6a8`.
 - [PR 27](https://github.com/Sasnigs/kineo/pull/27) merged the TD-10–12 account/authentication/synchronization/privacy implementation as `78a42c7` on September 8, 2026.
 - The PR's [successful CI run](https://github.com/Sasnigs/kineo/actions/runs/34192088569) includes `Account database isolation and commands` and `Expo build and test`.
-- The task remains an uncommitted working tree as required by its limits; no final commit, push, merge, or production-service change was made.
+- The executor deliberately left commits and publication to the coordinator. Its scoped output was committed as `ff820b1` and integrated into the foundation branch as `6dd241f`. No production service was changed.
 
 ## Reconciliation
 
@@ -20,6 +20,14 @@ Status: **documentation reconciled in the task working tree; this task's indepen
 
 ## Verification and open gates
 
-`node Scripts/agent-check.mjs docs` and `git diff --check` passed on October 7, 2026. Independent review remains required before PR publication.
+`node Scripts/agent-check.mjs docs` and `git diff --check` passed on October 7, 2026. A live `codex exec` implementation used one of two allowed turns and 203,826 ms of its ten-minute total command allowance. The controller's subsequent docs check passed with an exact-scope fingerprint. Raw traces and checkpoint remain local in the ignored pilot worktree.
+
+## Coordinator follow-up
+
+- Foundation review base: `c5b0974`; implementation head: `6dd241f`. The pilot task's base is deliberately narrower (`f5ec097`).
+- `node Scripts/agent-check.mjs tooling`: 13 integration tests pass. `Scripts/verify-project-boundaries.sh` and full-diff whitespace checks pass. Product code and the local wireframe are unchanged.
+- Independent standards/spec review identified a timeout-descendant escape. Standards review also found standalone check group ownership and error-overwriting cleanup failures. `293a254` fixes all three; process-heartbeat and permission-denial regressions pass.
+- Final independent review checks the corrected implementation and pilot. The foundation PR must retain all existing Expo/database CI jobs plus the new harness job; pending/failed checks prohibit merge. Simulator artifact uploads contain only internal-test fixtures.
+- Publication/merge evidence lives in the foundation PR's checks, not a duplicated prediction in this report. External gates listed below remain open even after those checks pass.
 
 Configured Apple/Google providers, production email and abuse controls, physical-device protection and accessibility, privacy/legal review, licensed production content, exact-archive qualification, App Review, and public release remain open.
