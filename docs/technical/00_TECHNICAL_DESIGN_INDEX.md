@@ -3,16 +3,18 @@
 | Field | Value |
 | --- | --- |
 | Technical-design version | 0.2 |
-| Status | Approved account architecture; implementation in progress |
+| Status | Approved account architecture implemented in PR 27; qualification gates remain open |
 | Platform | Expo/React Native iPhone app; Swift retained for final qualification |
 | Minimum deployment target | iOS 17.0 |
 | Product source | `../KINEO_PRODUCT_DESIGN.md` |
 | UX source | `../KINEO_UX_DESIGN_SPEC.md` |
-| Last updated | September 2, 2026 |
+| Last updated | October 7, 2026 |
 
 ## 1. Purpose and authority
 
 This set translates the product and UX contracts into implementation specifications. It does not authorize coding or public release.
+
+[PR 27](https://github.com/Sasnigs/kineo/pull/27) merged the TD-10–12 account implementation, and its Account database and Expo jobs [passed CI](https://github.com/Sasnigs/kineo/actions/runs/34192088569). That verifies the merged implementation, not configured provider behavior, physical-device behavior, privacy/legal approval, production content, or release qualification.
 
 If two documents appear to disagree, use this order:
 
