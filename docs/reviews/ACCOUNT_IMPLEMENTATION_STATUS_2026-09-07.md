@@ -2,6 +2,8 @@
 
 Status: **implementation complete locally; not yet qualified for merge or release**. Approved scope remains TD-10–12. Passing local tests does not close external credential, physical-device, privacy/legal, or production gates.
 
+This file preserves the September 7 checkpoint. See [Current delivery state](../STATUS.md) for the later PR and CI status.
+
 ## Verified in this pass
 
 - App: 50 Jest suites, 399 tests pass; TypeScript and ESLint pass. Added atomic local/outbox rollback, offline session/hydration, refresh/logout race, durable logout recovery, multi-device projection, reset retention, refresh/export cleanup, and two-phase deletion recovery regressions.

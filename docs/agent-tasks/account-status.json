@@ -1,0 +1,21 @@
+{
+  "id": "account-status-2026-10-07",
+  "goal": "Reconcile current account delivery status with merged PR 27, without closing external qualification gates or rewriting historical evidence.",
+  "base": "f5ec097184b3e568726ac11b10412c6a1b1143bc",
+  "scope": [
+    "docs/agent-tasks/account-status.json",
+    "docs/STATUS.md",
+    "docs/KINEO_IMPLEMENTATION_MILESTONES.md",
+    "docs/technical/00_TECHNICAL_DESIGN_INDEX.md",
+    "docs/reviews/ACCOUNT_IMPLEMENTATION_STATUS_2026-09-07.md",
+    "docs/reviews/AGENT_HARNESS_PILOT_2026-10-07.md"
+  ],
+  "acceptance": [
+    "Current status names PR 27 and its verified successful database and Expo CI checks.",
+    "Account implementation is distinguished from provider, physical-device, legal, production-content, and release qualification.",
+    "Historical September 7 observations remain intact and link to the current status.",
+    "No product code, UI, personal rules, or wireframe changes."
+  ],
+  "checks": ["docs"],
+  "limits": { "agentTurns": 2, "minutes": 10 }
+}

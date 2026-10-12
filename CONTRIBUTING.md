@@ -6,6 +6,8 @@
 2. Find the owning contract in `docs/technical/00_TECHNICAL_DESIGN_INDEX.md`.
 3. Keep the change inside that milestone and contract. Record an intentional design change before implementing behavior that conflicts with them.
 
+For agent-assisted work, read [current status](docs/STATUS.md) and the [bounded delivery workflow](docs/agents/HARNESS.md). Record scope, acceptance criteria, checks, and limits before implementation. Run `node Scripts/agent-check.mjs tooling` for harness changes or `node Scripts/agent-check.mjs mobile` for app source changes. These targeted profiles do not replace the complete PR CI gate.
+
 ## Branches and commits
 
 - Create a short-lived branch from an up-to-date `main`, such as `feat/m2-persistence`, `fix/check-in-recovery`, or `docs/testing-contract`.
