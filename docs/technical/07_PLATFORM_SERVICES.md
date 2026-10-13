@@ -23,6 +23,11 @@ Version-one services are:
 
 The approved Account implementation adds native Apple/Google authentication, SecureStore, and an allow-listed Supabase client through TD-10 and TD-11. Remote configuration, analytics, and diagnostics SDKs remain excluded.
 
+TD-13 proposes explicit weekday/time reminders. It is not implemented or accepted
+yet. Only after acceptance does its one-request-per-selected-weekday rule replace
+the exactly-one-daily request contract below. Generic copy, Today routing,
+permission handling, typed failures, and no selection influence remain unchanged.
+
 ### Adapter map
 
 ```mermaid

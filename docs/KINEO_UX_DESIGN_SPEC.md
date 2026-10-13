@@ -1,6 +1,6 @@
 # Kineo v1 UX Design Specification
 
-Status: approved UX contract for prototype implementation
+Status: v0.7 consistency draft for owner acceptance; implemented v0.6 behavior remains the baseline
 
 Platform: Expo/React Native iPhone app with native iOS interaction semantics
 
@@ -10,7 +10,7 @@ Product source: `KINEO_PRODUCT_DESIGN.md`
 
 ## 1. Product experience
 
-Kineo is a daily movement-decision companion for adults experiencing recurring discomfort in the neck, upper or mid-back, or lower back. It is not an exercise library, diagnosis tool, treatment, clinical measurement system, or pain-recovery promise.
+Kineo supports a manageable movement practice and easier return for adults experiencing recurring, non-acute neck or back discomfort. The daily movement decision remains its engine. It is not an exercise library, treatment, clinical measurement system, or promise of mobility/pain improvement. Proposed consistency behavior is specified in TD-13 and is not implemented yet.
 
 The primary experience is:
 
@@ -20,6 +20,7 @@ The primary experience is:
 4. The user follows reviewed movement content, with alternatives, skipping, pausing, and an always-visible safety path.
 5. The user may report Better, Same, or Worse afterward.
 6. Later plans may use the user’s own prior Kineo check-ins and responses.
+7. Optional participation planning and weekly everyday-activity reflection support return and personal context without adding required daily questions or changing selection.
 
 The daily decision and its explanation must be visually more prominent than movement content. There is no browseable exercise library in primary navigation.
 
@@ -27,11 +28,11 @@ The daily decision and its explanation must be visually more prominent than move
 
 Primary tabs:
 
-- Today: check-in, plan decision, and session entry.
-- Progress: the user’s reports, routine history, and neutral consistency summary.
+- Today: one primary entry into check-in or the existing recovery/Attention flow; optional return support.
+- Progress: distinct participation, recorded Routine completion, and optional everyday-activity reflection; detailed history is secondary.
 - Profile: areas, preferences, reminders, data choices, safety information, and support.
 
-Onboarding is progressive. Only age eligibility, primary area, optional secondary area, and the product boundary are requested before the first check-in. Optional integrations and analytics are introduced later, when their purpose is clear.
+Onboarding is progressive: promise → 18+ declaration → authentication → legal acceptance → hydration → primary/optional secondary area → safety acknowledgment → first Check-in. Required Account steps cannot be omitted to reduce taps. Targets, reminders, and activity reflection are optional after first value and never gate a Routine. HealthKit and telemetry remain absent unless separately approved.
 
 ## 3. Visual direction
 
@@ -152,6 +153,7 @@ The decorative signature is a restrained curved movement-path line. Do not use m
 
 - `O1 Welcome`: “Movement for how today feels”; Get started; adults-only and non-treatment boundary.
 - `O2 Age confirmation`: asks only whether the user is 18 or older. Under 18 shows an unavailable state.
+- `A1 Authentication`, `A2 Legal acceptance`, `A3 Hydration`: TD-10/11 account flow before area setup; cancellation, verification, offline, and Retry states remain recoverable. Product copy must describe private Account sync, not device-only use.
 - `O3 Primary area`: Neck; Upper or mid-back; Lower back. Accessible list cards, no body map.
 - `O4 Secondary area`: None or one remaining area; explains that it adds a short module.
 - `O5 Safety boundary`: concise limits and acknowledgement for usual recurring discomfort.
@@ -160,6 +162,7 @@ The decorative signature is a restrained curved movement-path line. Do not use m
 ### `20 Today and check-in`
 
 - `T1 Today — ready`: date, selected areas, check-in entry, small consistency summary.
+- `T10 Return support`: quiet “Make returning easier” action in ordinary Today; optional transient barrier choices route as TD-13 defines. “You do not need to catch up” is prototype copy for review, not permission to bypass safety. Follow TD-05 section 5.1 precedence and restoration guards; no new competing route.
 - `T2 Change`: Better, Similar, Worse for one named area; progress 1 of 2.
 - `T3 Movement comfort`: Limited, Okay, Good for the same area; progress 2 of 2.
 - `T4 Two-area compact check-in`: two region cards, at most four required taps; the secondary area can be left out before a Worse/Limited answer triggers its conditional question, but not afterward as a safety bypass.
@@ -178,22 +181,26 @@ The decorative signature is a restrained curved movement-path line. Do not use m
 - `R5 Safety guidance`: immediately pauses media and timing and shows reviewed guidance. End Routine is primary; “I tapped this by mistake” returns only to the ordinary Paused screen, where a separate Resume action is required.
 - `R6 Feedback — one area`: Better, Same, Worse, or Skip.
 - `R7 Feedback — two areas`: independent compact response rows for each included area.
-- `R8 Completion`: duration, level, included areas, and neutral consistency acknowledgment.
+- `R8 Completion`: truthful recorded status and included areas; optional feedback does not determine success. Same is not failure. One quiet participation-setup link may appear after first value; do not stack Goal/reminder/setup modals or pressure the user into another Routine.
 
 ### `40 Progress`
 
-- `P1 Overview`: “3 of 4 consistency days,” recent sessions, labeled response bars, Health app context in a separate section.
+- `P1 Overview`: “This week” with Participation Days and optional confirmed target; distinct recorded Routine completion count; optional activity card; recent history below. With no confirmed target, show counts without a denominator. Hide Active-unlock/level achievement framing. No HealthKit context in this prototype.
 - `P2 Area detail`: area selector, check-in timeline, level history, response distribution, and explicit non-causation copy.
-- `P3 Empty`: patterns appear after the user has Kineo history.
+- `P3 Empty`: explain that no history/reflection exists yet; do not promise later improvement. Offer Check-in and optional activity setup without making either mandatory.
+- `P4 Everyday Activity Goal`: curated subject the user already does, None/Skip, and private-cloud explanation. Choosing/replacing/removing follows explicit server commit, retention disclosure, and typed error states.
+- `P5 Weekly Activity Reflection`: one optional, categorical difficulty report for the named Goal and period. No numeric score, health inference, or required daily prompt; Not attempted is distinct from Skip/missing. A different Goal starts a separate series.
+- `P6 Weekly review`: neutral summary of participation, recorded completion/incomplete choices, and dated self-reports. User may review next week's target. No causal “your exercises improved X” narrative or overdue backlog.
 
 ### `50 Profile`
 
 - `S1 Profile`: areas, preferences, reminders, Health app, privacy, safety, support, app information.
 - `S2 Areas`: change primary and optional secondary; area histories remain separate.
-- `S3 Reminders`: optional reminder window and neutral notification preview.
+- `S3 Reminders`: optional chosen weekdays and local time, generic preview, permission action only on explicit enable; desired/applied schedule distinction and Retry after partial failure. Offline opt-out is immediate on this Installation with pending Account-sync status; failed cancellation is not displayed as Off. No inferred ideal time.
 - `S4 Health app context`: disabled in the initial prototype. If later approved, show observable connection/context states, data types, and a statement that this data does not select routines; never claim that HealthKit revealed a denied read permission.
-- `S5 Privacy and data`: local sensitive-data explanation, absence of initial-prototype telemetry, Reset History with explicit retention of any current Attention gate, and Delete All with exact scope.
-- `S6 Delete confirmation`: exact Kineo data removed; Apple-held data is separate.
+- `S5 Privacy and data`: protected cache plus private Account sync; no prototype telemetry. Reset History explains retained current Attention/preferences and removal of Goal/reflection history; export/logout/Delete Account follow TD-12.
+- `S6 Delete confirmation`: irreversible Account deletion, exact local/cloud scope, revocation/recovery, and independently held Apple/Google data.
+- `S8 Participation Target`: optional user-selected target, current/next-week effective state, disable/re-enable and pending-change cancellation as TD-13 specifies. Existing three-day default is unconfirmed, not a chosen exercise schedule. No historical achievement score. Permission denial never blocks saving the target.
 - `S7 Analytics choice`: deferred and absent from the initial prototype. It may appear only after a separate data-flow design is approved; if added, it remains off until opt-in and is limited to approved operational counts.
 
 ### `60 Safety and system states`
@@ -201,7 +208,7 @@ The decorative signature is a restrained curved movement-path line. Do not use m
 - `E1 Attention return`: asks whether the named area returned to its usual recurring pattern; Yes, No, Not sure, selected by mistake.
 - `E2 Content unavailable`: no approved routine exists; no invented fallback.
 - `E3 Secondary omitted`: eligible primary-area routine continues only when reviewed combined content is unavailable or incompatible; the omitted secondary area is disclosed. A safety flag never uses this fallback.
-- `E4 Offline`: no persistent warning in the initial prototype because every core action is local. A future remote-only context may show a local notice without degrading the core flow.
+- `E4 Offline`: cached history and an active Routine remain usable. New Plans and account-wide target/Goal/reflection/settings writes need server validation. Protected drafts can be retained; show Online required and Retry, not a false Saved state or a blocking optional-feature modal. Reminder opt-out and weekly-invitation dismissal suppress locally immediately under TD-13; show pending Account sync rather than claiming all Installations are updated.
 - `E5 Age unavailable`: adults-only boundary without collecting a birth date.
 - `E6 Health app unavailable`: core flow remains available.
 - `E7 Dynamic Type`: representative Today, Check-in, Plan, Routine, and safety states at accessibility sizes.
@@ -235,13 +242,26 @@ Age eligibility is a product boundary, not a safety classifier. User answers can
 
 ## 7. Prototype connections
 
-- Primary: `O1 → O2 Yes → O3 → O4 → O5 → O6 → T2 → T3 → T7 → R1 → R2 → R6 → R8 → T1`.
+- Primary: `O1 → O2 Yes → A1 → A2 → A3 → O3 → O4 → O5 → O6 → T2 → T3 → T7 → R1 → R2 → R6 → R8 → T1`.
 - Safety: `T2 Worse or T3 Limited → T5 → T6 → E1`.
 - Safety: any area enters Attention → `T5 → T6`; all new routine entry remains blocked until return-to-usual or correction clears every current flag.
 - Catalog fallback: both areas pass safety, but combined content is unavailable/incompatible → `E3`; disclosed primary-only plan continues.
 - Pause: `T7 → T9 → T1`.
 - Routine controls: `R1 → R3`, `R1 → R4`, safety control `R1/R3 → R5`.
 - Tabs: `T1 ↔ P1 ↔ S1`.
+- Optional planning: `R8 or S1 → S8 → optional S3 → return`; cancel/skip leaves committed history intact.
+- Optional reflection: `P1 → P4 → P5 → P1`; removing/replacing a Goal discloses retained history and never changes a Plan.
+- Return: `ordinary T1 → T10 → ordinary Check-in or reviewed explanation`; Attention and active Routine precedence are unchanged.
+
+### Consistency content hierarchy
+
+Today retains one primary action; return support is secondary. Progress distinguishes
+what the user recorded from what they reported about everyday life. Participation
+target achievement is not an exercise-dose or health outcome. After a missed period,
+no red failure badge, lost-streak message, catch-up plan, or automatic harder/easier
+level is shown. All new copy and education are versioned draft content until their
+applicable professional review. The existing local wireframe proposal is unchanged;
+this written amendment does not assert visual approval or implementation.
 
 ## 8. Accessibility and content requirements
 

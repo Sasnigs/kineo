@@ -38,6 +38,28 @@ _Avoid_: Workout, treatment
 An unresolved area-specific safety state that prevents every new Plan until the documented return or correction flow clears it.
 _Avoid_: Alert, diagnosis
 
+## Consistency and personal reflection
+
+**Participation Day**:
+A local calendar day containing a qualifying recorded participation choice, including an eligible pause; it is not proof of exercise or health benefit.
+_Avoid_: Exercise day, recovery day, streak
+
+**Participation Target**:
+The user's optional weekly intention for Participation Days, distinct from exercise frequency or a prescribed dose.
+_Avoid_: Treatment schedule, exercise requirement
+
+**Recorded Routine Completion**:
+A Routine recorded as completed by its lifecycle, without verifying physical performance or benefit.
+_Avoid_: Mobility gain, movement quality, recovery
+
+**Everyday Activity Goal**:
+One activity the user already does and chooses as the subject of personal reflection.
+_Avoid_: Clinical target, movement assessment
+
+**Activity Reflection**:
+A dated optional self-report about the difficulty of one Everyday Activity Goal during a stated period.
+_Avoid_: Outcome score, pain reduction, clinical measurement
+
 ## Synchronization and privacy
 
 **Mutation**:
@@ -59,4 +81,3 @@ _Avoid_: Delete Account, clear cache
 **Delete Account**:
 The verified irreversible workflow that revokes access before removing Account-owned domain and authentication data.
 _Avoid_: Logout, Delete All
-

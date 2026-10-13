@@ -9,6 +9,11 @@
 
 This document defines Kineo's product records and protected local cache. TD-11 and TD-12 supersede every local-only, no-account, and Delete All clause with the Account-scoped cloud source of truth, synchronization, export, and Delete Account contracts.
 
+The proposed v0.7 consistency delta is in `13_CONSISTENCY_EVERYDAY_FUNCTION.md`.
+It is not implemented or accepted yet. After owner acceptance, that delta replaces
+only legacy unchosen target defaults/projections and extends sensitive records;
+the storage, identity, transaction, and safety controls here remain mandatory.
+
 ## 1. Prototype decisions
 
 1. **Durable cache:** one migrated protected SQLite database through Expo SQLite.

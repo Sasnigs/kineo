@@ -2,15 +2,15 @@
 
 | Field | Value |
 | --- | --- |
-| Version | 0.6 |
-| Status | **Approved for Prototype Implementation** |
+| Version | 0.7 draft |
+| Status | **Consistency amendment for owner review; v0.6 remains the implemented baseline** |
 | Product | Kineo |
-| Working line | **Daily movement that adapts to how you feel.** |
+| Working line | **Make movement easier to return to.** |
 | Initial platform | iPhone app implemented with Expo/React Native |
 | Initial market | United States |
-| Last updated | September 2, 2026 |
+| Last updated | October 13, 2026 |
 
-> This is a living product and engineering specification. Version 0.6 adds required accounts and protected synchronization. Public distribution still requires the separate release gates and **1.0 — Release-Ready Design**.
+> Version 0.7 is a proposed consistency amendment, not an implementation or clinical-approval claim. Version 0.6 remains the approved implemented baseline. The owner authorized this design/review phase; the new C1–C5 implementation track requires acceptance of the amendment. Public distribution still requires **1.0 — Release-Ready Design** and its separate gates.
 
 ## Document Lifecycle
 
@@ -24,15 +24,16 @@ This document evolves through explicit review stages:
 | 0.4 | Prototype readiness review | Placeholder content and technical defaults are approved; remaining launch issues are separated |
 | 0.5 | Approved for prototype implementation | No local prototype implementation blocker remains |
 | 0.6 | Account architecture | Required authentication, synchronization, and privacy lifecycle are decision-complete |
+| 0.7 | Consistency and personal reflection | Participation, re-entry, progress semantics, privacy, and implementation slices pass owner/design review |
 | 1.0 | Release-ready design | Production content, safety, privacy, and App Store gates are closed |
 
 Every revision must update the Decision Register, Open Decisions, and Revision History. A rejected or deferred feature is recorded rather than silently removed.
 
 ## 1. Executive Summary
 
-Kineo is a consumer daily movement companion for adults who self-manage recurring neck or back discomfort. It answers one practical question:
+Kineo is a consumer movement and consistency companion for adults who self-manage recurring, non-acute neck or back discomfort. Its primary job is:
 
-> **What movement should I do today, and how much?**
+> **Help me keep movement manageable and worthwhile, and make it easier to return after a gap.**
 
 Unlike a static stretching library, Kineo creates a short guided routine from the user's current check-in, active body areas, and previous routine responses. Optional HealthKit information may appear separately as personal context but never controls the routine. Version one uses deterministic and explainable rules. It does not diagnose a condition, treat pain, measure recovery, calculate physical capacity, or generate exercises.
 
@@ -40,15 +41,19 @@ The product uses a required Account and synchronizes Kineo product data through 
 
 ### Product thesis
 
-People with recurring discomfort often experience day-to-day variation, while the movement guidance available to them is commonly static, generic, or dependent on the user choosing a routine without context. Kineo's differentiated value is not the size of its exercise library. Its value is a short, transparent feedback loop:
+People with recurring discomfort may face variable symptoms, uncertainty, time constraints, interruptions, and difficulty noticing meaningful change. Lack of dedication or immediate relief is not assumed to be the single root cause. Kineo's hypothesis is that a manageable, explainable routine plus non-punitive return support and honest personal reflection can help participation over time. This hypothesis is not yet validated in Kineo.
+
+The daily selector remains the engine inside a wider feedback loop, not a replacement for reviewed movement content:
 
 ```text
-Daily check-in -> bounded routine selection -> guided completion -> response feedback -> future adaptation
+Optional personal intention -> short check-in -> bounded routine -> optional response
+         ^                                                       |
+         +---- easy return + weekly personal reflection <---------+
 ```
 
 ### Version-one outcome
 
-An authenticated user can complete a very short Check-in, understand why a Plan was selected, perform a guided Routine, report how it felt, and see synchronized patterns over time. An already active Routine and cached history remain available without connectivity.
+The implemented v0.6 flow lets an authenticated user complete a short Check-in, understand a Plan, follow a guided Routine, and retain responses/history. The proposed v0.7 delta adds user-selected participation targets, scheduled reminders, easier re-entry, and an optional everyday-activity reflection. It separates participation, recorded Routine completion, and personal experience; none proves improved mobility or pain relief. Cached history and an already active Routine remain available offline.
 
 ## 2. Product Contract
 
@@ -77,13 +82,16 @@ Each session has one required **primary area** and at most one optional **second
 
 The primary job is:
 
-> Help me choose an appropriate short movement routine for how I feel today without making me search through a library.
+> Help me build a manageable movement practice and return to it without catch-up pressure, while observing my own everyday experience.
 
 Secondary jobs are:
 
-- Help me remain consistent without pressuring me to exercise every day.
+- Help me choose a short routine for how I feel today without searching a library.
+- Help me choose my own participation intention without an exercise prescription or daily pressure.
 - Help me remember how different routines felt.
 - Help me observe patterns in my own check-ins and routine history.
+
+Greater mobility and meaningful benefit for people with persistent pain are product ambitions, not demonstrated outcomes or permission to broaden to all chronic-pain conditions. The initial population remains section 2.1. Significant pain-benefit claims need a professionally designed intervention, product-specific evidence, and intended-use review; usage alone cannot establish them.
 
 ### 2.4 What Kineo is
 
@@ -121,7 +129,7 @@ If that assessment determines that the proposed behavior falls outside the inten
 3. **A pause is valid participation.** The product does not use shame, lost-progress warnings, or intensity rewards.
 4. **Explain the choice.** A user should understand the main inputs behind a routine without seeing an artificial readiness score.
 5. **Request less data.** Permissions are optional, requested in context, and never required for the core experience.
-6. **Core use is offline.** Connectivity problems must not prevent a check-in, routine, feedback, or progress review.
+6. **Offline behavior is explicit.** Cached history and an active Routine remain available offline; new Plans and account-wide writes follow section 12.3's server-validation rules.
 7. **Health correlations are not causation.** Trends describe what the user reported; they do not claim why it happened.
 8. **Professional content is a release requirement.** Placeholder exercises are acceptable only during internal prototyping.
 
@@ -151,10 +159,11 @@ Progress combines personal patterns with flexible consistency:
 - Completed and paused routines.
 - Gentle, Balanced, and Active history.
 - Better, Same, and Worse responses by body area.
-- Weekly consistency goal.
+- Optional user-selected Participation Target and distinct recorded-completion history.
+- Optional Everyday Activity Goal and weekly self-report, clearly identified as subjective experience.
 - Optional HealthKit context when permission and sufficient data exist.
 
-Progress must not state or imply that sleep, steps, workouts, or a particular exercise caused a change in discomfort.
+Progress must not imply that engagement, a higher level, or a particular Routine caused improved function or discomfort. Active availability is a Plan option, not a Progress achievement. TD-13 defines the proposed projections; this delta is not implemented yet.
 
 ### 4.3 Profile
 
@@ -163,6 +172,7 @@ Profile contains:
 - Primary and secondary body-area preferences.
 - Routine preferences.
 - Reminder settings.
+- Participation Target and optional Everyday Activity Goal.
 - HealthKit connection/context state and explanation, without claiming that denied read access can be distinguished from no matching data.
 - Privacy, safety, support, data deletion, and app information.
 
@@ -190,6 +200,7 @@ No routine preference is requested during onboarding. Authentication requires co
 
 - HealthKit connection appears after the user has experienced the check-in and can see how optional context would be used.
 - Reminder permission appears when the user chooses a preferred reminder window.
+- Participation Target and Everyday Activity Goal setup are optional after the first terminal Routine experience, with an equally visible Skip action; both remain editable in Profile. Neither adds a daily Check-in prompt.
 - Any future Kineo-controlled analytics choice appears only after its separate data-flow design is approved, and never during the initial prototype. If later added, it is optional, off until the user opts in, and changeable in Profile.
 
 ### 5.3 Safety acknowledgment
@@ -441,7 +452,7 @@ After a completed or stopped routine, Kineo asks for one response per included a
 - Same
 - Worse
 
-The user can skip feedback. Kineo must not hold completion or progress hostage to an answer.
+The user can skip feedback. Completion is recorded before the response, and the interface must not treat Same as a failure or promise immediate relief. Versioned expectations content requires professional review; it must not normalize worsening or advise pushing through it.
 
 ### 9.2 Delayed response
 
@@ -455,9 +466,21 @@ Progress supports a weekly consistency goal rather than a strict exercise streak
 - Starting and intentionally stopping a routine.
 - Choosing “Pause today” after a Limited or Worse check-in.
 
-The interface must not reward Active over Gentle, penalize a pause, or imply that more exercise is always better.
+The interface must not reward Active over Gentle, penalize a pause, or imply that more exercise is always better. These are **Participation Days**, not verified exercise or improvement. A stopped Routine must actually have started to count; prepared-but-never-started, abandoned, and safety-stopped records retain their truthful status without penalties.
 
-### 9.4 Progress presentation
+The proposed Participation Target is optional and explicitly user-selected within the existing one-to-seven-day bounds, not a recommended exercise frequency. The legacy default of three is not evidence of user choice. The first confirmed target applies to the current week with that timing disclosed; later changes apply next week without rewriting past targets. Disabling hides target pressure immediately. See TD-13 for migration and calendar behavior.
+
+### 9.4 Return after a gap
+
+Offer optional “Make returning easier” support within ordinary Today. TD-05 section 5.1 owns entry precedence and the proposed Plan-restoration guards; return support never overrides them. Do not infer deconditioning, prescribe catch-up, clear a safety state, or reuse an old Check-in. Transient barrier choices can route to Quick after ordinary selection, reviewed instructions, existing safety information, or reviewed expectations; they are not stored as analytics.
+
+### 9.5 Everyday activity reflection
+
+The user may choose one curated activity they already do and record one personal reflection per Goal/week, with corrections allowed. The calendar is fixed for the History Epoch and disclosed after travel. Progress offers an optional inline weekly invitation, not a modal; dismissal persists and Goal replacement cannot reactivate it in the same period. No required questionnaire, performance test, clinical score, or automatic Routine change is added. Missing, skipped, or not-attempted periods are not improvement or deterioration. Switching activities starts a separate series. Removing the active Goal stops prompts but retains disclosed history until Reset History or Delete Account. TD-13 owns calendar, dismissal, and stale-Installation semantics.
+
+Prototype labels/questions are specified in TD-13 and require professional review before external functional testing. This is not a validated clinical outcome measure.
+
+### 9.6 Progress presentation
 
 Progress may show:
 
@@ -465,7 +488,9 @@ Progress may show:
 - Routine completion and duration variant.
 - Selected level history.
 - Response distribution by area and routine.
-- Weekly consistency.
+- Weekly Participation Days versus the optional target.
+- Recorded Routine completions and incomplete/skip choices, separately labeled.
+- Dated everyday-activity self-reports, without causal or recovery claims.
 - Optional baseline-relative sleep and activity context.
 
 The product may say that events occurred together. It may not claim that one event caused another without appropriate evidence.
@@ -473,11 +498,12 @@ The product may say that events occurred together. It may not claim that one eve
 ## 10. Notifications
 
 - Reminders are optional.
-- The user chooses a general reminder window.
+- The proposed reminder extension lets the user choose weekdays and a local time; it replaces the two current daily presets only after amendment acceptance. No schedule is inferred from symptoms or reflections.
 - Notification permission is requested only after the user selects a window.
 - Version one does not infer the ideal reminder time.
 - Notifications use neutral language and do not expose body areas, discomfort, or HealthKit information on the lock screen by default.
 - Missing a reminder does not produce shame, urgency, or a lost-streak warning.
+- Reminders are independent of a flexible Participation Target. A reminder day is not prescribed exercise. Weekly reflections produce no extra notification. Desired settings and locally applied schedule are shown separately if scheduling fails. Offline opt-out cancels alerts on this Installation immediately, with truthful Account-sync status; stale hydration cannot reactivate them. Other offline Installations reconcile when connected.
 
 Adaptive reminder timing is a roadmap feature that requires sufficient usage data and explicit privacy review.
 
@@ -527,6 +553,7 @@ Kineo synchronizes the following values only to its authenticated private accoun
 - Completion, skip, stop, and alternative history.
 - Better, Same, and Worse feedback.
 - Progress aggregates and reminder preference.
+- Proposed v0.7: Participation Target decisions, optional Everyday Activity Goals, and Activity Reflections. These are sensitive private Account data, not device-only notes or staff analytics.
 
 These values are cached locally using iOS Complete Protection and Apple's documented backup-exclusion mechanism, then synchronized over authenticated encrypted transport to private PostgreSQL tables. Raw HealthKit samples remain outside this design. No sensitive value appears in email, logs, notification text, diagnostics, filenames, or object-storage keys.
 
@@ -556,6 +583,8 @@ Profile must provide:
 
 Reset History removes account-wide check-ins, Plans, Routines, feedback, Progress projections, and safety-transition history while retaining Account access, settings, legal records, and only the minimum current Attention Required row. It increments History Epoch so stale offline mutations cannot restore removed history. Delete Account requires reauthentication, revokes Sessions and Installations first, then irreversibly removes domain and Auth data through a resumable server workflow. The interface separately explains data held independently by Apple or Google.
 
+The proposed delta also removes every Everyday Activity Goal/Reflection, old target decisions, related drafts and projections on Reset History. Retain only current/next participation preferences and reminders, not past use. Export includes the new records; logout and Delete Account wipe them under TD-12. TD-13 defines the exact lifecycle extension.
+
 ## 13. Product Success Measures
 
 Version one measures product usefulness and engagement, not treatment outcomes. Measurement has two deliberately separate layers.
@@ -582,11 +611,19 @@ The app may calculate for the user, entirely on-device:
 
 These personal insights are displayed cautiously and are not treatment or recovery outcomes.
 
+Proposed personal insights add distinct participation/completion views and optional Activity Reflections. They remain private views calculated for the user from the protected cache; the approved Account data plane is not a general analytics dataset.
+
 ### 13.3 Product-learning limitation
 
-Version one intentionally cannot remotely answer which body area, check-in response, routine level, or post-routine response drives retention. Product evaluation begins with aggregate activation and completion, usability testing with non-sensitive scenarios, and voluntary user interviews.
+Version one provides private Account insights, not a staff analytics or remote retention-analysis surface. Cloud synchronization does not authorize staff to inspect body areas, responses, levels, or individual use patterns. Initial design evaluation uses synthetic scenarios, isolated non-functional usability mockups, and voluntary interviews. Measuring real-user activation, completion, or sensitive patterns requires the separate approved protocol below.
 
 Any later upload, export, or research use of sensitive patterns requires a separate specification covering purpose, explicit opt-in consent, data minimization, withdrawal, retention, access, security, and applicable research or regulatory review. It is not enabled by accepting the general privacy policy or generic analytics.
+
+### 13.4 Validation of the consistency hypothesis
+
+First test comprehension and return-flow usability with isolated non-functional mockups and synthetic scenarios. Before functional testing outside the product team, replace placeholder movements with appropriate reviewed study content and meet the existing interim safety, expectation-copy, privacy, and participant-protection gates.
+
+Then a separately approved, explicitly consented protocol can examine return over time, recorded Routine completion, barrier reports, and appropriate functional/pain outcomes separately. Predefine population, comparator/baseline, content/dose, follow-up, missing-data handling, sample justification, harms/support, access/retention, and success criteria. Do not set clinical thresholds or collect per-person health/retention data under generic telemetry consent. Better adherence alone does not validate significant pain benefit.
 
 ## 14. Version-One Acceptance Scenarios
 
@@ -623,6 +660,17 @@ Any later upload, export, or research use of sensitive patterns requires a separ
 31. **Export:** Recent reauthentication produces a private, one-time, expiring structured export for only the authenticated Account.
 32. **Stale-device protection:** A revoked or pre-reset Installation cannot restore deleted history or continue Account commands.
 
+Proposed v0.7 acceptance extension (not implemented):
+
+33. **Optional commitment:** setup is skippable; only explicit user choice confirms a target; target/Goal/reminder inputs never change selection or eligibility.
+34. **Honest progress:** deduplicate Participation Days; distinguish recorded completions, started stops, eligible pauses, and personal reflections; no verified-movement or recovery inference.
+35. **Easy return:** no catch-up, automatic level change, old Check-in reuse, or safety bypass; barrier support remains optional and transient.
+36. **Goal/reflection integrity:** one active curated Goal; independent series on replacement; skipped/not-attempted periods remain explicit; duplicate/stale writes and Goal/period conflicts are recoverable.
+37. **Scheduled reminders:** chosen weekdays/time, generic copy, denied permission, DST/travel, and partial scheduling failure preserve truthful applied state without duplicates.
+38. **Extended privacy:** bootstrap/conflict/epoch rules, Reset History, export, logout, and interrupted deletion cover every new record/draft without leaking it to notifications, logs, or telemetry.
+39. **Low-friction access:** no new required first-use or daily questions; large-text/assistive flows can skip setup/reflection, read empty/pending/error states, and complete ordinary Today.
+40. **Validation boundary:** no clinical claim, new analytics, or functional external participant testing without the separately approved content, protocol, consent, and review gates.
+
 ## 15. Roadmap and Excluded Ideas
 
 ### 15.1 Deferred roadmap
@@ -657,6 +705,18 @@ Future AI must:
 - Medical, diagnostic, rehabilitation, treatment, or injury-prevention claims.
 
 ## 16. Open Decisions and Release Gates
+
+### 16.0 Consistency amendment acceptance
+
+The recommended v0.7 decisions are explicit in TD-13. Owner acceptance is pending
+before C1–C5 product implementation. It does not substitute for professional or
+privacy review. Critical review points: new private Goal/reflection data, the
+non-clinical meaning of participation targets, and the distinction between the
+ambition to help people with persistent pain and an evidenced benefit claim.
+
+Activity labels/questions and expectations copy require named professional review
+before external functional testing. A pain/function study needs its separate
+approved protocol. No result size, success rate, or improvement timeline is assumed.
 
 ### 16.1 Prototype technical resolutions
 
@@ -703,6 +763,12 @@ These decisions may remain open during internal prototyping but must be resolved
 
 | Decision | Status | Rationale |
 | --- | --- | --- |
+| Consistency as primary job | Proposed v0.7 | Preserve the daily engine inside a repeatable, non-punitive practice rather than merely selecting a Routine |
+| Distinct participation/completion/reflection | Proposed v0.7 | Engagement and subjective experience do not prove mobility gain or pain relief |
+| Editable target and scheduled reminders | Proposed v0.7 | Replace unchosen defaults and two fixed presets with explicit preferences, not prescribed dose |
+| Everyday Activity Goal | Proposed v0.7; privacy/content review required | One optional curated subject with no free text, clinical score, or selection influence |
+| Return and expectations support | Proposed v0.7 | Support re-entry without catch-up or false reassurance; preserve every safety guard |
+| Pain-benefit validation | External evidence gate | Professional intervention and product-specific evaluation are separate from adherence |
 | Expo/React Native iPhone app | Accepted | Retains iPhone-first scope while enabling a later shared Android/web implementation; platform migration cannot change product behavior |
 | Consumer movement positioning | Accepted | Preserves adaptive movement without claiming that regulatory classification is already settled |
 | Regulatory classification | Unresolved release gate | Requires review of the implemented behavior, content, intended use, and claims before public distribution |
@@ -744,11 +810,15 @@ These sources inform the product boundaries; they do not constitute legal advice
 - [Apple HealthKit Data Types](https://developer.apple.com/documentation/healthkit/data-types)
 - [Apple: Overview of Accessibility Nutrition Labels](https://developer.apple.com/help/app-store-connect/manage-app-accessibility/overview-of-accessibility-nutrition-labels/)
 - [Physitrack Developer Information](https://www.physitrack.com/en-gb/developer-information)
+- [Research: barriers and facilitators for physical activity with chronic pain](https://pubmed.ncbi.nlm.nih.gov/38981051/) — participation barriers extend beyond motivation; this does not validate Kineo.
+- [Research: adherence support strategies in chronic musculoskeletal pain](https://pubmed.ncbi.nlm.nih.gov/39536743/) — heterogeneous results do not establish that adherence alone produces better pain/function outcomes.
+- [WHO: chronic primary low-back-pain guidance](https://www.who.int/news/item/07-12-2023-who-releases-guidelines-on-chronic-low-back-pain) — person-centred care may involve education, exercise, and other interventions; it is not endorsement of Kineo or guidance for every pain condition.
 
 ## 19. Revision History
 
 | Version | Date | Status | Summary |
 | --- | --- | --- | --- |
+| 0.7 | October 13, 2026 | Draft for owner acceptance | Prioritized sustainable consistency; specified distinct progress layers, optional targets/reflection, return support, reminder scheduling, privacy delta, and separate benefit-validation gates; not implemented |
 | 0.6 | September 2, 2026 | Approved account amendment | Required accounts, Supabase synchronization, server-authoritative Plan creation, changed offline behavior, export, reset, and deletion lifecycle |
 | 0.5.1 | August 27, 2026 | Approved implementation amendment | Changed the implementation platform to Expo/React Native while preserving iPhone-first scope and every product and release boundary |
 | 0.5 | August 7, 2026 | Approved for Prototype Implementation | Recorded product-owner approval after Gate D0 passed; authorized M1 while preserving later milestone and release gates |

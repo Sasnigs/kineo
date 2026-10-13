@@ -4,8 +4,8 @@
 | --- | --- |
 | Status | Expo E0–E4 complete; account A0–A4 implementation merged; A5 qualification open |
 | Platform | Expo/React Native iPhone app, iOS 17 minimum; Swift retained for E6 qualification |
-| Sources | Product design, UX specification, and TD-00 through TD-12 |
-| Last updated | October 7, 2026 |
+| Sources | Product design, UX specification, TD-00 through TD-12; proposed TD-13 |
+| Last updated | October 13, 2026 |
 
 ## 1. Development approach
 
@@ -283,7 +283,33 @@ flowchart LR
 
 This track supersedes the account-free and fully offline assumptions in earlier milestones. It does not authorize production credentials, public distribution, or bypass professional and privacy review.
 
-## 6. Milestone completion rule
+## 6. Proposed consistency track — C0 through C5
+
+**Status:** design/review phase authorized October 13, 2026. No new consistency
+feature is implemented. C1–C5 start only after the owner accepts the v0.7 amendment.
+This is an insertion before further presentation-only redesign, not a reset of
+completed E/A work or closure of E5/E6/A5/M11–M12 gates.
+
+| Stage | Deliverable | Exit evidence |
+| --- | --- | --- |
+| C0 Design gate | Product/UX/TD-13 agree; privacy and validation deltas are explicit | Documentation gate, independent standards/spec review, owner acceptance |
+| C1 Honest Progress | Separate Participation Days and recorded completions; truthful stops/pauses/skips; no Active achievement framing | Projection/non-influence tests, migration-free history equivalence where applicable, accessible empty/dense states |
+| C2 Personal planning | Explicit editable target and weekday/time reminder settings | Shared types, server commands/migrations, cache/conflict/reset/export tests; permission/partial-schedule/DST/device tests |
+| C3 Easy return | Optional barrier routes and reviewed expectations inside existing Today precedence | Interrupted Routine/Attention/old-draft tests; no catch-up, stale Check-in, level change, telemetry, or mandatory extra prompt |
+| C4 Everyday reflection | One optional curated Goal and weekly personal self-report | Complete account/local schema, command/hydration/conflict/epoch/export/delete tests; optional/pending/archived UI and professional question/copy review |
+| C5 Qualification and learning | Full account/safety/privacy/accessibility regressions; staged consented evaluation plan | Simulator plus outstanding physical-device evidence; external content/protocol/privacy gates before functional participant testing |
+
+Deliver each stage as small behavior/test/review/PR loops, not one large rewrite.
+C1's projection truth comes first; C2's settings infrastructure precedes C3/C4
+integration. C4 is optional and can be deferred if usability shows little value;
+it cannot silently become a mandatory symptom questionnaire. Real benefit testing
+does not run under ordinary telemetry or with prototype movement content.
+
+Implementation remains in `apps/mobile` and approved `supabase` paths. Preserve the
+current engine and cloud architecture. There is no new framework, AI coach,
+tracking SDK, clinician workflow, anonymous mode, or public-release authorization.
+
+## 7. Milestone completion rule
 
 A milestone is complete only when:
 
@@ -294,7 +320,7 @@ A milestone is complete only when:
 - the implementation still matches the product, UX, and owning TD;
 - the next milestone can build on it without a known redesign.
 
-## 7. Explicitly deferred from the core build
+## 8. Explicitly deferred from the core build
 
 - HealthKit context until its addendum is approved.
 - Kineo telemetry or third-party diagnostics until a separate data-flow review.

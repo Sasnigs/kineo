@@ -2,17 +2,23 @@
 
 | Field | Value |
 | --- | --- |
-| Technical-design version | 0.2 |
+| Technical-design version | 0.3 draft consistency amendment |
 | Status | Approved account architecture implemented in PR 27; qualification gates remain open |
 | Platform | Expo/React Native iPhone app; Swift retained for final qualification |
 | Minimum deployment target | iOS 17.0 |
 | Product source | `../KINEO_PRODUCT_DESIGN.md` |
 | UX source | `../KINEO_UX_DESIGN_SPEC.md` |
-| Last updated | October 7, 2026 |
+| Last updated | October 13, 2026 |
 
 ## 1. Purpose and authority
 
 This set translates the product and UX contracts into implementation specifications. It does not authorize coding or public release.
+
+Product/UX v0.7 and TD-13 are proposed, not implemented or accepted for new code.
+The v0.6 Account/routine contracts remain the approved baseline. C0 in the milestone
+document gates the new consistency track. After acceptance, TD-13 overrides only
+the named legacy target, reminder-cardinality, and consistency-projection rules;
+it never overrides TD-03 safety/selection or TD-10–12 ownership/privacy controls.
 
 [PR 27](https://github.com/Sasnigs/kineo/pull/27) merged the TD-10–12 account implementation, and its Account database and Expo jobs [passed CI](https://github.com/Sasnigs/kineo/actions/runs/34192088569). That verifies the merged implementation, not configured provider behavior, physical-device behavior, privacy/legal approval, production content, or release qualification.
 
@@ -72,6 +78,7 @@ Arrows show decision dependency, not runtime calls.
 | `10_ACCOUNT_AUTHENTICATION.md` | Authentication, session, verification, reauthentication, logout | Product-data synchronization |
 | `11_CLOUD_DATA_SYNCHRONIZATION.md` | Private cloud model, commands, outbox, bootstrap, synchronization, conflicts | Authentication provider UI |
 | `12_ACCOUNT_PRIVACY_LIFECYCLE.md` | Reset History, export, Delete Account, interrupted-workflow recovery | Routine selection policy |
+| `13_CONSISTENCY_EVERYDAY_FUNCTION.md` | Proposed participation targets, re-entry, separate progress meanings, everyday reflection, reminder and data deltas | Clinical efficacy, Routine intensity, safety clearance, telemetry approval |
 
 ## 3. Non-negotiable system invariants
 
@@ -86,6 +93,7 @@ Arrows show decision dependency, not runtime calls.
 - Sensitive product values use protected local storage and authenticated private cloud storage. They never appear in logs, email, notifications, filenames, telemetry, or unapproved network requests.
 - Data deletion is complete and testable; reset and delete are different operations only if the UI describes the difference precisely.
 - Placeholder content can run only in an internal prototype configuration and makes no production or professional-review claim.
+- Proposed participation targets, reflection values, reminder choices, and gaps are not selection inputs. Engagement and recorded completion do not verify physical performance or benefit.
 
 ## 4. Resolved prototype decisions
 
@@ -114,6 +122,7 @@ These decisions remove implementation ambiguity while preserving explicit public
 | TD-019 | Plan authority | Submit Check-ins online and create Plans on the server with shared versioned TypeScript rules | Prevents divergent multi-Installation decisions |
 | TD-020 | Reset protection | Increment Account History Epoch and reject older Mutations | Prevents stale offline data from resurrecting deleted history |
 | TD-021 | Privacy lifecycle | Provide reauthenticated export and resumable irreversible Delete Account in-app | Matches Account ownership and deletion obligations |
+| TD-022 | Consistency delta | Proposed TD-13: user-owned participation target, optional weekly reflection, easy return, and explicit scheduling; no clinical score or new selector inputs | Addresses return/meaning without conflating usage and health outcomes; owner/content/privacy gates remain |
 
 ## 5. Remaining gates, not implementation ambiguities
 
