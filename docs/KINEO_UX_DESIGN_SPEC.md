@@ -1,6 +1,6 @@
 # Kineo v1 UX Design Specification
 
-Status: v0.7 consistency draft for owner acceptance; implemented v0.6 behavior remains the baseline
+Status: v0.7 accepted for internal implementation October 14, 2026; qualification remains per slice
 
 Platform: Expo/React Native iPhone app with native iOS interaction semantics
 

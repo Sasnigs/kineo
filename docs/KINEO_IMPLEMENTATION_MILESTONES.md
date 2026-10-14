@@ -285,8 +285,9 @@ This track supersedes the account-free and fully offline assumptions in earlier 
 
 ## 6. Proposed consistency track — C0 through C5
 
-**Status:** design/review phase authorized October 13, 2026. No new consistency
-feature is implemented. C1–C5 start only after the owner accepts the v0.7 amendment.
+**Status:** C0 accepted October 14, 2026 following independent design review and
+the owner's “implement” instruction. C1 is active; C2–C5 proceed in order after
+their predecessor qualifies. No new consistency feature is qualified yet.
 This is an insertion before further presentation-only redesign, not a reset of
 completed E/A work or closure of E5/E6/A5/M11–M12 gates.
 

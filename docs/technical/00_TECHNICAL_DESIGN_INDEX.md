@@ -14,9 +14,9 @@
 
 This set translates the product and UX contracts into implementation specifications. It does not authorize coding or public release.
 
-Product/UX v0.7 and TD-13 are proposed, not implemented or accepted for new code.
-The v0.6 Account/routine contracts remain the approved baseline. C0 in the milestone
-document gates the new consistency track. After acceptance, TD-13 overrides only
+Product/UX v0.7 and TD-13 were accepted for internal implementation October 14,
+2026. This is not evidence that the consistency features are implemented.
+The v0.6 Account/routine contracts remain the implemented baseline. TD-13 overrides only
 the named legacy target, reminder-cardinality, and consistency-projection rules;
 it never overrides TD-03 safety/selection or TD-10–12 ownership/privacy controls.
 

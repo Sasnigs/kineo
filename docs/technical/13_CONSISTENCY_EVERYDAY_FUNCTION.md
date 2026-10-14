@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft for owner acceptance; no product implementation authorized by this document |
+| Status | Accepted for internal implementation October 14, 2026; qualification gates remain open |
 | Owns | Participation targets, re-entry, everyday-activity reflection, projection semantics, and reminder extension |
 | Depends on | Product v0.7 draft, UX, TD-02/03/05/07/08/10/11/12 |
 | Baseline | `b03bc7363b3a84688b4c8476fb1f69a5636dd2d4` |
@@ -15,8 +15,8 @@ and observe their own experience over time. Keep the existing deterministic Plan
 engine. This is not a chronic-pain treatment program, mobility measurement, or
 proof that Kineo caused improvement. Neck/back scope and all release gates remain.
 
-The v0.6 implementation remains the approved baseline until the owner accepts
-this amendment. TD-13 specifies only the proposed consistency delta; it does not
+The owner accepted this amendment with “implement” on October 14, 2026.
+TD-13 specifies the consistency delta; it does not
 supersede safety, authentication, Plan authority, or privacy controls. After
 acceptance, its specific target/reminder/projection rules supersede conflicting
 legacy defaults in TD-02/05/07. TD-11/12 still own synchronization and erasure.

@@ -72,3 +72,10 @@ design evidence; implementation tests must still prove the contracts.
 C0's document-review portion is complete. C0 as a whole is not complete until
 owner acceptance. The next implementation slice, once accepted, is C1 Honest
 Progress—not a UI rewrite or a change to the selection engine.
+
+## October 14 acceptance
+
+The owner accepted the reviewed amendment with “implement.” C0 is now complete
+for internal implementation. C1–C5 are authorized in order; clinical, professional,
+privacy, device and public-release gates above remain unchanged. The earlier
+October 13 observations describe that review checkpoint, not current approval.

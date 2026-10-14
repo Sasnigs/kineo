@@ -1,0 +1,37 @@
+{
+  "id": "consistency-progress-2026-10-14",
+  "goal": "Implement C1 Honest Progress without changing selection, safety, synchronization authority or the user's wireframe.",
+  "base": "1816941872dc8502e376c18284f20aff080102b2",
+  "scope": [
+    "docs/agent-tasks/consistency-progress.json",
+    "docs/KINEO_PRODUCT_DESIGN.md",
+    "docs/KINEO_UX_DESIGN_SPEC.md",
+    "docs/KINEO_IMPLEMENTATION_MILESTONES.md",
+    "docs/STATUS.md",
+    "docs/technical/00_TECHNICAL_DESIGN_INDEX.md",
+    "docs/technical/13_CONSISTENCY_EVERYDAY_FUNCTION.md",
+    "docs/reviews/C0_CONSISTENCY_DESIGN_REVIEW_2026-10-13.md",
+    "docs/reviews/C1_HONEST_PROGRESS_2026-10-14.md",
+    "apps/mobile/src/core/persistence/kineo-store.ts",
+    "apps/mobile/src/core/product/product-flow.ts",
+    "apps/mobile/src/infrastructure/persistence/kineo-sqlite-store.ts",
+    "apps/mobile/src/application/kineo-product-service.ts",
+    "apps/mobile/src/application/kineo-product-service.test.ts",
+    "apps/mobile/src/ui/product/kineo-product-app.tsx",
+    "apps/mobile/src/ui/product/kineo-product-app.test.tsx",
+    "apps/mobile/.maestro/first-use-routine.yaml",
+    "Scripts/run-maestro-ios.sh",
+    ".github/workflows/ci.yml",
+    "apps/mobile/package.json",
+    "apps/mobile/package-lock.json"
+  ],
+  "acceptance": [
+    "Participation excludes prepared-but-never-started, unfinished, abandoned and safety-stopped Routines; eligible Pause Today and started intentional stops remain represented.",
+    "Weekly and total recorded completions remain separate from deduplicated Participation Days, with stable captured-day grouping.",
+    "Progress exposes recorded skip and alternative details without physical-performance or benefit claims.",
+    "Unconfirmed legacy targets and Active-unlock achievements are absent from Progress UI; selection remains unchanged.",
+    "Existing failure, reset, protection, selection and UI regressions pass; independent review and all PR CI checks precede merge."
+  ],
+  "checks": ["docs", "mobile"],
+  "limits": { "agentTurns": 3, "minutes": 60 }
+}

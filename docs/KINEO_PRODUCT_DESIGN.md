@@ -2,15 +2,15 @@
 
 | Field | Value |
 | --- | --- |
-| Version | 0.7 draft |
-| Status | **Consistency amendment for owner review; v0.6 remains the implemented baseline** |
+| Version | 0.7 |
+| Status | **Accepted for internal consistency implementation; v0.6 remains the implemented baseline until each slice qualifies** |
 | Product | Kineo |
 | Working line | **Make movement easier to return to.** |
 | Initial platform | iPhone app implemented with Expo/React Native |
 | Initial market | United States |
 | Last updated | October 13, 2026 |
 
-> Version 0.7 is a proposed consistency amendment, not an implementation or clinical-approval claim. Version 0.6 remains the approved implemented baseline. The owner authorized this design/review phase; the new C1–C5 implementation track requires acceptance of the amendment. Public distribution still requires **1.0 — Release-Ready Design** and its separate gates.
+> The owner accepted version 0.7 with “implement” on October 14, 2026. C1–C5 may proceed in order for the internal prototype. Acceptance is not implementation evidence or clinical approval. Public distribution still requires **1.0 — Release-Ready Design** and its separate gates.
 
 ## Document Lifecycle
 
