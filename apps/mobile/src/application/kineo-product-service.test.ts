@@ -1299,6 +1299,8 @@ describe('Kineo product service check-in', () => {
       if (!plan.ok || plan.value.kind !== 'plan') throw new Error('Plan fixture failed.');
       const routine = await service.startRoutine(plan.value.plan.decisionId);
       if (!routine.ok) throw new Error('Routine fixture failed.');
+      expect(await service.skipRoutineStep(routine.value.sessionId, routine.value.currentStepIndex, 'unclear'))
+        .toMatchObject({ ok: true });
       expect(await service.loadProgress()).toMatchObject({
         ok: true, value: { participationDayCount: 0, recordedRoutineCompletionCount: 0 },
       });
@@ -1315,8 +1317,10 @@ describe('Kineo product service check-in', () => {
             localDay, status: 'stopped', areas: ['neck', 'lowerBack'],
           })],
           areas: expect.arrayContaining([
-            expect.objectContaining({ area: 'neck', participationCount: 1 }),
-            expect.objectContaining({ area: 'lowerBack', participationCount: 1 }),
+            expect.objectContaining({ area: 'neck', participationCount: 1,
+              history: [expect.objectContaining({ routine: expect.objectContaining({ skippedStepCount: 1 }) })] }),
+            expect.objectContaining({ area: 'lowerBack', participationCount: 1,
+              history: [expect.objectContaining({ routine: expect.objectContaining({ skippedStepCount: 1 }) })] }),
           ]),
         },
       });

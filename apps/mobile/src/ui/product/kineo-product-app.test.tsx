@@ -552,8 +552,8 @@ describe('Kineo product app', () => {
           routine: {
             status: 'completed',
             deliveredLevel: 'balanced',
-            skippedStepCount: 0,
-            alternativeSelectionCount: 0,
+            skippedStepCount: 2,
+            alternativeSelectionCount: 1,
             response: 'same',
           },
         }],
@@ -568,7 +568,7 @@ describe('Kineo product app', () => {
     expect(await view.findByLabelText('1 participation day this week')).toBeTruthy();
     expect(view.getByText('Monday–Sunday')).toBeTruthy();
     expect(view.getByText('Recorded completions')).toBeTruthy();
-    expect(view.getByText(/2 skips · 1 alternative choice/)).toBeTruthy();
+    expect(view.getByText(/Routine total: 2 skips · 1 alternative choice/)).toBeTruthy();
     expect(view.queryByText('of 3 days')).toBeNull();
     expect(view.getByRole('header', { name: 'Your areas' })).toBeTruthy();
     expect(view.getByText('1 check-in')).toBeTruthy();
@@ -577,6 +577,7 @@ describe('Kineo product app', () => {
     expect(view.getByText('Similar · Okay')).toBeTruthy();
     expect(view.getByText(/does not claim that one caused another/)).toBeTruthy();
     expect(view.queryByText(/Active option is/)).toBeNull();
+    expect(view.getByText(/Routine total: 2 skips · 1 alternative choice/)).toBeTruthy();
   });
 
   it('freezes routine menus and keeps safety guidance behind an explicit choice', async () => {

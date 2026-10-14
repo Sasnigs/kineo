@@ -2310,7 +2310,7 @@ function routineRecordDetails(record: Readonly<{
   alternativeSelectionCount: number;
 }>): string {
   if (record.skippedStepCount === 0 && record.alternativeSelectionCount === 0) return '';
-  return ` · ${record.skippedStepCount} ${record.skippedStepCount === 1 ? 'skip' : 'skips'} · ${record.alternativeSelectionCount} alternative ${record.alternativeSelectionCount === 1 ? 'choice' : 'choices'}`;
+  return ` · Routine total: ${record.skippedStepCount} ${record.skippedStepCount === 1 ? 'skip' : 'skips'} · ${record.alternativeSelectionCount} alternative ${record.alternativeSelectionCount === 1 ? 'choice' : 'choices'}`;
 }
 
 function planExplanationLines(plan: PlanPresentation): readonly string[] {
