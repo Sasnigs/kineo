@@ -7,6 +7,17 @@
 | Depends on | TD-10, TD-11 |
 | Last updated | September 2, 2026 |
 
+Proposed TD-13 extension, pending owner acceptance: Reset History removes all
+Everyday Activity Goals/Reflections, old target decisions, and related drafts and
+projections, while retaining only current/next participation preferences and
+reminders. Rebase retained target preferences into the new epoch without old use.
+Clear reflection calendar/invitation state; preserve local reminder suppression
+so reset cannot turn alerts back on. TD-13 limits rebasing to an explicit opt-out,
+not stale health data or target changes. Wipe local invitation suppression on reset.
+Export includes new records; logout/Delete Account wipe them and owned schedules.
+Extend interruption, cross-account, epoch, and export tests before feature code
+is considered complete. No implementation or additional staff access is implied.
+
 ## Architecture
 
 ```mermaid

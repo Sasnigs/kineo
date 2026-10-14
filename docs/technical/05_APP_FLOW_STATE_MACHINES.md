@@ -4,11 +4,15 @@
 | --- | --- |
 | Status | Approved flow contract with Account amendment |
 | Scope | Onboarding, Today/check-in, attention, plan, routine, feedback, Progress, and Profile |
-| Product source | `../KINEO_PRODUCT_DESIGN.md` v0.5 |
+| Product source | `../KINEO_PRODUCT_DESIGN.md`; v0.6 baseline, v0.7 proposed consistency delta |
 | UX source | `../KINEO_UX_DESIGN_SPEC.md` |
 | Related documents | `06_UI_ARCHITECTURE_ACCESSIBILITY.md`, `08_TESTING_RELEASE_GATES.md` |
 
 This document defines observable behavior; state names need not become source-code names. A transition completes only after its required write succeeds.
+
+TD-13 defines the proposed optional target, re-entry, Goal/reflection, and reminder
+delta. It is not implemented or accepted yet; after acceptance, its specific
+transitions extend this contract without changing routine/safety precedence.
 
 ### Lifecycle map
 
@@ -89,7 +93,8 @@ Durable checkpoint: persist each completed step. No notification, HealthKit, or 
 | State | Event | Guard/effect | Destination |
 | --- | --- | --- | --- |
 | `Welcome` | `getStarted` | — | `AgeConfirmation` |
-| `AgeConfirmation` | `answeredYes` | Persist adult eligibility acknowledgement and copy version | `PrimaryArea` |
+| `AgeConfirmation` | `answeredYes` | Persist adult eligibility acknowledgement and copy version | `AccountEntry` |
+| `AccountEntry` | `authLegalAndHydrationSucceeded` | Complete TD-10/11 authentication, legal acceptance, and protected hydration for the same Account | `PrimaryArea` |
 | `AgeConfirmation` | `answeredNo` | Store no birth date | `AgeUnavailable` |
 | `AgeUnavailable` | `correctAnswer` | — | `AgeConfirmation` |
 | `PrimaryArea` | `select(area)` | Area is Neck, Upper/Mid-back, or Lower back | `PrimaryArea` with selection |
@@ -112,7 +117,25 @@ When Today becomes active, evaluate in this order:
 2. If any supported area has Attention Required, show its `AttentionReturn` and withhold all routines.
 3. If more than one area is flagged, resolve each return prompt before a new check-in, in stable body-area order.
 4. If a same-day, same-area-set check-in draft exists, offer Resume Check-in or Start Over.
-5. Otherwise show `TodayReady`.
+5. If an unconsumed selection decision passes the Plan-restoration guards below,
+   restore `PlanReady` through TD-11 server authority. Offline restoration shows
+   Online required/Retry, not an executable cached new Plan.
+6. Otherwise show `TodayReady`.
+
+**Proposed v0.7 restoration clarification:** the application currently attempts
+unconsumed-decision restoration (`KineoProductService.loadStartState`). C3 must
+verify and enforce all guards before the amendment is implemented: same Account
+and current History Epoch; completed eligible Check-in captured on today's local
+day; its selected primary/optional-secondary snapshot matches current preferences;
+no Routine or Pause Today has consumed it; no global Attention; and the current
+revision/catalog/content remains valid under server authority. A stale decision
+is retained as audit history, not reused for a new Plan; offer a fresh Check-in.
+An authority or persistence failure shows its typed recovery state, not a false
+empty `TodayReady`. New duration/level revisions still follow section 6 and TD-11.
+
+TD-13 return support appears only in ordinary `TodayReady`. It cannot clear these
+guards or insert itself ahead of an interrupted Routine, Attention, draft, or
+restorable Plan. This clarification does not claim existing guard-test coverage.
 
 ### 5.2 Check-in collection
 

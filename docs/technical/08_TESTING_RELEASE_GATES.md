@@ -189,7 +189,7 @@ Snapshot tests detect regressions but cannot prove usability, reading order, foc
 
 ### 4.6 Platform, offline, and lifecycle (`PLAT`)
 
-- `PLAT-001`: airplane mode from cold launch supports installed onboarding, check-in, selection, routine, feedback, Progress, Profile, Reset, and Delete.
+- `PLAT-001`: in the current Account build, airplane mode supports cached history and the active Routine after hydration. Initial authentication, Check-in/Plan submission, account-wide settings and privacy commands clearly require server validation. Optional protected drafts never appear as server-committed values.
 - `PLAT-002`: exactly one generic local reminder exists after enable/reschedule/time-zone/DST changes; permission request occurs only after a window choice; denial changes no core behavior.
 - `PLAT-003`: notification title/body and route contain no area, answer, level, history, Health context, or sensitive identifier; opening requires Today entry evaluation and a fresh check-in.
 - `PLAT-004`: background, interruption, termination, device-clock change, and midnight transition preserve session truth. Wall-clock changes do not alter elapsed step time.
@@ -303,7 +303,7 @@ The authoritative scenario number is product document section 14.
 | 12 | Two-area catalog gap → disclosed primary-only | `CAT-004`, `FLOW-PLAN` | Catalog, feature, UI |
 | 13 | Pause/skip/stop/alternative preserve state; no invention | `FLOW-RTN`, `DAT-002/007`, `CAT-004` | Feature, persistence, catalog, UI |
 | 14 | Per-included-area feedback; skipping allowed | `FLOW-FBK`, `DAT-001/002` | Feature, persistence, UI |
-| 15 | Core works in airplane mode | `PLAT-001`, full offline UI journey | Integration, UI, device |
+| 15 | Cached Progress/active Routine work offline; new Plans require online validation | `PLAT-001`, bounded offline UI journey | Integration, UI, device |
 | 16 | Reset retains only current Attention; Delete All removes every Kineo-owned record | `DAT-005/006`, `PRIV-DEL` | Persistence, privacy, UI |
 | 17 | Skipped feedback neither qualifies nor replaces latest response | `SEL-005`, `DAT-004` | Core, persistence |
 | 18 | Stopped remains incomplete; explicit response retained, no qualification | `SEL-005`, `FLOW-RTN/FBK`, `DAT-004` | Core, feature, persistence |
@@ -311,12 +311,38 @@ The authoritative scenario number is product document section 14.
 | 20 | Repeat same-day routine requires new check-in/decision | `FLOW-CHK/FBK/NAV`, `DAT-004` | Feature, persistence, UI |
 | 21 | Bounded approved pairing within duration | `CAT-002/003` | Catalog |
 | 22 | Incompatible pairing → disclosed primary-only | `CAT-004`, `FLOW-PLAN` | Catalog, feature, UI |
-| 23 | Forbidden values/identifiers never leave app | `PRIV-NET`, `PRIV-LOG` | Privacy/device |
+| 23 | Only authorized documented payloads reach approved Account services; no sensitive logs/telemetry | `PRIV-NET`, `PRIV-LOG`, `SYNC-002` | Privacy/device |
 | 24 | Protected, backup-excluded sensitive storage | `PRIV-STO`, `DAT-003` | Integration/device |
 | 25 | Common tasks accessible with VoiceOver, Voice Control, text sizes | Section 6 matrix plus UI automation | Device, UI |
 | 26 | Routine usable without sight/audio/color/precise gesture | Routine task in section 6 plus `PLAT-005` | Device, UI, content |
 | 27 | Worse resets Active; skipped/stopped cannot rebuild | `SEL-005`, `DAT-004` | Core, persistence |
 | 28 | No telemetry before opt-in/after opt-out; no functional loss | Initial build: absence/inventory + `PRIV-NET`; future: telemetry consent suite | Architecture, privacy, UI |
+| 29 | Provider cancellation, verification, and generic auth errors | `AUTH-001/002/003`, account-entry tests | Account, UI, integration |
+| 30 | Idempotent/conflicting multi-Installation sync and Routine ownership | `SYNC-001/002/003` | Domain, database, integration |
+| 31 | Reauthenticated private one-time export | `PRIV-ACC-001` | Account, database, privacy |
+| 32 | Old epoch/revoked Installation cannot restore history | `SYNC-004`, `PRIV-ACC-001` | Account, database, integration |
+
+### Proposed v0.7 consistency traceability
+
+These cases are requirements, not passing tests or implementation evidence. C0
+must pass document review and owner acceptance before C1–C5 code begins.
+
+| # | Acceptance | Required evidence |
+| ---: | --- | --- |
+| 33 | Optional explicit target; no selector influence | `CONS-01`: skip/setup/edit/disable/re-enable across a week boundary, pending replacement/cancellation; legacy unconfirmed default; current/next-week versions and visibility without historical achievement inference; metamorphic tests over all target/Goal/reflection/gap inputs |
+| 34 | Honest distinct progress | `CONS-02`: same-day/two-area deduplication; completed vs started stop vs prepared end vs safety stop vs eligible pause; skipped steps and physical-performance non-claim; missing/not-attempted reflections |
+| 35 | Return without bypass or catch-up | `CONS-03`: TD-05 entry/restoration guards, authority failure and online-only Plan restoration; optional barrier routes; stale Check-in/unknown hydration/reset; no auto level change |
+| 36 | Goal/period integrity | `CONS-04`: one active Goal, allow-listed/versioned subjects, separate archived series; server-validated fixed calendar, travel and two-Installation periods; invitation dismissal/relaunch/replacement/offline reconciliation; duplicate/stale/concurrent reflections, edits and draft invalidation |
+| 37 | Truthful reminder schedule | `CONS-05`: chosen weekdays/time, legacy daily cancellation, permission denial/revocation, partial scheduling rollback/restore and cleanup failure; offline opt-out/relaunch/stale hydration/reconnect/conflict and explicit re-enable; no duplicate or catch-up requests, DST/travel and generic payload |
+| 38 | Complete privacy lifecycle | `CONS-06`: real cloud/local migration rollback, cross-account composite denial, bootstrap/paging, epoch/version rejection, reset retention, full export, logout wait/discard/wipe, interrupted deletion and stale-device denial |
+| 39 | Optional accessible flow | `CONS-07`: unchanged first-use/daily required taps, Skip/Cancel/None, online-required/draft/conflict/error states, small viewport, large text/dark mode/VoiceOver and device common-task matrix |
+| 40 | Honest evaluation boundary | `CONS-08`: no telemetry/research access or clinical claims; synthetic usability fixtures; no functional external test without reviewed content/copy and separately approved protocol/consent |
+
+Check draft labels against actual committed behavior: this appendix does not close
+E5/E6/A5 or any public gate. Professional review covers new activity questions and
+expectations content as well as movement and safety copy. Privacy review covers
+new Goal/reflection fields and every lifecycle path. Participation and recorded
+completion results are never accepted as efficacy evidence.
 
 Scenario 4 is interpreted by the global Attention rule: if the triggering area is the secondary already included in that check-in, no routine is created, and its unresolved Attention row blocks later routines even if that area is removed from Profile.
 
@@ -332,6 +358,10 @@ All must be true:
 - Every TD cross-reference exists; owned decisions are not duplicated with different values.
 - Every product acceptance scenario maps to evidence in section 7.
 - Coding still requires the product owner's explicit approval.
+- For v0.7, all proposed scenarios 33–40 map to the consistency cases above;
+  product/UX/TD-13 agree on optionality, calendar behavior, reminder cardinality,
+  non-influence, privacy erasure, and external-testing restrictions. Distinguish
+  reviewed draft requirements from implemented baseline or verified clinical outcomes.
 
 Rerun D0 whenever any source or TD changes. Passing D0 does not authorize coding.
 

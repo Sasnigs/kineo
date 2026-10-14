@@ -718,7 +718,7 @@ export class KineoProductService implements KineoProductServing {
     const participatingStatuses = new Set(['completed', 'stopped'] as const);
     const participationDays = new Set(
       history.value.flatMap((record) =>
-        record.routine !== undefined && participatingStatuses.has(
+        record.routine?.wasIncluded === true && participatingStatuses.has(
           record.routine.status as 'completed' | 'stopped',
         )
           ? [record.localDay]
@@ -735,10 +735,11 @@ export class KineoProductService implements KineoProductServing {
       return { ok: false, error: { code: 'invalidData' } };
     }
     const nextWeekStart = currentWeekStart + daysPerWeek * millisecondsPerDay;
-    const weeklyParticipationDayCount = [...participationDays].filter((localDay) => {
+    const isInCurrentWeek = (localDay: string): boolean => {
       const timestamp = new Date(`${localDay}T00:00:00Z`).getTime();
       return timestamp >= currentWeekStart && timestamp < nextWeekStart;
-    }).length;
+    };
+    const weeklyParticipationDayCount = [...participationDays].filter(isInCurrentWeek).length;
     const sessions = new Map<
       string,
       ProgressPresentation['recentSessions'][number]
@@ -751,11 +752,14 @@ export class KineoProductService implements KineoProductServing {
         localDay: record.localDay,
         status: record.routine.status,
         deliveredLevel: record.routine.deliveredLevel,
+        skippedStepCount: record.routine.skippedStepCount,
+        alternativeSelectionCount: record.routine.alternativeSelectionCount,
         areas: existing === undefined
           ? Object.freeze([record.area])
           : Object.freeze([...existing.areas, record.area]),
       });
     }
+    const recordedCompletions = [...sessions.values()].filter(({ status }) => status === 'completed');
     const recentSessions = [...sessions.values()]
       .reverse()
       .slice(0, maximumRecentSessionCount);
@@ -814,6 +818,8 @@ export class KineoProductService implements KineoProductServing {
             : {
                 status: record.routine.status,
                 deliveredLevel: record.routine.deliveredLevel,
+                skippedStepCount: record.routine.skippedStepCount,
+                alternativeSelectionCount: record.routine.alternativeSelectionCount,
                 response: record.routine.response,
               },
         })),
@@ -824,6 +830,10 @@ export class KineoProductService implements KineoProductServing {
       value: {
         participationDayCount: participationDays.size,
         weeklyParticipationDayCount,
+        recordedRoutineCompletionCount: recordedCompletions.length,
+        weeklyRecordedRoutineCompletionCount: recordedCompletions.filter(
+          ({ localDay }) => isInCurrentWeek(localDay),
+        ).length,
         weeklyGoalDays: profileState.value.profile.weeklyGoalDays,
         recentSessions,
         areas,

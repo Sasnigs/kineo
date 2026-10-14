@@ -7,6 +7,18 @@
 | Depends on | TD-02, TD-03, TD-04, TD-10 |
 | Last updated | September 2, 2026 |
 
+Proposed consistency extension: TD-13 specifies private targets, Goals,
+reflections, and reminder-setting fields and their typed commands. Owner acceptance
+and schema/command/privacy qualification precede implementation; none is added
+by this documentation change. Extend bootstrap, change feed, protected cache,
+expected versions and epoch checks together. No extra service, direct row writes,
+analytics access, or offline-authoritative settings are introduced.
+TD-13's immediate local reminder opt-out and invitation dismissal are suppression
+exceptions, not offline Account authority. Persist their explicit pending commands
+in the existing protected outbox; stale server hydration cannot reactivate them.
+Target/Goal/reflection writes remain online validated. Reconciliation, reset, and
+version-conflict rules must cover both suppression and server-owned preferences.
+
 ## Architecture
 
 ```mermaid
@@ -71,4 +83,3 @@ interface SyncModule {
 - Old-epoch Mutations cannot restore reset history.
 - Cursor replay is deterministic; partial pages never skip changes.
 - Network and log inspection contains no credentials beyond transport requirements and no unapproved sensitive fields.
-

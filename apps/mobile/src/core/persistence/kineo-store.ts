@@ -37,6 +37,8 @@ export type AreaHistoryRecord = Readonly<{
     status: RoutineStatus;
     deliveredLevel: RoutineLevel;
     wasIncluded: boolean;
+    skippedStepCount: number;
+    alternativeSelectionCount: number;
     response?: AreaResponse;
   }>;
 }>;

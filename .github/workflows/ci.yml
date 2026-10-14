@@ -153,6 +153,8 @@ jobs:
 
       - name: Verify Expo common tasks
         working-directory: ${{ github.workspace }}
+        env:
+          KINEO_MAESTRO_EVIDENCE_DIRECTORY: ${{ runner.temp }}/kineo-ui-evidence
         run: |
           maestro_bin="$(Scripts/install-maestro.sh "$RUNNER_TEMP/kineo-tools")"
           Scripts/run-maestro-ios.sh \
@@ -161,12 +163,18 @@ jobs:
             "$maestro_bin"
           xcrun simctl io "$KINEO_SIMULATOR_ID" screenshot \
             "$RUNNER_TEMP/kineo-ui-evidence/common-tasks-final.png"
+          KINEO_SIMULATOR_CONTENT_SIZE=accessibility-extra-extra-extra-large \
+            KINEO_SIMULATOR_APPEARANCE=dark \
+            Scripts/run-maestro-ios.sh \
+              "$KINEO_SIMULATOR_ID" \
+              "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
+              "$maestro_bin"
 
       - name: Preserve fixture-only simulator evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: simulator-evidence
-          path: ${{ runner.temp }}/kineo-ui-evidence/*.png
+          path: ${{ runner.temp }}/kineo-ui-evidence/**/*.png
           retention-days: 7
           if-no-files-found: warn

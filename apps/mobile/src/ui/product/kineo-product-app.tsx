@@ -493,7 +493,11 @@ export function KineoProductApp({
     return (
       <Shell key="end-confirmation">
         <PageHeader eyebrow="END ROUTINE" title="End this routine now?" />
-        <Text style={styles.supporting}>Your intentional stop will remain in Progress as participation.</Text>
+        <Text style={styles.supporting}>
+          {screen.routine.status === 'prepared'
+            ? 'This routine has not started. Ending it keeps a history record, without adding a participation day.'
+            : 'Your intentional stop will remain in Progress as participation, not a completed routine.'}
+        </Text>
         <SecondaryButton
           danger
           disabled={isSubmitting}
@@ -915,9 +919,9 @@ export function KineoProductApp({
           <PageHeader eyebrow="YOUR HISTORY" title="Progress" />
           <Text style={styles.supporting}>A private view of your check-ins, routines, and responses.</Text>
         </View>
-        <ConsistencyMeter
+        <ParticipationSummary
           current={screen.progress.weeklyParticipationDayCount}
-          goal={screen.progress.weeklyGoalDays}
+          completions={screen.progress.weeklyRecordedRoutineCompletionCount}
         />
         {!hasHistory ? (
           <View style={styles.emptyStateCard}>
@@ -957,7 +961,7 @@ export function KineoProductApp({
                       key={session.sessionId}
                       icon="walk-outline"
                       label={session.areas.map((area) => areaLabels[area]).join(' + ')}
-                      subtitle={`${levelLabel(session.deliveredLevel)} · ${routineStatusLabel(session.status)}`}
+                      subtitle={`${levelLabel(session.deliveredLevel)} · ${routineStatusLabel(session.status)}${routineRecordDetails(session)}`}
                       value={localDayLabel(session.localDay)}
                     />
                   ))}
@@ -968,9 +972,12 @@ export function KineoProductApp({
         )}
         {hasHistory ? (
           <Text style={styles.sectionFootnote}>
-            {screen.progress.participationDayCount} participation {screen.progress.participationDayCount === 1 ? 'day' : 'days'} in total. Completed routines, intentional stops, and eligible Pause Today choices count equally.
+            {screen.progress.participationDayCount} participation {screen.progress.participationDayCount === 1 ? 'day' : 'days'} and {screen.progress.recordedRoutineCompletionCount} recorded {screen.progress.recordedRoutineCompletionCount === 1 ? 'completion' : 'completions'} in total. Completed routines, started intentional stops, and eligible Pause Today choices count toward participation.
           </Text>
         ) : null}
+        <Text style={styles.sectionFootnote}>
+          These are app records, not measurements of exercise performed, mobility, or pain relief. Dates use the saved calendar day of each record; finishing later does not move it.
+        </Text>
       </Shell>
     );
   }
@@ -1005,16 +1012,13 @@ export function KineoProductApp({
         <PageHeader eyebrow="AREA HISTORY" title={areaLabels[area.area]} />
         <View style={styles.groupedList}>
           <ListRow icon="calendar-outline" label="Participation choices" value={`${area.participationCount}`} />
-          <ListRow icon="checkmark-circle-outline" label="Completed routines" value={`${area.completedRoutineCount}`} />
+          <ListRow icon="checkmark-circle-outline" label="Recorded completions" value={`${area.completedRoutineCount}`} />
           <ListRow
             icon="chatbubble-outline"
             label="After-routine responses"
             subtitle={`${area.responses.better} better · ${area.responses.same} same · ${area.responses.worse} worse`}
           />
         </View>
-        <Text style={styles.sectionFootnote}>
-          {area.activeUnlocked ? 'Active option is available.' : 'Active option is not available yet.'}
-        </Text>
         <SectionHeading title="Check-in history" />
         <View style={styles.groupedList}>
           {[...area.history].reverse().map((entry, index) => (
@@ -1025,7 +1029,7 @@ export function KineoProductApp({
               </Text>
               {entry.routine === undefined ? null : (
                 <Text style={styles.cardBody}>
-                  {levelLabel(entry.routine.deliveredLevel)} · {routineStatusLabel(entry.routine.status)} · {entry.routine.response === undefined ? 'No response' : displayValueLabel(entry.routine.response)}
+                  {levelLabel(entry.routine.deliveredLevel)} · {routineStatusLabel(entry.routine.status)} · {entry.routine.response === undefined ? 'No response' : displayValueLabel(entry.routine.response)}{routineRecordDetails(entry.routine)}
                 </Text>
               )}
             </View>
@@ -1362,7 +1366,6 @@ export function KineoProductApp({
                 setScreen({ kind: 'profileAreas', profile: screen.profile });
               }}
             />
-            <ListRow icon="calendar-outline" label="Weekly goal" value={`${profile.weeklyGoalDays} days`} />
           </View>
           <Text style={styles.sectionFootnote}>
             Check-ins choose the level. Quick or Standard changes duration only.
@@ -1878,27 +1881,21 @@ function InfoPill({ icon, label }: Readonly<{ icon: KineoIconName; label: string
   );
 }
 
-function ConsistencyMeter({ current, goal }: Readonly<{ current: number; goal: number }>) {
-  const days = Array.from({ length: goal }, (_, index) => index < current);
+function ParticipationSummary({ current, completions }: Readonly<{ current: number; completions: number }>) {
   return (
-    <View accessibilityLabel={`${current} of ${goal} participation days this week`} style={styles.consistencyMeter}>
+    <View style={styles.consistencyMeter}>
       <View style={styles.metricHeader}>
         <Text style={styles.metricEyebrow}>THIS WEEK</Text>
         <Ionicons color={colors.accentDark} name="calendar-clear-outline" size={layout.iconSize} />
       </View>
-      <View style={styles.metricValueRow}>
+      <Text style={styles.metricCaption}>Monday–Sunday</Text>
+      <View accessible accessibilityLabel={`${current} participation ${current === 1 ? 'day' : 'days'} this week`} style={styles.metricValueRow}>
         <Text style={styles.metricValue}>{current}</Text>
-        <Text style={styles.metricGoal}>of {goal} days</Text>
+        <Text style={styles.metricCaption}>Participation days</Text>
       </View>
-      <Text style={styles.metricCaption}>Days you took part</Text>
-      <View
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        style={styles.consistencyDots}
-      >
-        {days.map((isComplete, index) => (
-          <View key={index} style={[styles.consistencyDot, isComplete && styles.consistencyDotComplete]} />
-        ))}
+      <View accessible accessibilityLabel={`${completions} recorded ${completions === 1 ? 'completion' : 'completions'} this week`}>
+        <Text style={styles.cardTitle}>Recorded completions</Text>
+        <Text style={styles.cardBody}>{completions}</Text>
       </View>
     </View>
   );
@@ -2302,10 +2299,18 @@ function routineStatusLabel(status: RoutinePresentation['status']): string {
     case 'safetyStopped': return 'Ended after safety pause';
     case 'stopped': return 'Intentionally stopped';
     case 'completed': return 'Completed';
-    case 'prepared': return 'Ready';
+    case 'prepared': return 'Not started';
     case 'paused': return 'Paused';
     case 'abandoned': return 'Not completed';
   }
+}
+
+function routineRecordDetails(record: Readonly<{
+  skippedStepCount: number;
+  alternativeSelectionCount: number;
+}>): string {
+  if (record.skippedStepCount === 0 && record.alternativeSelectionCount === 0) return '';
+  return ` · Routine total: ${record.skippedStepCount} ${record.skippedStepCount === 1 ? 'skip' : 'skips'} · ${record.alternativeSelectionCount} alternative ${record.alternativeSelectionCount === 1 ? 'choice' : 'choices'}`;
 }
 
 function planExplanationLines(plan: PlanPresentation): readonly string[] {
@@ -2532,11 +2537,7 @@ const styles = StyleSheet.create({
   metricEyebrow: { color: colors.accentDeep, fontSize: typography.eyebrowSize, fontWeight: typography.strongWeight, letterSpacing: typography.eyebrowTracking },
   metricValueRow: { alignItems: 'flex-end', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.compact },
   metricValue: { color: colors.ink, fontSize: typography.heroSize, fontWeight: typography.displayWeight },
-  metricGoal: { color: colors.secondaryInk, fontSize: typography.detailSize, paddingBottom: spacing.compact },
   metricCaption: { color: colors.secondaryInk, fontSize: typography.detailSize },
-  consistencyDots: { flexDirection: 'row', gap: spacing.compact },
-  consistencyDot: { backgroundColor: colors.mutedSurface, borderRadius: radius.status, flex: 1, height: spacing.compact },
-  consistencyDotComplete: { backgroundColor: colors.accentDark },
   historyCard: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.card, borderWidth: layout.borderWidth, gap: spacing.compact, padding: spacing.roomy },
   routineProgressRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   routineActionRow: { flexDirection: 'row', gap: spacing.compact },
