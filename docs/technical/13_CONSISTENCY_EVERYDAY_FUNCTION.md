@@ -4,7 +4,7 @@
 | --- | --- |
 | Status | Accepted for internal implementation October 14, 2026; qualification gates remain open |
 | Owns | Participation targets, re-entry, everyday-activity reflection, projection semantics, and reminder extension |
-| Depends on | Product v0.7 draft, UX, TD-02/03/05/07/08/10/11/12 |
+| Depends on | Product v0.7, UX, TD-02/03/05/07/08/10/11/12 |
 | Baseline | `b03bc7363b3a84688b4c8476fb1f69a5636dd2d4` |
 | Updated | October 13, 2026 |
 
@@ -310,8 +310,9 @@ autumn transitions on the chosen Expo/iOS adapter before claiming exact behavior
 
 ## 11. Validation and implementation handoff
 
-Ship the C0–C5 slices in the milestone document; current software implements none
-of this delta. Use synthetic fixtures until applicable professional/privacy gates
+Ship the C0–C5 slices in the milestone document. C0 is accepted; C1 is implemented
+locally with qualification recorded in the dated C1 report. C2–C5 are pending.
+Use synthetic fixtures until applicable professional/privacy gates
 are met. TD-08 acceptance extension specifies the automated cases.
 
 Product hypotheses are separate:

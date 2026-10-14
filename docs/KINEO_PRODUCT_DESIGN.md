@@ -8,7 +8,7 @@
 | Working line | **Make movement easier to return to.** |
 | Initial platform | iPhone app implemented with Expo/React Native |
 | Initial market | United States |
-| Last updated | October 13, 2026 |
+| Last updated | October 14, 2026 |
 
 > The owner accepted version 0.7 with “implement” on October 14, 2026. C1–C5 may proceed in order for the internal prototype. Acceptance is not implementation evidence or clinical approval. Public distribution still requires **1.0 — Release-Ready Design** and its separate gates.
 
@@ -708,9 +708,9 @@ Future AI must:
 
 ### 16.0 Consistency amendment acceptance
 
-The recommended v0.7 decisions are explicit in TD-13. Owner acceptance is pending
-before C1–C5 product implementation. It does not substitute for professional or
-privacy review. Critical review points: new private Goal/reflection data, the
+The owner accepted the v0.7 decisions in TD-13 on October 14, 2026. C1–C5 are
+authorized in order for internal implementation. Acceptance does not substitute
+for professional or privacy review. Accepted boundaries: new private Goal/reflection data, the
 non-clinical meaning of participation targets, and the distinction between the
 ambition to help people with persistent pain and an evidenced benefit claim.
 
@@ -763,11 +763,11 @@ These decisions may remain open during internal prototyping but must be resolved
 
 | Decision | Status | Rationale |
 | --- | --- | --- |
-| Consistency as primary job | Proposed v0.7 | Preserve the daily engine inside a repeatable, non-punitive practice rather than merely selecting a Routine |
-| Distinct participation/completion/reflection | Proposed v0.7 | Engagement and subjective experience do not prove mobility gain or pain relief |
-| Editable target and scheduled reminders | Proposed v0.7 | Replace unchosen defaults and two fixed presets with explicit preferences, not prescribed dose |
-| Everyday Activity Goal | Proposed v0.7; privacy/content review required | One optional curated subject with no free text, clinical score, or selection influence |
-| Return and expectations support | Proposed v0.7 | Support re-entry without catch-up or false reassurance; preserve every safety guard |
+| Consistency as primary job | Accepted v0.7 | Preserve the daily engine inside a repeatable, non-punitive practice rather than merely selecting a Routine |
+| Distinct participation/completion/reflection | Accepted v0.7; implementation per slice | Engagement and subjective experience do not prove mobility gain or pain relief |
+| Editable target and scheduled reminders | Accepted v0.7; C2 pending | Replace unchosen defaults and two fixed presets with explicit preferences, not prescribed dose |
+| Everyday Activity Goal | Accepted v0.7; C4 and privacy/content review pending | One optional curated subject with no free text, clinical score, or selection influence |
+| Return and expectations support | Accepted v0.7; C3 pending | Support re-entry without catch-up or false reassurance; preserve every safety guard |
 | Pain-benefit validation | External evidence gate | Professional intervention and product-specific evaluation are separate from adherence |
 | Expo/React Native iPhone app | Accepted | Retains iPhone-first scope while enabling a later shared Android/web implementation; platform migration cannot change product behavior |
 | Consumer movement positioning | Accepted | Preserves adaptive movement without claiming that regulatory classification is already settled |
@@ -819,6 +819,7 @@ These sources inform the product boundaries; they do not constitute legal advice
 | Version | Date | Status | Summary |
 | --- | --- | --- | --- |
 | 0.7 | October 13, 2026 | Draft for owner acceptance | Prioritized sustainable consistency; specified distinct progress layers, optional targets/reflection, return support, reminder scheduling, privacy delta, and separate benefit-validation gates; not implemented |
+| 0.7 | October 14, 2026 | Accepted for internal implementation | Owner authorized C1–C5 in order; qualification and all external release gates remain separate |
 | 0.6 | September 2, 2026 | Approved account amendment | Required accounts, Supabase synchronization, server-authoritative Plan creation, changed offline behavior, export, reset, and deletion lifecycle |
 | 0.5.1 | August 27, 2026 | Approved implementation amendment | Changed the implementation platform to Expo/React Native while preserving iPhone-first scope and every product and release boundary |
 | 0.5 | August 7, 2026 | Approved for Prototype Implementation | Recorded product-owner approval after Gate D0 passed; authorized M1 while preserving later milestone and release gates |

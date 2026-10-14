@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Technical-design version | 0.3 draft consistency amendment |
+| Technical-design version | 0.3 accepted consistency amendment |
 | Status | Approved account architecture implemented in PR 27; qualification gates remain open |
 | Platform | Expo/React Native iPhone app; Swift retained for final qualification |
 | Minimum deployment target | iOS 17.0 |
@@ -122,7 +122,7 @@ These decisions remove implementation ambiguity while preserving explicit public
 | TD-019 | Plan authority | Submit Check-ins online and create Plans on the server with shared versioned TypeScript rules | Prevents divergent multi-Installation decisions |
 | TD-020 | Reset protection | Increment Account History Epoch and reject older Mutations | Prevents stale offline data from resurrecting deleted history |
 | TD-021 | Privacy lifecycle | Provide reauthenticated export and resumable irreversible Delete Account in-app | Matches Account ownership and deletion obligations |
-| TD-022 | Consistency delta | Proposed TD-13: user-owned participation target, optional weekly reflection, easy return, and explicit scheduling; no clinical score or new selector inputs | Addresses return/meaning without conflating usage and health outcomes; owner/content/privacy gates remain |
+| TD-022 | Consistency delta | Accepted TD-13: user-owned participation target, optional weekly reflection, easy return, and explicit scheduling; no clinical score or new selector inputs | Addresses return/meaning without conflating usage and health outcomes; implementation/content/privacy qualification remains |
 
 ## 5. Remaining gates, not implementation ambiguities
 
