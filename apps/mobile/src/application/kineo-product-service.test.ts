@@ -1142,7 +1142,57 @@ describe('Kineo product service check-in', () => {
       ok: true,
       value: undefined,
     });
+    expect(await service.loadProgress()).toMatchObject({
+      ok: true,
+      value: {
+        participationDayCount: 0,
+        recordedRoutineCompletionCount: 0,
+        recentSessions: [expect.objectContaining({
+          status: 'safetyStopped', skippedStepCount: 1, alternativeSelectionCount: 1,
+        })],
+      },
+    });
     await database.closeAsync();
+  });
+
+  it('keeps a never-started end in history without counting participation or completion', async () => {
+    const { database, service } = await makeService();
+    try {
+      await service.confirmAdultEligibility();
+      await service.savePrimaryArea('neck');
+      await service.saveSecondaryArea();
+      await service.acknowledgeSafetyBoundary();
+      await service.completeOnboarding();
+      const draft = await service.beginCheckIn();
+      if (!draft.ok) throw new Error('Check-in fixture failed.');
+      const result = await service.submitCheckIn(draft.value, {
+        area: 'neck', changeReport: 'similar', movementComfort: 'okay',
+      });
+      if (!result.ok || result.value.kind !== 'plan') throw new Error('Plan fixture failed.');
+      database.failNextStatementContaining(failedRoutineEventInsertFragment);
+      expect(await service.startRoutine(result.value.plan.decisionId)).toMatchObject({ ok: false });
+      const restored = await service.loadStartState();
+      if (!restored.ok || restored.value.kind !== 'unfinishedRoutine') {
+        throw new Error('Prepared Routine fixture failed.');
+      }
+      expect(await service.endRoutine(restored.value.routine.sessionId, 'intentional'))
+        .toMatchObject({ ok: true, value: { status: 'abandoned' } });
+      expect(await service.loadProgress()).toMatchObject({
+        ok: true,
+        value: {
+          participationDayCount: 0,
+          weeklyParticipationDayCount: 0,
+          recordedRoutineCompletionCount: 0,
+          weeklyRecordedRoutineCompletionCount: 0,
+          recentSessions: [expect.objectContaining({ status: 'abandoned' })],
+          areas: expect.arrayContaining([expect.objectContaining({
+            area: 'neck', participationCount: 0, completedRoutineCount: 0,
+          })]),
+        },
+      });
+    } finally {
+      await database.closeAsync();
+    }
   });
 
   it('derives Progress and Active eligibility from persisted area outcomes', async () => {
@@ -1189,6 +1239,8 @@ describe('Kineo product service check-in', () => {
       value: {
         participationDayCount: 1,
         weeklyParticipationDayCount: 1,
+        recordedRoutineCompletionCount: qualifyingRoutineCount,
+        weeklyRecordedRoutineCompletionCount: qualifyingRoutineCount,
         weeklyGoalDays: 3,
       },
     });
@@ -1229,6 +1281,90 @@ describe('Kineo product service check-in', () => {
       },
     });
     await database.closeAsync();
+  });
+
+  it('keeps captured days across midnight and travel, without counting unfinished two-area playback', async () => {
+    const { database, service, setLocalDay, setTimeZoneId } = await makeService();
+    try {
+      await service.confirmAdultEligibility();
+      await service.savePrimaryArea('neck');
+      await service.saveSecondaryArea('lowerBack');
+      await service.acknowledgeSafetyBoundary();
+      await service.completeOnboarding();
+      const draft = await service.beginCheckIn();
+      if (!draft.ok) throw new Error('Check-in fixture failed.');
+      const plan = await service.submitCheckIn(draft.value,
+        { area: 'neck', changeReport: 'similar', movementComfort: 'okay' },
+        { area: 'lowerBack', changeReport: 'similar', movementComfort: 'okay' });
+      if (!plan.ok || plan.value.kind !== 'plan') throw new Error('Plan fixture failed.');
+      const routine = await service.startRoutine(plan.value.plan.decisionId);
+      if (!routine.ok) throw new Error('Routine fixture failed.');
+      expect(await service.loadProgress()).toMatchObject({
+        ok: true, value: { participationDayCount: 0, recordedRoutineCompletionCount: 0 },
+      });
+      setLocalDay(followingLocalDay);
+      setTimeZoneId('Asia/Tokyo');
+      expect(await service.endRoutine(routine.value.sessionId, 'intentional')).toMatchObject({ ok: true });
+      expect(await service.loadProgress()).toMatchObject({
+        ok: true,
+        value: {
+          participationDayCount: 1,
+          weeklyParticipationDayCount: 0,
+          recordedRoutineCompletionCount: 0,
+          recentSessions: [expect.objectContaining({
+            localDay, status: 'stopped', areas: ['neck', 'lowerBack'],
+          })],
+          areas: expect.arrayContaining([
+            expect.objectContaining({ area: 'neck', participationCount: 1 }),
+            expect.objectContaining({ area: 'lowerBack', participationCount: 1 }),
+          ]),
+        },
+      });
+    } finally {
+      await database.closeAsync();
+    }
+  });
+
+  it('rejects a corrupted stop without a start instead of reporting participation', async () => {
+    const { database, service } = await makeService();
+    try {
+      await service.confirmAdultEligibility();
+      await service.savePrimaryArea('neck');
+      await service.saveSecondaryArea();
+      await service.acknowledgeSafetyBoundary();
+      await service.completeOnboarding();
+      const draft = await service.beginCheckIn();
+      if (!draft.ok) throw new Error('Check-in fixture failed.');
+      const plan = await service.submitCheckIn(draft.value,
+        { area: 'neck', changeReport: 'similar', movementComfort: 'okay' });
+      if (!plan.ok || plan.value.kind !== 'plan') throw new Error('Plan fixture failed.');
+      const routine = await service.startRoutine(plan.value.plan.decisionId);
+      if (!routine.ok) throw new Error('Routine fixture failed.');
+      expect(await service.endRoutine(routine.value.sessionId, 'intentional')).toMatchObject({ ok: true });
+      // Deliberate corruption injection; normal writes go through validated use cases.
+      await database.runAsync('UPDATE routine_sessions SET started_at_ms = NULL WHERE id = ?', [routine.value.sessionId]);
+      expect(await service.loadProgress()).toEqual({
+        ok: false, error: { code: 'persistence', cause: { code: 'corruptedStore' } },
+      });
+    } finally {
+      await database.closeAsync();
+    }
+  });
+
+  it.each(['SELECT entry.area', 'SELECT pause.local_day'])('surfaces %s read failure instead of empty Progress', async (failedQuery) => {
+    const { database, service } = await makeService();
+    try {
+      await service.confirmAdultEligibility();
+      database.failNextStatementContaining(failedQuery);
+      expect(await service.loadProgress()).toEqual({
+        ok: false, error: { code: 'persistence', cause: { code: 'readFailed' } },
+      });
+      expect(await service.loadProgress()).toMatchObject({
+        ok: true, value: { participationDayCount: 0, recordedRoutineCompletionCount: 0 },
+      });
+    } finally {
+      await database.closeAsync();
+    }
   });
 
   it('persists Pause Today and profile area changes without losing onboarding', async () => {

@@ -210,6 +210,9 @@ type AreaHistoryRow = Readonly<{
   movement_comfort: string;
   routine_session_id: string | null;
   routine_status: string | null;
+  routine_started_at_ms: number | null;
+  skipped_step_count: number;
+  alternative_selection_count: number;
   delivered_level: string | null;
   included: number | null;
   response: string | null;
@@ -351,6 +354,11 @@ export class KineoSqliteStore implements KineoStore {
         `SELECT entry.area, check_in.local_day, entry.change_report,
                 entry.movement_comfort, routine.id AS routine_session_id,
                 routine.status AS routine_status,
+                routine.started_at_ms AS routine_started_at_ms,
+                (SELECT COUNT(*) FROM routine_events AS event
+                  WHERE event.routine_session_id = routine.id AND event.kind = 'skipped') AS skipped_step_count,
+                (SELECT COUNT(*) FROM routine_events AS event
+                  WHERE event.routine_session_id = routine.id AND event.kind = 'alternativeSelected') AS alternative_selection_count,
                 decision.delivered_level, area_input.included,
                 feedback.response
          FROM check_in_entries AS entry
@@ -389,7 +397,15 @@ export class KineoSqliteStore implements KineoStore {
             : oneOf(row.delivered_level, routineLevels);
           const included = row.included === null ? undefined : asBoolean(row.included);
           const response = row.response === null ? undefined : oneOf(row.response, areaResponses);
-          if (!sessionId.ok || status === undefined || deliveredLevel === undefined || included === undefined) {
+          const hasStarted = row.routine_started_at_ms !== null;
+          const requiresStart = status !== 'prepared' && status !== 'abandoned';
+          const invalidStartTimestamp = row.routine_started_at_ms !== null &&
+            (!Number.isSafeInteger(row.routine_started_at_ms) || row.routine_started_at_ms < 0);
+          if (!sessionId.ok || status === undefined || deliveredLevel === undefined || included === undefined ||
+            (requiresStart && !hasStarted) || (status === 'prepared' && hasStarted) ||
+            invalidStartTimestamp ||
+            !Number.isSafeInteger(row.skipped_step_count) || row.skipped_step_count < 0 ||
+            !Number.isSafeInteger(row.alternative_selection_count) || row.alternative_selection_count < 0) {
             throw new StoreAbort({ code: 'corruptedStore' });
           }
           routine = {
@@ -397,6 +413,8 @@ export class KineoSqliteStore implements KineoStore {
             status,
             deliveredLevel,
             wasIncluded: included,
+            skippedStepCount: row.skipped_step_count,
+            alternativeSelectionCount: row.alternative_selection_count,
             response,
           };
         }

@@ -126,6 +126,8 @@ export type AreaProgressPresentation = Readonly<{
     routine?: Readonly<{
       status: RoutineStatus;
       deliveredLevel: RoutineLevel;
+      skippedStepCount: number;
+      alternativeSelectionCount: number;
       response?: AreaResponse;
     }>;
   }>[];
@@ -134,12 +136,16 @@ export type AreaProgressPresentation = Readonly<{
 export type ProgressPresentation = Readonly<{
   participationDayCount: number;
   weeklyParticipationDayCount: number;
+  recordedRoutineCompletionCount: number;
+  weeklyRecordedRoutineCompletionCount: number;
   weeklyGoalDays: number;
   recentSessions: readonly Readonly<{
     sessionId: RoutineSessionId;
     localDay: LocalDayContext['localDay'];
     status: RoutineStatus;
     deliveredLevel: RoutineLevel;
+    skippedStepCount: number;
+    alternativeSelectionCount: number;
     areas: readonly BodyArea[];
   }>[];
   areas: readonly AreaProgressPresentation[];
