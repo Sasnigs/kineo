@@ -35,6 +35,8 @@ class OnboardingService implements KineoProductServing {
   progress: ProgressPresentation = {
     participationDayCount: 0,
     weeklyParticipationDayCount: 0,
+    recordedRoutineCompletionCount: 0,
+    weeklyRecordedRoutineCompletionCount: 0,
     weeklyGoalDays: 3,
     recentSessions: [],
     areas: [],
@@ -425,7 +427,9 @@ describe('Kineo product app', () => {
     await view.findByRole('button', { name: 'Check in' });
     await fireEvent.press(view.getByRole('tab', { name: 'Progress' }));
     await view.findByRole('header', { name: 'Progress' });
-    expect(view.getByText('Days you took part')).toBeTruthy();
+    expect(view.getByLabelText('0 participation days this week')).toBeTruthy();
+    expect(view.getByLabelText('0 recorded completions this week')).toBeTruthy();
+    expect(view.queryByText('of 3 days')).toBeNull();
     expect(view.getByText('Your patterns will appear here')).toBeTruthy();
     await fireEvent.press(view.getByRole('tab', { name: 'Profile' }));
     await waitFor(() => expect(view.getByRole('header', { name: 'Profile' })).toBeTruthy());
@@ -520,12 +524,16 @@ describe('Kineo product app', () => {
     service.progress = {
       participationDayCount: 1,
       weeklyParticipationDayCount: 1,
+      recordedRoutineCompletionCount: 1,
+      weeklyRecordedRoutineCompletionCount: 1,
       weeklyGoalDays: 3,
       recentSessions: [{
         sessionId: '00000000-0000-0000-0000-000000000204' as never,
         localDay: '2025-06-15' as never,
         status: 'completed',
         deliveredLevel: 'balanced',
+        skippedStepCount: 2,
+        alternativeSelectionCount: 1,
         areas: ['neck'],
       }],
       areas: [{
@@ -544,6 +552,8 @@ describe('Kineo product app', () => {
           routine: {
             status: 'completed',
             deliveredLevel: 'balanced',
+            skippedStepCount: 0,
+            alternativeSelectionCount: 0,
             response: 'same',
           },
         }],
@@ -555,12 +565,18 @@ describe('Kineo product app', () => {
 
     await view.findByRole('button', { name: 'Check in' });
     await fireEvent.press(view.getByRole('tab', { name: 'Progress' }));
+    expect(await view.findByLabelText('1 participation day this week')).toBeTruthy();
+    expect(view.getByText('Monday–Sunday')).toBeTruthy();
+    expect(view.getByText('Recorded completions')).toBeTruthy();
+    expect(view.getByText(/2 skips · 1 alternative choice/)).toBeTruthy();
+    expect(view.queryByText('of 3 days')).toBeNull();
     expect(view.getByRole('header', { name: 'Your areas' })).toBeTruthy();
     expect(view.getByText('1 check-in')).toBeTruthy();
     await fireEvent.press(await view.findByRole('button', { name: 'View Neck history' }));
     expect(view.getByText('Jun 15, 2025')).toBeTruthy();
     expect(view.getByText('Similar · Okay')).toBeTruthy();
     expect(view.getByText(/does not claim that one caused another/)).toBeTruthy();
+    expect(view.queryByText(/Active option is/)).toBeNull();
   });
 
   it('freezes routine menus and keeps safety guidance behind an explicit choice', async () => {

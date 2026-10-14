@@ -65,6 +65,19 @@ name: First use through routine feedback and deletion
     env:
       CONTROL_LABEL: "Progress"
 - assertVisible: "Progress"
+- assertVisible: "Monday–Sunday"
+- runFlow:
+    file: subflows/scroll-to-element.yaml
+    env:
+      ELEMENT_LABEL: "[0-9]+ participation days? this week"
+- assertVisible: "[0-9]+ participation days? this week"
+- runFlow:
+    file: subflows/scroll-to-element.yaml
+    env:
+      ELEMENT_LABEL: "[0-9]+ recorded completions? this week"
+- assertVisible: "[0-9]+ recorded completions? this week"
+- assertNotVisible: "of 3 days"
+- takeScreenshot: c1-progress
 - runFlow:
     file: subflows/tap-visible-control.yaml
     env:
