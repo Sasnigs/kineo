@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Expo E0–E4 complete; account track A0–A5 authorized |
+| Status | Expo E0–E4 complete; account A0–A4 implementation merged; A5 qualification open |
 | Platform | Expo/React Native iPhone app, iOS 17 minimum; Swift retained for E6 qualification |
-| Sources | Product design, UX specification, and TD-00 through TD-09 |
-| Last updated | September 2, 2026 |
+| Sources | Product design, UX specification, and TD-00 through TD-12 |
+| Last updated | October 7, 2026 |
 
 ## 1. Development approach
 
@@ -260,6 +260,8 @@ Learning stays attached to the current milestone:
 There is no separate tutorial application. The target split is roughly 15% explanation, 70% building, and 15% verification/review.
 
 ## 5. Account architecture track — A0 through A5
+
+**Status:** A0–A4 implementation merged in [PR 27](https://github.com/Sasnigs/kineo/pull/27); its Account database and Expo jobs [passed CI](https://github.com/Sasnigs/kineo/actions/runs/34192088569). A5 remains open. The merged implementation does not qualify configured Apple/Google providers, production email and abuse controls, physical-device protection or accessibility, privacy/legal review, production content, or public release.
 
 ~~~mermaid
 flowchart LR
