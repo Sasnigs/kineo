@@ -29,8 +29,10 @@ import type { PrivacyResult } from '../../core/account/account-privacy-module';
 import type { ProductResult } from '../../core/product/product-flow';
 import type { BootstrapState } from '../../core/account/sync-module';
 import type { KineoAccountRuntime } from '../../infrastructure/account/kineo-account-runtime';
-import { colors, layout, radius, spacing, typography } from '../theme/tokens';
+import { colors, layout, radius, spacing, typography, v11Layout, v11Typography } from '../theme/tokens';
 import { KineoProductApp } from '../product/kineo-product-app';
+import { V11BrandMark, V11WelcomeArtwork, V11PageHeader, V11PrimaryButton,
+  V11SecondaryButton, V11InlineTextAction, V11NoticeCard, V11Emblem } from '../primitives/kineo-v11-primitives';
 import { PrototypeLegalDocuments } from './prototype-legal-documents';
 
 type EntryState =
@@ -65,22 +67,22 @@ const authPresentation: Record<AuthMode, Readonly<{
   subtitle: string;
 }>> = {
   options: {
-    eyebrow: 'YOUR KINEO ACCOUNT',
+    eyebrow: 'Account access',
     title: 'Your Kineo account',
     subtitle: 'Keep your check-ins and routines together.',
   },
   emailSignIn: {
-    eyebrow: 'WELCOME BACK',
+    eyebrow: 'Welcome back',
     title: 'Sign in',
     subtitle: 'Pick up where you left off.',
   },
   emailSignUp: {
-    eyebrow: 'GETTING STARTED',
+    eyebrow: 'Getting started',
     title: 'Create an account',
     subtitle: 'Keep your progress across devices.',
   },
   reset: {
-    eyebrow: 'ACCOUNT RECOVERY',
+    eyebrow: 'Account recovery',
     title: 'Reset password',
     subtitle: 'We’ll email a reset link if your account exists.',
   },
@@ -441,7 +443,7 @@ export function KineoAccountEntry({
   if (state.kind === 'loading') {
     return (
       <AccountShell>
-        <View style={styles.centered}>
+        <View accessibilityLiveRegion="polite" style={styles.centered}>
           <ActivityIndicator color={colors.accentDark} />
           <Text style={styles.body}>{state.message}</Text>
         </View>
@@ -451,7 +453,7 @@ export function KineoAccountEntry({
 
   if (state.kind === 'error') {
     return (
-      <AccountShell eyebrow="LET’S TRY THAT AGAIN" title="Your data stayed safe.">
+      <AccountShell eyebrow="Let’s try that again" title="Your data stayed safe.">
         <Text style={styles.body}>{state.message}</Text>
         <ActionButton label="Retry" onPress={state.retry} />
       </AccountShell>
@@ -477,11 +479,13 @@ export function KineoAccountEntry({
       }
     };
     return (
-      <AccountShell eyebrow="SECURE SIGN-OUT" title={canSignIn ? 'Sign in to finish signing out' : 'Finish signing out'}>
+      <AccountShell eyebrow="Secure sign-out" title={canSignIn ? 'Sign in to finish signing out' : 'Finish signing out'}>
         <Text style={styles.body}>{logoutRecoveryMessage(state.recovery)}</Text>
         {canSignIn ? <>
+          <Text style={styles.authFieldLabel}>Recovery email</Text>
           <TextInput accessibilityLabel="Recovery email" placeholder="Email" autoCapitalize="none"
             autoComplete="email" keyboardType="email-address" style={styles.input} value={email} onChangeText={setEmail} />
+          <Text style={styles.authFieldLabel}>Recovery password</Text>
           <TextInput accessibilityLabel="Recovery password" placeholder="Password" secureTextEntry
             autoComplete="current-password" style={styles.input} value={password} onChangeText={setPassword} />
           <ActionButton label="Use email to finish signing out" disabled={busy}
@@ -499,28 +503,20 @@ export function KineoAccountEntry({
 
   if (state.kind === 'promise') {
     return (
-      <AccountShell eyebrow="MOVE WITH TODAY IN MIND" title="A routine shaped around how you feel now.">
-        <View style={styles.promiseCard}>
-          <Text style={styles.promiseText}>
-            A brief check-in helps Kineo prepare a focused neck and back movement routine.
-          </Text>
-          <View style={styles.trustRow}>
-            <Text style={styles.trustText}>Private account sync</Text>
-            <Text style={styles.trustText}>No routine browsing</Text>
-          </View>
-        </View>
+      <AccountShell title="Move with today in mind" subtitle="A routine shaped around how you feel now."
+        footer={<ActionButton label="Get started" onPress={() => setState({ kind: 'age' })} />}>
+        <V11WelcomeArtwork privacyLabel="Private account sync" />
         <Text style={styles.caption}>
           General wellness guidance for adults—not diagnosis or medical care.
         </Text>
-        <ActionButton label="Get started" onPress={() => setState({ kind: 'age' })} />
       </AccountShell>
     );
   }
 
   if (state.kind === 'age') {
     return (
-      <AccountShell eyebrow="BEFORE WE BEGIN" title="Are you 18 or older?">
-        <Text style={styles.body}>Kineo is currently designed for adults.</Text>
+      <AccountShell eyebrow="Before we begin" title="Are you 18 or older?">
+        <V11NoticeCard title="Designed for adults" message="Kineo is currently designed for adults." />
         <ActionButton
           label="Yes, I’m 18 or older"
           disabled={busy}
@@ -546,8 +542,8 @@ export function KineoAccountEntry({
 
   if (state.kind === 'ageUnavailable') {
     return (
-      <AccountShell eyebrow="NOT AVAILABLE YET" title="Kineo is for adults right now.">
-        <Text style={styles.body}>We can’t continue with setup.</Text>
+      <AccountShell eyebrow="Not available yet" title="Kineo is for adults right now.">
+        <V11Emblem caution /><V11NoticeCard title="Setup is paused" message="We can’t continue with setup." tone="caution" />
         <SecondaryButton
           label="I answered by mistake"
           onPress={() => setState({ kind: 'age' })}
@@ -558,7 +554,7 @@ export function KineoAccountEntry({
 
   if (state.kind === 'verification') {
     return (
-      <AccountShell eyebrow="CHECK YOUR EMAIL" title="Verify your account">
+      <AccountShell eyebrow="Check your email" title="Verify your account">
         <Text style={styles.body}>
           Open the private verification link sent to {state.email}, then return to Kineo.
         </Text>
@@ -580,11 +576,13 @@ export function KineoAccountEntry({
     const passwordsMatch = password === passwordConfirmation;
     const passwordIsLongEnough = [...password].length >= minimumPasswordCharacterCount;
     return (
-      <AccountShell eyebrow="SECURE RECOVERY" title="Choose a new password">
+      <AccountShell eyebrow="Secure recovery" title="Choose a new password">
         <Text style={styles.body}>
           Use at least {minimumPasswordCharacterCount} characters. Passphrases and password managers work well.
         </Text>
+        <Text style={styles.authFieldLabel}>New password</Text>
         <TextInput
+          accessibilityLabel="New password"
           autoCapitalize="none"
           autoComplete="new-password"
           onChangeText={setPassword}
@@ -594,7 +592,9 @@ export function KineoAccountEntry({
           style={styles.input}
           value={password}
         />
+        <Text style={styles.authFieldLabel}>Confirm new password</Text>
         <TextInput
+          accessibilityLabel="Confirm new password"
           autoCapitalize="none"
           autoComplete="new-password"
           onChangeText={setPasswordConfirmation}
@@ -634,7 +634,7 @@ export function KineoAccountEntry({
 
   if (state.kind === 'legal') {
     return (
-      <AccountShell eyebrow="YOUR ACCOUNT" title="Review before continuing">
+      <AccountShell eyebrow="Your account" title="Review before continuing">
         <Text style={styles.body}>
           Kineo stores your wellness check-ins and routine history so they can follow your account across devices.
         </Text>
@@ -684,7 +684,7 @@ export function KineoAccountEntry({
     >
       {runtime.usesDevelopmentServices ? (
         <View style={styles.developmentBadge}>
-          <Text style={styles.developmentText}>INTERNAL TEST ACCOUNT</Text>
+          <Text style={styles.developmentText}>Internal test account</Text>
         </View>
       ) : null}
       {authMode === 'options' ? (
@@ -713,7 +713,7 @@ export function KineoAccountEntry({
           ) : null}
           <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.authDivider}>
             <View style={styles.authDividerLine} />
-            <Text style={styles.authDividerText}>OR</Text>
+            <Text style={styles.authDividerText}>or</Text>
             <View style={styles.authDividerLine} />
           </View>
           <SecondaryButton
@@ -827,147 +827,44 @@ function InlineAuthAction({
   onPress,
   disabled = false,
 }: Readonly<{ prompt: string; label: string; onPress: () => void; disabled?: boolean }>) {
-  return (
-    <Pressable
-      accessibilityLabel={label}
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [styles.authInlineAction, disabled && styles.disabled, pressed && styles.pressed]}
-    >
-      <Text style={styles.authInlinePrompt}>{prompt} </Text>
-      <Text style={styles.authInlineLabel}>{label}</Text>
-    </Pressable>
-  );
+  return <View style={styles.authInlineAction}>
+    <Text style={styles.authInlinePrompt}>{prompt}</Text>
+    <V11InlineTextAction label={label} onPress={onPress} disabled={disabled} />
+  </View>;
 }
 
-function TextButton({
-  label,
-  onPress,
-  disabled = false,
-  alignEnd = false,
-}: Readonly<{ label: string; onPress: () => void; disabled?: boolean; alignEnd?: boolean }>) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.textButton,
-        alignEnd && styles.textButtonEnd,
-        disabled && styles.disabled,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text style={styles.textButtonLabel}>{label}</Text>
-    </Pressable>
-  );
+function TextButton({ label, onPress, disabled = false, alignEnd = false }:
+  Readonly<{ label: string; onPress: () => void; disabled?: boolean; alignEnd?: boolean }>) {
+  return <V11InlineTextAction label={label} onPress={onPress} disabled={disabled}
+    style={alignEnd ? styles.textButtonEnd : undefined} />;
 }
 
-function AccountShell({
-  eyebrow,
-  title,
-  subtitle,
-  authLayout = false,
-  children,
-}: Readonly<{
-  eyebrow?: string;
-  title?: string;
-  subtitle?: string;
-  authLayout?: boolean;
-  children: React.ReactNode;
-}>) {
+function AccountShell({ eyebrow, title, subtitle, authLayout = false, footer, children }:
+  Readonly<{ eyebrow?: string; title?: string; subtitle?: string; authLayout?: boolean;
+    footer?: React.ReactNode; children: React.ReactNode }>) {
   const { fontScale } = useWindowDimensions();
   const simplifyAuthLayout = authLayout && fontScale >= accessibilityAuthLayoutFontScale;
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.flex}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {simplifyAuthLayout ? null : (
-            <View style={styles.brandRow}>
-              <View style={styles.brandDot} />
-              <Text style={styles.brand}>Kineo</Text>
-            </View>
-          )}
-          <View style={[styles.content, authLayout && styles.authContent]}>
-            {authLayout ? (
-              <View style={styles.authHeading}>
-                {eyebrow === undefined || simplifyAuthLayout ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
-                {title === undefined ? null : (
-                  <Text accessibilityRole="header" style={styles.title}>{title}</Text>
-                )}
-                {subtitle === undefined ? null : <Text style={styles.authSubtitle}>{subtitle}</Text>}
-              </View>
-            ) : (
-              <>
-                {eyebrow === undefined ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
-                {title === undefined ? null : (
-                  <Text accessibilityRole="header" style={styles.title}>{title}</Text>
-                )}
-              </>
-            )}
-            {children}
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
-  );
+  const flowingFooter = fontScale > layout.fixedBottomBarMaximumFontScale;
+  return <SafeAreaView style={styles.safeArea}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        {simplifyAuthLayout ? null : <V11BrandMark context="Your daily movement" />}
+        <View style={[styles.content, authLayout && styles.authContent]}>
+          {title === undefined ? null : <V11PageHeader context={simplifyAuthLayout ? undefined : eyebrow}
+            title={title} lead={subtitle} />}
+          {children}
+        </View>
+        {flowingFooter && footer ? <View style={styles.footer}>{footer}</View> : null}
+      </ScrollView>
+      {!flowingFooter && footer ? <View style={styles.footer}>{footer}</View> : null}
+    </KeyboardAvoidingView>
+  </SafeAreaView>;
 }
 
-function ActionButton({
-  label,
-  onPress,
-  disabled = false,
-}: Readonly<{ label: string; onPress: () => void; disabled?: boolean }>) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.actionButton,
-        disabled && styles.disabled,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text style={styles.actionLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function SecondaryButton({
-  label,
-  onPress,
-  disabled = false,
-}: Readonly<{ label: string; onPress: () => void; disabled?: boolean }>) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.secondaryButton,
-        disabled && styles.disabled,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text style={styles.secondaryLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
+const ActionButton = V11PrimaryButton;
+const SecondaryButton = V11SecondaryButton;
 function Notice({ message }: Readonly<{ message: string }>) {
-  return <Text accessibilityRole="alert" style={styles.notice}>{message}</Text>;
+  return <V11NoticeCard message={message} role="alert" />;
 }
 
 async function runSimpleAuthAction(
@@ -1086,37 +983,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.screenHorizontal,
     paddingVertical: spacing.screenVertical,
   },
-  brandRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.compact },
-  brandDot: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.status,
-    height: spacing.standard,
-    width: spacing.standard,
-  },
-  brand: {
-    color: colors.ink,
-    fontSize: typography.subtitleSize,
-    fontWeight: typography.displayWeight,
-  },
   content: {
     alignSelf: 'center',
     flex: 1,
     gap: spacing.standard,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     maxWidth: layout.readableWidth,
-    paddingVertical: spacing.section,
+    paddingVertical: spacing.roomy,
     width: '100%',
   },
   authContent: {
     gap: spacing.roomy,
     justifyContent: 'flex-start',
-    paddingTop: spacing.hero,
-  },
-  authHeading: { gap: spacing.small },
-  authSubtitle: {
-    color: colors.secondaryInk,
-    fontSize: typography.bodySize,
-    lineHeight: typography.bodyLineHeight,
+    paddingTop: spacing.roomy,
   },
   authPanel: {
     backgroundColor: colors.surface,
@@ -1161,26 +1040,7 @@ const styles = StyleSheet.create({
     fontSize: typography.detailSize,
     lineHeight: typography.detailLineHeight,
   },
-  authInlineLabel: {
-    color: colors.accentDark,
-    fontSize: typography.detailSize,
-    fontWeight: typography.strongWeight,
-    lineHeight: typography.detailLineHeight,
-  },
-  textButton: {
-    alignItems: 'center',
-    alignSelf: 'center',
-    justifyContent: 'center',
-    minHeight: layout.controlMinimumHeight,
-    paddingHorizontal: spacing.compact,
-  },
   textButtonEnd: { alignSelf: 'flex-end' },
-  textButtonLabel: {
-    color: colors.accentDark,
-    fontSize: typography.detailSize,
-    fontWeight: typography.strongWeight,
-    lineHeight: typography.detailLineHeight,
-  },
   authPrivacyNote: {
     borderColor: colors.border,
     borderTopWidth: layout.borderWidth,
@@ -1190,18 +1050,6 @@ const styles = StyleSheet.create({
     paddingTop: spacing.standard,
   },
   centered: { alignItems: 'center', gap: spacing.standard },
-  eyebrow: {
-    color: colors.accentDark,
-    fontSize: typography.eyebrowSize,
-    fontWeight: typography.strongWeight,
-    letterSpacing: typography.eyebrowTracking,
-  },
-  title: {
-    color: colors.ink,
-    fontSize: typography.titleSize,
-    fontWeight: typography.displayWeight,
-    lineHeight: typography.titleLineHeight,
-  },
   body: {
     color: colors.secondaryInk,
     fontSize: typography.bodySize,
@@ -1212,69 +1060,20 @@ const styles = StyleSheet.create({
     fontSize: typography.captionSize,
     lineHeight: typography.captionLineHeight,
   },
-  promiseCard: {
-    backgroundColor: colors.forest,
-    borderRadius: radius.hero,
-    gap: spacing.roomy,
-    padding: spacing.roomy,
-  },
-  promiseText: {
-    color: colors.onDark,
-    fontSize: typography.subtitleSize,
-    fontWeight: typography.strongWeight,
-    lineHeight: typography.subtitleLineHeight,
-  },
-  trustRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.compact },
-  trustText: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.status,
-    color: colors.forest,
-    fontSize: typography.captionSize,
-    fontWeight: typography.strongWeight,
-    overflow: 'hidden',
-    paddingHorizontal: spacing.small,
-    paddingVertical: spacing.compact,
-  },
-  actionButton: {
-    alignItems: 'center',
-    backgroundColor: colors.accentDeep,
-    borderRadius: radius.button,
-    justifyContent: 'center',
-    minHeight: layout.controlMinimumHeight,
-    paddingHorizontal: spacing.standard,
-  },
-  actionLabel: {
-    color: colors.inverseInk,
-    fontSize: typography.bodySize,
-    fontWeight: typography.buttonWeight,
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.button,
-    borderWidth: layout.borderWidth,
-    justifyContent: 'center',
-    minHeight: layout.controlMinimumHeight,
-    paddingHorizontal: spacing.standard,
-  },
-  secondaryLabel: {
-    color: colors.ink,
-    fontSize: typography.bodySize,
-    fontWeight: typography.buttonWeight,
-  },
   input: {
     backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.button,
+    borderColor: colors.borderStrong,
+    borderRadius: v11Layout.inputRadius,
     borderWidth: layout.borderWidth,
     color: colors.ink,
-    fontSize: typography.bodySize,
+    fontSize: v11Typography.choiceSize,
     minHeight: layout.controlMinimumHeight,
+    paddingVertical: spacing.controlVertical,
     paddingHorizontal: spacing.standard,
   },
   appleButton: { height: layout.controlMinimumHeight, width: '100%' },
   checkboxRow: {
+    minHeight: layout.controlMinimumHeight,
     alignItems: 'flex-start',
     flexDirection: 'row',
     gap: spacing.small,
@@ -1282,7 +1081,7 @@ const styles = StyleSheet.create({
   },
   checkbox: {
     alignItems: 'center',
-    borderColor: colors.border,
+    borderColor: colors.borderStrong,
     borderRadius: spacing.micro,
     borderWidth: layout.selectedBorderWidth,
     height: spacing.roomy,
@@ -1297,17 +1096,6 @@ const styles = StyleSheet.create({
     fontSize: typography.detailSize,
     lineHeight: typography.detailLineHeight,
   },
-  notice: {
-    backgroundColor: colors.accentSoft,
-    borderColor: colors.border,
-    borderRadius: radius.button,
-    borderWidth: layout.borderWidth,
-    color: colors.ink,
-    fontSize: typography.detailSize,
-    lineHeight: typography.detailLineHeight,
-    overflow: 'hidden',
-    padding: spacing.standard,
-  },
   developmentBadge: {
     alignSelf: 'flex-start',
     backgroundColor: colors.attentionSurface,
@@ -1315,6 +1103,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.small,
     paddingVertical: spacing.micro,
   },
+  footer: { alignSelf: 'center', width: '100%', maxWidth: layout.readableWidth, paddingHorizontal: spacing.screenHorizontal, paddingVertical: spacing.standard },
   developmentText: {
     color: colors.attentionInk,
     fontSize: typography.eyebrowSize,
@@ -1332,6 +1121,4 @@ const styles = StyleSheet.create({
     fontWeight: typography.strongWeight,
     textAlign: 'center',
   },
-  disabled: { opacity: layout.disabledOpacity },
-  pressed: { opacity: layout.pressedOpacity },
 });

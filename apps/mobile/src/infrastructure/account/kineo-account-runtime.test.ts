@@ -1,11 +1,14 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
+import Constants from 'expo-constants';
 import type { OpenedKineoLocalRuntime } from '../persistence/open-protected-kineo-store';
 import { expoReminderScheduler } from '../reminders/expo-reminder-scheduler';
 import { createKineoAccountRuntime } from './kineo-account-runtime';
 import { InstallationIdentity } from './installation-identity';
 import { SecureRefreshTokenVault } from './secure-refresh-token-vault';
+
+jest.mock('expo-constants', () => ({ __esModule: true, default: { expoConfig: { extra: {} } } }));
 
 jest.mock('@react-native-google-signin/google-signin', () => ({
   GoogleSignin: { configure: jest.fn() }, isCancelledResponse: () => false,
@@ -18,8 +21,21 @@ jest.mock('../reminders/expo-reminder-scheduler', () => ({
   expoReminderScheduler: { cancelAll: jest.fn(async () => ({ ok: true, value: undefined })) },
 }));
 
+const originalEnvironment = process.env;
+const originalDev = __DEV__;
+const originalConfig = Constants.expoConfig;
+
 describe('Account runtime logout and relogin', () => {
+  afterEach(() => {
+    process.env = originalEnvironment;
+    Object.defineProperty(globalThis, '__DEV__', { value: originalDev, configurable: true });
+    Constants.expoConfig = originalConfig;
+    jest.restoreAllMocks();
+  });
   beforeEach(() => {
+    process.env = { ...originalEnvironment };
+    delete process.env.EAS_BUILD_PROFILE;
+    delete process.env.EXPO_PUBLIC_KINEO_ACCOUNT_MODE;
     jest.spyOn(Crypto, 'randomUUID')
       .mockReturnValueOnce('20000000-0000-4000-8000-000000000001')
       .mockReturnValue('20000000-0000-4000-8000-000000000002');
@@ -56,4 +72,31 @@ describe('Account runtime logout and relogin', () => {
     expect(newIdentity).not.toEqual(initialIdentity);
     expect((await reopened.value.auth.signInWithEmail({ email: 'person@example.com', password: 'correct horse battery staple' })).ok).toBe(true);
   });
+  it('fails closed in Release without configuration or an explicit preview marker', async () => {
+    Object.defineProperty(globalThis, '__DEV__', { value: false, configurable: true });
+    Constants.expoConfig = { ...originalConfig, extra: {} } as typeof Constants.expoConfig;
+    expect(await createKineoAccountRuntime({} as OpenedKineoLocalRuntime)).toEqual({
+      ok: false, error: { code: 'configurationMissing' },
+    });
+  });
+
+  it('allows a generated non-production Release preview without backend configuration', async () => {
+    Object.defineProperty(globalThis, '__DEV__', { value: false, configurable: true });
+    Constants.expoConfig = { ...originalConfig, extra: {
+      kineoBuildProfile: 'preview', kineoPreviewAccountMode: 'internal-test',
+    } } as typeof Constants.expoConfig;
+    const result = await createKineoAccountRuntime({} as OpenedKineoLocalRuntime);
+    expect(result.ok && result.value.usesDevelopmentServices).toBe(true);
+  });
+
+  it('rejects stale preview markers in production even when DEV or internal mode is set', async () => {
+    process.env.EXPO_PUBLIC_KINEO_ACCOUNT_MODE = 'internal-test';
+    Constants.expoConfig = { ...originalConfig, extra: {
+      kineoBuildProfile: 'production', kineoPreviewAccountMode: 'internal-test',
+    } } as typeof Constants.expoConfig;
+    expect(await createKineoAccountRuntime({} as OpenedKineoLocalRuntime)).toEqual({
+      ok: false, error: { code: 'configurationMissing' },
+    });
+  });
+
 });
