@@ -154,6 +154,11 @@ export const v11Layout = {
   cardShadowOpacity: 0.025, cardShadowRadius: 8,
   cardShadowOffsetY: 2, cardElevation: 1,
   pressRetentionOffset: 16,
+  areaEmblemSize: 38, areaEmblemRadius: 12,
+  progressTrackHeight: 4, scrollFadeHeight: 32,
+  scrollFadeTolerance: 1, planStepMinimumHeight: 52,
+  routineMediaRadius: 20, routineVideoHeight: 178, routineMediaFooterHeight: 30,
+  timerDialSize: 144, completionIconSize: 14,
 } as const;
 
 // Reanimated 4's duration-based springs use perceptual duration.
@@ -165,6 +170,14 @@ const quart = Easing.bezier(0.23, 1, 0.32, 1);
 const standard = Easing.bezier(0.2, 0.8, 0.2, 1);
 export const v11Motion = {
   pressScaleButton: 0.97, pressScaleCard: 0.98,
+  completion: {
+    holdDuration: 280, foldDuration: 520, riseDuration: 520, stagger: 55,
+    pulsePeak: 1.05, pulseRiseFraction: 0.45,
+    riseDistance: 36, foldLift: -26, foldScale: 0.78,
+    initialRiseOpacity: 0.25, initialRiseScale: 0.94,
+    easing: Easing.bezier(0.22, 1, 0.36, 1),
+    riseEasing: Easing.bezier(0.16, 1, 0.3, 1),
+  },
   pressSpring: { duration: pressDuration / springPerceptualFactor,
     dampingRatio: 1, overshootClamping: true, reduceMotion: ReduceMotion.System },
   selectionSpring: { duration: selectionDuration / springPerceptualFactor,

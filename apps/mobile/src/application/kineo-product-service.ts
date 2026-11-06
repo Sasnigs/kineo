@@ -65,6 +65,7 @@ import type {
   AttentionResolution,
   CheckInResult,
   PlanPresentation,
+  PlanSequenceStep,
   ProfilePresentation,
   ProgressPresentation,
   RoutineEndReason,
@@ -1279,6 +1280,21 @@ export class KineoProductService implements KineoProductServing {
     if (composition.kind !== 'composed') {
       return { ok: false, error: { code: 'contentUnavailable' } };
     }
+    const sequence: PlanSequenceStep[] = [];
+    const localizedStrings = prototypeCatalogLocalizedStrings();
+    for (const { item, sourceArea } of composition.routine.orderedItems) {
+      const movement = item.kind === 'movement'
+        ? catalog.movements.find(candidate => candidate.metadata.id === item.movementId)
+        : undefined;
+      const titleKey = item.kind === 'movement' ? movement?.metadata.displayNameKey
+        : item.kind === 'rest' ? 'routine.rest.title' : 'routine.transition.title';
+      const title = titleKey === undefined ? undefined : localizedStrings[titleKey];
+      if (!title) return { ok: false, error: { code: 'contentUnavailable' } };
+      sequence.push(Object.freeze({
+        id: item.itemId, kind: item.kind, area: sourceArea, title,
+        estimatedSeconds: item.kind === 'movement' ? item.dose.estimatedSeconds : item.fixedSeconds,
+      }));
+    }
     if (
       authorization !== undefined &&
       (
@@ -1335,6 +1351,7 @@ export class KineoProductService implements KineoProductServing {
         duration,
         explanations: selected.plan.explanations,
         itemCount: composition.routine.orderedItems.length,
+        sequence: Object.freeze(sequence),
         nominalSeconds: composition.routine.nominalSeconds,
         pauseTodayAvailable: selected.plan.pauseTodayAvailable,
       },

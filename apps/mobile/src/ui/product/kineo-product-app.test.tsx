@@ -1,5 +1,5 @@
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
-import { describe, expect, it, jest } from '@jest/globals';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import type { KineoProductServing } from '@/application/kineo-product-service';
 import type { RoutineSessionId } from '@/core/content/routine-session-snapshot';
@@ -11,12 +11,16 @@ import {
 } from '@/core/domain/selection-domain';
 import type {
   CheckInResult,
+  PlanPresentation,
+  RoutinePresentation,
   ProfilePresentation,
   ProgressPresentation,
   ProductResult,
   ProductStartState,
   RoutineEndReason,
 } from '@/core/product/product-flow';
+
+import * as Video from 'expo-video';
 
 import { KineoProductApp } from './kineo-product-app';
 
@@ -40,7 +44,7 @@ class OnboardingService implements KineoProductServing {
     areas: [],
   };
 
-  async loadStartState() {
+  async loadStartState(): Promise<ProductResult<ProductStartState>> {
     return { ok: true as const, value: this.state };
   }
 
@@ -134,7 +138,7 @@ class OnboardingService implements KineoProductServing {
     };
   }
 
-  async revisePlan() {
+  async revisePlan(): Promise<ProductResult<PlanPresentation>> {
     return { ok: false as const, error: { code: 'invalidState' as const } };
   }
 
@@ -421,6 +425,10 @@ describe('Kineo product app', () => {
     await view.findByText('How did neck feel afterward?');
     await fireEvent.press(view.getByRole('button', { name: 'About the same' }));
     await view.findByText('You made a choice for today.');
+    expect(view.getByText('Routine saved')).toBeTruthy();
+    expect(view.getByText("Today's participation: Recorded")).toBeTruthy();
+    expect(view.getByText('Balanced · Standard')).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Start another check-in' })).toBeTruthy();
     await fireEvent.press(view.getByRole('button', { name: 'Done' }));
     await view.findByRole('button', { name: 'Check in' });
     await fireEvent.press(view.getByRole('tab', { name: 'Progress' }));
@@ -658,4 +666,229 @@ describe('Kineo product app', () => {
     await fireEvent.press(view.getByRole('button', { name: 'Delete all data' }));
     await waitFor(() => expect(onStoreRestartRequired).toHaveBeenCalledTimes(1));
   });
+});
+
+const phase2StepSeconds = 60;
+const phase2StepCount = 2;
+
+it('keeps the old duration selected and Begin disabled until the plan revision commits', async () => {
+  const service = new OnboardingService();
+  const fixture = await service.submitCheckIn();
+  if (!fixture.ok || fixture.value.kind !== 'plan') throw new Error('Plan fixture missing');
+  const standardPlan: PlanPresentation = { ...fixture.value.plan, itemCount: phase2StepCount,
+    nominalSeconds: phase2StepSeconds * phase2StepCount,
+    sequence: [
+      { id: 'authored-glide', kind: 'movement', area: 'neck', title: 'Authored neck glide', estimatedSeconds: phase2StepSeconds },
+      { id: 'authored-nod', kind: 'movement', area: 'neck', title: 'Authored seated nod', estimatedSeconds: phase2StepSeconds },
+    ] };
+  jest.spyOn(service, 'loadStartState').mockResolvedValue({ ok: true, value: { kind: 'unfinishedPlan', plan: standardPlan } });
+  let finishRevision: ((result: ProductResult<PlanPresentation>) => void) | undefined;
+  const revision = new Promise<ProductResult<PlanPresentation>>(resolve => { finishRevision = resolve; });
+  const revise = jest.spyOn(service, 'revisePlan').mockReturnValue(revision);
+  const start = jest.spyOn(service, 'startRoutine');
+  const view = await render(<KineoProductApp service={service} onStoreRestartRequired={() => undefined} />);
+  expect(await view.findByText('Authored neck glide')).toBeTruthy();
+  expect(view.getByText('Authored seated nod')).toBeTruthy();
+  await fireEvent.press(view.getByRole('radio', { name: 'Quick' }));
+  expect(revise).toHaveBeenCalledWith(standardPlan.checkInId, 'quick', undefined);
+  expect(view.getByRole('radio', { name: 'Standard' }).props.accessibilityState.checked).toBe(true);
+  expect(view.getByRole('button', { name: 'Begin routine' }).props.accessibilityState.disabled).toBe(true);
+  await fireEvent.press(view.getByRole('button', { name: 'Begin routine' }));
+  expect(start).not.toHaveBeenCalled();
+  await act(() => finishRevision?.({ ok: true, value: { ...standardPlan, duration: 'quick' } }));
+  expect(view.getByRole('radio', { name: 'Quick' }).props.accessibilityState.checked).toBe(true);
+  expect(view.getByRole('button', { name: 'Begin routine' }).props.accessibilityState.disabled).toBe(false);
+  await fireEvent.press(view.getByRole('button', { name: 'Your sequence' }));
+  expect(view.queryByText('Authored neck glide')).toBeNull();
+});
+
+const phase3RunningElapsed = 0;
+const phase3CompletedElapsed = 60_000;
+afterEach(() => { jest.restoreAllMocks(); });
+
+async function phase3ServiceWithRoutine(elapsedMilliseconds: number) {
+  const service = new OnboardingService();
+  const started = await service.startRoutine();
+  if (!started.ok) throw new Error('Routine fixture missing');
+  const routine: RoutinePresentation = { ...started.value, stepElapsedMilliseconds: elapsedMilliseconds };
+  jest.spyOn(service, 'loadStartState').mockResolvedValue({ ok: true, value: { kind: 'unfinishedRoutine', routine } });
+  return { service, routine };
+}
+
+it('keeps Continue locked during counting and resolves to one completion badge from authoritative elapsed time', async () => {
+  const running = await phase3ServiceWithRoutine(phase3RunningElapsed);
+  const view = await render(<KineoProductApp service={running.service} onStoreRestartRequired={() => undefined} />);
+  expect(await view.findByText('01:00')).toBeTruthy();
+  expect(view.getByText('60 seconds remaining · 60 seconds planned')).toBeTruthy();
+  expect(view.queryByText('Your pace')).toBeNull();
+  expect(view.getByRole('button', { name: 'Continue' }).props.accessibilityState.disabled).toBe(true);
+  expect(view.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  expect(view.getByRole('button', { name: 'Skip this step' })).toBeTruthy();
+  const complete = await phase3ServiceWithRoutine(phase3CompletedElapsed);
+  await view.rerender(<KineoProductApp service={complete.service} onStoreRestartRequired={() => undefined} />);
+  expect(await view.findByText('Step complete')).toBeTruthy();
+  expect(view.queryByRole('progressbar')).toBeNull();
+  expect(view.getByRole('button', { name: 'Continue' }).props.accessibilityState.disabled).toBe(false);
+  expect(view.queryByRole('button', { name: 'Skip this step' })).toBeNull();
+  await fireEvent.press(view.getByRole('button', { name: 'End routine' }));
+  expect(await view.findByText('End this routine now?')).toBeTruthy();
+});
+
+it('keeps transition content and Continue reachable without redundant movement transport controls', async () => {
+  const { service, routine } = await phase3ServiceWithRoutine(phase3RunningElapsed);
+  if (!routine.currentItem) throw new Error('Step fixture missing');
+  const transition: RoutinePresentation = { ...routine, currentItem: { ...routine.currentItem,
+    kind: 'transition', localizedTitle: 'Prototype content', availableAlternatives: [] } };
+  jest.spyOn(service, 'loadStartState').mockResolvedValue({ ok: true, value: { kind: 'unfinishedRoutine', routine: transition } });
+  const view = await render(<KineoProductApp service={service} onStoreRestartRequired={() => undefined} />);
+  expect(await view.findByRole('header', { name: 'Prototype content' })).toBeTruthy();
+  expect(view.getByLabelText('Routine transition')).toBeTruthy();
+  expect(view.getByText('Next step ready')).toBeTruthy();
+  expect(view.queryByRole('progressbar')).toBeNull();
+  expect(view.queryByRole('button', { name: 'Pause' })).toBeNull();
+  expect(view.queryByRole('button', { name: 'Skip this step' })).toBeNull();
+  expect(view.getByRole('button', { name: 'Continue' }).props.accessibilityState.disabled).toBe(false);
+  expect(view.getByRole('button', { name: 'End routine' })).toBeTruthy();
+});
+
+it('saves a safety-stopped record without falsely claiming a participation day', async () => {
+  const { service, routine } = await phase3ServiceWithRoutine(phase3CompletedElapsed);
+  jest.spyOn(service, 'loadStartState').mockResolvedValue({ ok: true, value: { kind: 'unfinishedRoutine',
+    routine: { ...routine, status: 'safetyStopped', currentItem: undefined } } });
+  const view = await render(<KineoProductApp service={service} onStoreRestartRequired={() => undefined} />);
+  await fireEvent.press(await view.findByRole('button', { name: 'Skip response' }));
+  expect(await view.findByText('You made a choice for today.')).toBeTruthy();
+  expect(view.getByText('Routine record: Saved')).toBeTruthy();
+  expect(view.queryByText("Today's participation: Recorded")).toBeNull();
+});
+
+it('leaves video release to expo-video rather than pausing an already released native player on unmount', async () => {
+  const player = { pause: jest.fn(), play: jest.fn(), loop: false, muted: false };
+  jest.spyOn(Video, 'useVideoPlayer').mockReturnValue(player as unknown as ReturnType<typeof Video.useVideoPlayer>);
+  const { service } = await phase3ServiceWithRoutine(phase3RunningElapsed);
+  const view = await render(<KineoProductApp service={service} onStoreRestartRequired={() => undefined} />);
+  await view.findByRole('header', { name: 'Prototype movement 1' });
+  const pauseCallsBeforeRelease = player.pause.mock.calls.length;
+  await view.unmount();
+  expect(player.pause).toHaveBeenCalledTimes(pauseCallsBeforeRelease);
+});
+
+async function phase4ReadyService() {
+  const service = new OnboardingService();
+  await service.completeOnboarding();
+  return service;
+}
+
+function phase4AccountActions() {
+  return {
+    provider: 'email' as const,
+    resetHistory: jest.fn(async (_password?: string): Promise<ProductResult<void>> => ({ ok: true, value: undefined })),
+    exportData: jest.fn(async (_password?: string): Promise<ProductResult<void>> => ({ ok: true, value: undefined })),
+    changePassword: jest.fn(async (_current: string, _replacement: string): Promise<ProductResult<void>> => ({ ok: true, value: undefined })),
+    deleteAccount: jest.fn(async (_password?: string): Promise<ProductResult<void>> => ({ ok: true, value: undefined })),
+    logout: jest.fn(async (_discard: boolean): Promise<ProductResult<void>> => ({ ok: true, value: undefined })),
+  };
+}
+
+it('keeps empty Progress and Profile on the v1.1 shell with selected tab semantics', async () => {
+  const service = await phase4ReadyService();
+  const view = await render(<KineoProductApp service={service} onStoreRestartRequired={() => undefined} />);
+  await fireEvent.press(await view.findByRole('tab', { name: 'Progress' }));
+  expect(view.getByTestId('v11-screen-scroll')).toBeTruthy();
+  expect(view.getByRole('tab', { name: 'Progress', selected: true })).toBeTruthy();
+  expect(view.getByText('Your patterns will appear here')).toBeTruthy();
+  expect(view.getByLabelText('0 of 3 participation days this week')).toBeTruthy();
+  expect(view.getByText('This week')).toBeTruthy();
+  await fireEvent.press(view.getByRole('tab', { name: 'Profile' }));
+  for (const name of ['Your routine', 'Reminders', 'Account & privacy', 'About Kineo', 'Internal testing']) {
+    expect(view.getByRole('header', { name })).toBeTruthy();
+  }
+  expect(view.getByRole('tab', { name: 'Profile', selected: true })).toBeTruthy();
+});
+
+it('keeps area drafts selected, clears a second area, and saves only on explicit activation', async () => {
+  const service = await phase4ReadyService();
+  const save = jest.spyOn(service, 'saveAreaPreferences');
+  const view = await render(<KineoProductApp service={service} onStoreRestartRequired={() => undefined} />);
+  await fireEvent.press(await view.findByRole('tab', { name: 'Profile' }));
+  await fireEvent.press(view.getByRole('button', { name: 'Change areas' }));
+  const primaryGroup = view.getByTestId('primary-area-options');
+  const secondaryGroup = view.getByTestId('secondary-area-options');
+  expect(primaryGroup.props.accessibilityRole).toBe('radiogroup');
+  expect(primaryGroup.props.accessible).toBe(false);
+  expect(within(primaryGroup).getByRole('radio', { name: 'Neck', checked: true }).props.accessibilityHint).toBe('Primary area');
+  expect(within(secondaryGroup).queryByRole('radio', { name: 'Neck' })).toBeNull();
+  await fireEvent.press(within(primaryGroup).getByRole('radio', { name: 'Upper & mid back' }));
+  expect(save).not.toHaveBeenCalled();
+  expect(view.getByRole('radio', { name: 'Upper & mid back', checked: true })).toBeTruthy();
+  await fireEvent.press(view.getByRole('button', { name: 'No second area' }));
+  await fireEvent.press(view.getByRole('button', { name: 'Save areas' }));
+  expect(save).toHaveBeenCalledWith('upperMidBack', undefined);
+  expect(view.getByRole('header', { name: 'Profile' })).toBeTruthy();
+});
+
+it('keeps reset cancellation inert and sends the labeled password only on confirmed export', async () => {
+  const service = await phase4ReadyService();
+  const accountActions = phase4AccountActions();
+  const view = await render(<KineoProductApp service={service} accountActions={accountActions} onStoreRestartRequired={() => undefined} />);
+  await fireEvent.press(await view.findByRole('tab', { name: 'Profile' }));
+  await fireEvent.press(view.getByRole('button', { name: 'Reset History' }));
+  expect(view.getByText('Safety exception')).toBeTruthy();
+  expect(view.getByLabelText('Confirm your password').props.secureTextEntry).toBe(true);
+  await fireEvent.press(view.getByRole('button', { name: 'Cancel' }));
+  expect(accountActions.resetHistory).not.toHaveBeenCalled();
+  await fireEvent.press(view.getByRole('button', { name: 'Export my data' }));
+  await fireEvent.changeText(view.getByLabelText('Confirm your password'), 'private-password');
+  expect(accountActions.exportData).not.toHaveBeenCalled();
+  await fireEvent.press(view.getByRole('button', { name: 'Create private export' }));
+  expect(accountActions.exportData).toHaveBeenCalledWith('private-password');
+  expect(view.getByRole('header', { name: 'Profile' })).toBeTruthy();
+});
+
+it('exposes a password mismatch alert, disables submission, and updates only matching passwords', async () => {
+  const service = await phase4ReadyService();
+  const accountActions = phase4AccountActions();
+  const view = await render(<KineoProductApp service={service} accountActions={accountActions} onStoreRestartRequired={() => undefined} />);
+  await fireEvent.press(await view.findByRole('tab', { name: 'Profile' }));
+  await fireEvent.press(view.getByRole('button', { name: 'Change password' }));
+  await fireEvent.changeText(view.getByLabelText('Current password'), 'current-password');
+  await fireEvent.changeText(view.getByLabelText('New password'), 'a-long-replacement-password');
+  await fireEvent.changeText(view.getByLabelText('Confirm new password'), 'different-password');
+  expect(view.getByRole('alert').props.accessibilityLabel).toContain('The passwords do not match.');
+  expect(view.getByRole('button', { name: 'Update password', disabled: true })).toBeTruthy();
+  await fireEvent.press(view.getByRole('button', { name: 'Update password' }));
+  expect(accountActions.changePassword).not.toHaveBeenCalled();
+  await fireEvent.changeText(view.getByLabelText('Confirm new password'), 'a-long-replacement-password');
+  await fireEvent.press(view.getByRole('button', { name: 'Update password' }));
+  expect(accountActions.changePassword).toHaveBeenCalledWith('current-password', 'a-long-replacement-password');
+  expect(view.getByRole('header', { name: 'Profile' })).toBeTruthy();
+});
+
+it('keeps deletion cancellable and routes sign-out choices to the existing account commands', async () => {
+  const service = await phase4ReadyService();
+  const accountActions = phase4AccountActions();
+  const restart = jest.fn();
+  const view = await render(<KineoProductApp service={service} accountActions={accountActions} onStoreRestartRequired={restart} />);
+  await fireEvent.press(await view.findByRole('tab', { name: 'Profile' }));
+  await fireEvent.press(view.getByRole('button', { name: 'Delete All Data' }));
+  expect(view.getByText(/data and diagnostics held independently by Apple/)).toBeTruthy();
+  await fireEvent.press(view.getByRole('button', { name: 'Cancel' }));
+  expect(accountActions.deleteAccount).not.toHaveBeenCalled();
+  await fireEvent.press(view.getByRole('button', { name: 'Sign out' }));
+  expect(accountActions.logout).not.toHaveBeenCalled();
+  await fireEvent.press(view.getByRole('button', { name: 'Sync and sign out' }));
+  expect(accountActions.logout).toHaveBeenCalledWith(false);
+  expect(restart).toHaveBeenCalledTimes(1);
+});
+
+it('keeps recoverable product errors on the v1.1 shell and retries without replacing store data', async () => {
+  const service = await phase4ReadyService();
+  const load = jest.spyOn(service, 'loadStartState')
+    .mockResolvedValueOnce({ ok: false, error: { code: 'invalidState' } });
+  const view = await render(<KineoProductApp service={service} onStoreRestartRequired={() => undefined} />);
+  expect(await view.findByRole('header', { name: 'Your data stayed put.' })).toBeTruthy();
+  expect(view.getByTestId('v11-screen-scroll')).toBeTruthy();
+  await fireEvent.press(view.getByRole('button', { name: 'Retry' }));
+  expect(await view.findByRole('button', { name: 'Check in' })).toBeTruthy();
+  expect(load).toHaveBeenCalledTimes(2);
 });

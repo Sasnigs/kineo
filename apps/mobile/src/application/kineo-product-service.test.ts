@@ -789,6 +789,16 @@ describe('Kineo product service check-in', () => {
       throw new Error('Plan fixture was not created.');
     }
 
+    // Projecting the sequence must not start a session or change authored timing/order.
+    const plan = checkedIn.value.plan;
+    expect(plan.sequence).toHaveLength(plan.itemCount);
+    expect(plan.sequence?.reduce((seconds, step) => seconds + step.estimatedSeconds, 0)).toBe(plan.nominalSeconds);
+    expect(Object.isFrozen(plan.sequence)).toBe(true);
+    const beforeStart = await service.loadStartState();
+    expect(beforeStart).toMatchObject({ ok: true, value: { kind: 'unfinishedPlan' } });
+    if (beforeStart.ok && beforeStart.value.kind === 'unfinishedPlan') {
+      expect(beforeStart.value.plan.sequence).toEqual(plan.sequence);
+    }
     let routine = await service.startRoutine(checkedIn.value.plan.decisionId);
     expect(routine).toMatchObject({
       ok: true,
@@ -801,6 +811,7 @@ describe('Kineo product service check-in', () => {
       },
     });
     if (!routine.ok) throw new Error('Routine fixture did not start.');
+    expect(routine.value.currentItem?.localizedTitle).toBe(plan.sequence?.[0]?.title);
     await expect(service.startRoutine(checkedIn.value.plan.decisionId)).resolves.toEqual(routine);
     const restored = await service.loadStartState();
     expect(restored).toMatchObject({

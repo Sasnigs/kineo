@@ -43,6 +43,15 @@ export type AreaCheckInAnswers = Readonly<{
   conditionalSafetyAnswer?: ConditionalSafetyAnswer;
 }>;
 
+/** Read-only authored steps; not a session or a mutable plan command. */
+export type PlanSequenceStep = Readonly<{
+  id: string;
+  kind: 'movement' | 'transition' | 'rest';
+  area: BodyArea;
+  title: string;
+  estimatedSeconds: number;
+}>;
+
 export type PlanPresentation = Readonly<{
   decisionId: SelectionDecisionId;
   checkInId: CheckInId;
@@ -62,6 +71,8 @@ export type PlanPresentation = Readonly<{
     parameters: Readonly<Record<string, string>>;
   }>[];
   itemCount: number;
+  /** Optional for older presentation adapters; the local service always supplies it. */
+  sequence?: readonly PlanSequenceStep[];
   nominalSeconds: number;
   pauseTodayAvailable: boolean;
 }>;

@@ -24,7 +24,10 @@ name: Routine interruption, alternative, and safety stop
     visible: "Your place is saved."
     timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
 - tapOn: "Resume routine"
-- tapOn: "Try an alternative"
+- runFlow:
+    file: subflows/tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Try an alternative"
 - assertVisible: "Prototype alternative 1"
 - tapOn: "Use this alternative"
 - assertVisible: "Your place is saved."
