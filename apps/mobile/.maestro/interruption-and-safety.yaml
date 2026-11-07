@@ -5,15 +5,18 @@ name: Routine interruption, alternative, and safety stop
     clearState: true
     clearKeychain: true
 - extendedWaitUntil:
-    visible: "A routine shaped around how you feel now."
+    visible: "Make room for how you feel today."
     timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
 - runFlow: subflows/onboard-single-area.yaml
 - tapOn: "Check in"
 - tapOn: "Similar"
+- tapOn: "Continue"
 - tapOn: "Okay"
-- tapOn: "Quick"
+- tapOn: "Continue"
+- tapOn: "Review your plan"
+- tapOn: "Quick · 5 min"
 - tapOn: "Begin routine"
-- assertVisible: "Prototype movement 1"
+- assertVisible: "Neck mobility"
 - scrollUntilVisible:
     element: "Pause"
     direction: DOWN
@@ -21,23 +24,23 @@ name: Routine interruption, alternative, and safety stop
 - assertVisible: "Your place is saved."
 - launchApp
 - extendedWaitUntil:
-    visible: "Your place is saved."
+    visible: "Come back at your pace."
     timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
+- tapOn: "Resume routine"
+- assertVisible: "Your place is saved."
 - tapOn: "Resume routine"
 - runFlow:
     file: subflows/tap-visible-control.yaml
     env:
-      CONTROL_LABEL: "Try an alternative"
-- assertVisible: "Prototype alternative 1"
+      CONTROL_LABEL: "Alternative"
+- assertVisible: "Seated chin nod"
 - tapOn: "Use this alternative"
-- assertVisible: "Your place is saved."
-- tapOn: "Resume routine"
-- assertVisible: "Prototype alternative 1"
+- assertVisible: "Seated chin nod"
 - scrollUntilVisible:
     element: "Something feels wrong"
     direction: DOWN
 - tapOn: "Something feels wrong"
-- assertVisible: "Stop if something feels wrong."
+- assertVisible: "Listen to that feeling."
 - tapOn: "I tapped this by mistake"
 - assertVisible: "Your place is saved."
 - tapOn: "Resume routine"
@@ -46,8 +49,6 @@ name: Routine interruption, alternative, and safety stop
     direction: DOWN
 - tapOn: "Something feels wrong"
 - tapOn: "End routine"
-- assertVisible: "How did neck feel afterward?"
-- tapOn: "Skip response"
-- assertVisible: "You made a choice for today."
+- assertVisible: "You chose to stop."
 - tapOn: "Done"
-- assertVisible: "How are you moving?"
+- assertVisible: "You made space for yourself."

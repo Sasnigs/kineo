@@ -35,6 +35,7 @@ import type {
   ProductResult,
   RoutineEndReason,
   RoutinePresentation,
+  SessionDetailPresentation,
 } from '../core/product/product-flow';
 
 type RoutineEnvironment = Readonly<{
@@ -279,7 +280,7 @@ export class KineoRoutineModule {
     const events = await this.store.loadRoutineEvents(sessionId);
     if (!events.ok) return failure({ code: 'persistence', cause: events.error });
     const alreadySelected = [...events.value].reverse().find(
-      (event) => event.kind === 'alternativeSelected' && event.stepId === item.itemId,
+      (event) => (event.kind === 'alternativeSelected' || event.kind === 'originalRestored') && event.stepId === item.itemId,
     )?.alternativeId;
     if (alreadySelected === movementId) return this.presentation(session.value, movementId);
     if (session.value.status === 'inProgress') {
@@ -297,6 +298,38 @@ export class KineoRoutineModule {
       movementId,
     );
     return selected.ok ? this.presentation(selected.value, movementId) : selected;
+  }
+
+  /** Restart only the current authored movement; no completion or selection eligibility changes. */
+  async repeat(sessionId: RoutineSessionId, expectedStepIndex: number): Promise<ProductResult<RoutinePresentation>> {
+    let session=await this.requiredSession(sessionId); if(!session.ok)return session;
+    if(!['inProgress','paused'].includes(session.value.status)||session.value.currentStepIndex!==expectedStepIndex)return invalidState();
+    const presented=await this.presentation(session.value);if(!presented.ok)return presented;
+    const item=presented.value.currentItem;if(item?.kind!=='movement')return invalidState();
+    const dose=presented.value.selectedAlternative?.scheduledDose??item.scheduledDose;
+    if(dose.kind==='timed'&&presented.value.stepElapsedMilliseconds<dose.activeSeconds*millisecondsPerSecond)return invalidState();
+    if(session.value.status==='inProgress'){const paused=await this.recordTransition(session.value,'paused','paused');if(!paused.ok)return paused;session=paused;}
+    const repeated=await this.recordTransition(session.value,'stepRepeated',session.value.status,expectedStepIndex,item.itemId,item.sourceOwnerId);
+    if(!repeated.ok)return repeated;
+    return repeated.value.status==='paused'?this.resume(sessionId):this.presentation(repeated.value);
+  }
+
+  async restoreOriginal(sessionId: RoutineSessionId,expectedStepIndex:number):Promise<ProductResult<RoutinePresentation>> {
+    const session=await this.requiredSession(sessionId);if(!session.ok)return session;
+    if(!['inProgress','paused'].includes(session.value.status)||session.value.currentStepIndex!==expectedStepIndex)return invalidState();
+    const presented=await this.presentation(session.value);if(!presented.ok)return presented;
+    const item=presented.value.currentItem;if(item?.kind!=='movement'||!presented.value.selectedAlternative)return invalidState();
+    return this.transition(session.value,'originalRestored',session.value.status,expectedStepIndex,item.itemId,item.sourceOwnerId);
+  }
+
+  async detail(sessionId:RoutineSessionId):Promise<ProductResult<SessionDetailPresentation>> {
+    const session=await this.requiredSession(sessionId);if(!session.ok)return session;
+    const snapshot=this.decodeSnapshot(session.value);if(!snapshot.ok)return snapshot;
+    const events=await this.store.loadRoutineEvents(sessionId);if(!events.ok)return failure({code:'persistence',cause:events.error});
+    const history=await this.store.loadAreaHistory();if(!history.ok)return failure({code:'persistence',cause:history.error});
+    const responses:Partial<Record<BodyArea,AreaResponse>>={};for(const entry of history.value)if(entry.routine?.sessionId===sessionId&&entry.routine.response)responses[entry.area]=entry.routine.response;
+    return {ok:true,value:{sessionId,localDay:session.value.dayContext.localDay,deliveredLevel:snapshot.value.deliveredLevel,duration:snapshot.value.duration,status:session.value.status,areas:snapshot.value.includedAreas,responses,
+      steps:snapshot.value.items.map((item,index)=>({id:item.itemId,title:item.localizedTitle,status:events.value.some(event=>event.stepId===item.itemId&&event.kind==='skipped')?'skipped':events.value.some(event=>event.stepId===item.itemId&&event.kind==='stepCompleted')||(session.value.status==='completed'&&index===snapshot.value.items.length-stepIndexIncrement)?'completed':'unfinished'}))}};
   }
 
   async end(
@@ -433,7 +466,7 @@ export class KineoRoutineModule {
     });
     if (!event.ok) return invalidData();
     const terminal = this.isTerminal(status);
-    const elapsed = kind === 'stepCompleted' || kind === 'skipped'
+    const elapsed = kind === 'stepCompleted' || kind === 'skipped' || kind === 'stepRepeated' || kind === 'originalRestored' || kind === 'alternativeSelected'
       ? { ok: true as const, value: noElapsedTime }
       : this.elapsedMilliseconds(session);
     if (!elapsed.ok) return elapsed;
@@ -476,7 +509,7 @@ export class KineoRoutineModule {
       if (!events.ok) return failure({ code: 'persistence', cause: events.error });
       restoredMovementId = [...events.value].reverse().find(
         (event) =>
-          event.kind === 'alternativeSelected' && event.stepId === currentItem.itemId,
+          (event.kind === 'alternativeSelected' || event.kind === 'originalRestored') && event.stepId === currentItem.itemId,
       )?.alternativeId;
     }
     const selectedAlternative =

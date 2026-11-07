@@ -1,27 +1,25 @@
 appId: app.kineo.expo.prototype
 ---
-- assertVisible: "A routine shaped around how you feel now."
+- assertVisible: "Make room for how you feel today."
 - runFlow:
     file: tap-visible-control.yaml
     env:
-      CONTROL_LABEL: "Get started"
+      CONTROL_LABEL: "Find your starting point"
 - assertVisible: "Are you 18 or older?"
 - runFlow:
     file: tap-visible-control.yaml
     env:
       CONTROL_LABEL: "Yes, I’m 18 or older"
-- assertVisible: "Your Kineo account"
 - runFlow:
     file: tap-visible-control.yaml
     env:
-      CONTROL_LABEL: "Continue with test account"
-- assertVisible: "Review before continuing"
-- tapOn: "I accept the Terms of Service and Privacy Policy for this internal prototype."
+      CONTROL_LABEL: "Continue"
+- assertVisible: "Keep your history with you."
 - runFlow:
     file: tap-visible-control.yaml
     env:
-      CONTROL_LABEL: "Accept and continue"
-- assertVisible: "Where would you like to start?"
+      CONTROL_LABEL: "Continue with Apple"
+- assertVisible: "Where would you like to focus?"
 - runFlow:
     file: tap-visible-control.yaml
     env:
@@ -31,20 +29,24 @@ appId: app.kineo.expo.prototype
     env:
       CONTROL_LABEL: "Continue"
 - extendedWaitUntil:
-    visible: "Anything else to include?"
+    visible: "One more area?"
     timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
 - runFlow:
     file: tap-visible-control.yaml
     env:
-      CONTROL_LABEL: "Just focus on my main area"
-- assertVisible: "You stay in control."
+      CONTROL_LABEL: "Just neck for now"
+- runFlow:
+    file: tap-visible-control.yaml
+    env:
+      CONTROL_LABEL: "Set my intention"
+- assertVisible: "You stay in control"
 - runFlow:
     file: tap-visible-control.yaml
     env:
       CONTROL_LABEL: "I understand"
-- assertVisible: "Let’s make this useful."
+- assertVisible: "A small loop. Built around you."
 - runFlow:
     file: tap-visible-control.yaml
     env:
-      CONTROL_LABEL: "Continue to Today"
-- assertVisible: "How are you moving?"
+      CONTROL_LABEL: "Go to Today"
+- assertVisible: "Start with how you feel."

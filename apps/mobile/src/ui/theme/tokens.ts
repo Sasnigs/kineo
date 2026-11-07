@@ -6,7 +6,7 @@ const adaptiveColor = (light: string, dark: string) =>
 
 export const colors = {
   canvas: adaptiveColor('#F7F6F1', '#0B130F'),
-  surface: adaptiveColor('#FFFFFF', '#13201A'),
+  surface: adaptiveColor('#FFFFFF', '#192A22'),
   elevatedSurface: adaptiveColor('#FFFFFF', '#192A22'),
   ink: adaptiveColor('#142A21', '#F3F7F2'),
   secondaryInk: adaptiveColor('#52675C', '#B8C9BC'),
@@ -98,6 +98,9 @@ export const layout = {
 
 /** Tactile v1.1 semantic roles. Legacy exports above remain compatible. */
 export const v11Colors = {
+  timerTrack: adaptiveColor('rgba(20,42,33,0.16)', 'rgba(236,243,238,0.24)'),
+  heroSurface: adaptiveColor('#1D463B', '#192A22'),
+  heroInk: '#FFFFFF', heroAction: '#C7F36A', heroActionInk: '#122118',
   canvas: colors.canvas,
   surface: colors.surface,
   focalSurface: colors.elevatedSurface,
@@ -112,7 +115,7 @@ export const v11Colors = {
   borderStrong: colors.borderStrong,
   primaryAction: colors.accentDeep,
   onPrimaryAction: colors.inverseInk,
-  secondaryAction: colors.accentDark,
+  secondaryAction: adaptiveColor('#235C4B', '#A9C9B7'),
   activeTab: adaptiveColor('#1D463B', '#DCE9DC'),
   selection: adaptiveColor('#1D463B', '#C7F36A'),
   selectionBorder: adaptiveColor('#1D463B', '#C7F36A'),
@@ -146,6 +149,7 @@ export const v11Typography = {
 
 export const v11Layout = {
   ...layout,
+  tabMinimumHeight: 52,
   referenceWidth: 402, referenceHeight: 874, contentWidth: 362,
   statusSafeZoneHeight: 60, touchMinimumHeight: 44,
   choiceMinimumHeight: 60, focalRadius: 24, controlRadius: 16,
@@ -157,7 +161,7 @@ export const v11Layout = {
   areaEmblemSize: 38, areaEmblemRadius: 12,
   progressTrackHeight: 4, scrollFadeHeight: 32,
   scrollFadeTolerance: 1, planStepMinimumHeight: 52,
-  routineMediaRadius: 20, routineVideoHeight: 178, routineMediaFooterHeight: 30,
+  routineMediaRadius: 24, routineVideoHeight: 178, routineMediaFooterHeight: 30,
   timerDialSize: 144, completionIconSize: 14,
 } as const;
 
@@ -188,4 +192,20 @@ export const v11Motion = {
   sequenceEnter: { duration: 160, easing: quart },
   progressTiming: { duration: 260, easing: quart },
   reducedMotionFade: { duration: 150, easing: standard, reduceMotion: ReduceMotion.Never },
+} as const;
+
+/** Solid resolved equivalents for SVG XML, which cannot consume DynamicColorIOS objects. */
+export const v11ArtColors = {
+  light: { bg: '#F7F6F1', surface: '#FFFFFF', soft: '#EDF2EB', ink: '#142A21', muted: '#52675C', line: '#D4DED4', action: '#1D463B', accent: '#C7F36A', on: '#FFFFFF' },
+  dark: { bg: '#0B130F', surface: '#192A22', soft: '#13201A', ink: '#F3F7F2', muted: '#B8C9BC', line: '#3C5144', action: '#C7F36A', accent: '#C7F36A', on: '#122118' },
+} as const;
+export const v11Canvas = {
+  resolvedPillInset:18, pacingGap:3, resolvedPillSize:14.5, checkboxRadius:6, safetyLabelSize:14, routineSize: 28, routineLine: 31, editorialSize: 36, editorialLine: 40, editorialTracking: -1.152,
+  questionSize: 32, questionLine: 36, questionTracking: -0.96,
+  reviewFlagRadius: 12, planReasonSize: 14, planSize: 26, planLine: 30, heroTitleSize: 22, heroTitleLine: 27,
+  chipSize: 12.5, chipHeight: 32, captionSize: 12, captionLine: 18, rowMinimum: 56, rowIcon: 20,
+  areaChoiceMinimum: 80, areaSize: 44, ringSize: 24, ringDot: 10,
+  choiceRadius: 16, inputRadius: 16, buttonRadius: 18, brandSize: 18, brandWordmark: 24,
+  emblemSize: 64, heroWidth: 144, heroHeight: 260, heroOpacity: 0.5,
+  welcomeAspect: 322 / 196, daySize: 32, daysPerWeek: 7, sectionRadius: 20,
 } as const;

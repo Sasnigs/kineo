@@ -25,7 +25,7 @@ const routineStatuses = new Set([
 ]);
 const routineEventKinds = new Set([
   'started', 'paused', 'resumed', 'stepCompleted', 'skipped',
-  'alternativeSelected', 'stopped', 'safetyStopped', 'completed', 'abandoned',
+  'alternativeSelected', 'stepRepeated', 'originalRestored', 'stopped', 'safetyStopped', 'completed', 'abandoned',
 ]);
 const feedbackResponses = new Set(['better', 'same', 'worse']);
 const telemetryChoices = new Set(['notOffered', 'declined', 'optedIn']);

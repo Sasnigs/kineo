@@ -41,6 +41,8 @@ export const routineEventKinds = [
   'stepCompleted',
   'skipped',
   'alternativeSelected',
+  'stepRepeated',
+  'originalRestored',
   'stopped',
   'safetyStopped',
   'completed',
@@ -258,7 +260,7 @@ export function createRoutineEvent(
   const hasStep = input.stepId !== undefined && input.moduleId !== undefined;
   const matchingStepFields = (input.stepId === undefined) === (input.moduleId === undefined);
   const fieldsAreValid =
-    input.kind === 'stepCompleted'
+    (input.kind === 'stepCompleted' || input.kind === 'stepRepeated' || input.kind === 'originalRestored')
       ? hasStep && input.alternativeId === undefined && input.localReason === undefined
       : input.kind === 'skipped'
         ? hasStep && input.alternativeId === undefined
@@ -306,6 +308,8 @@ export function isValidRoutineTransition(
     case 'resumed': return current === 'paused' && next === 'inProgress';
     case 'stepCompleted':
     case 'skipped': return current === 'inProgress' && next === 'inProgress';
+    case 'stepRepeated':
+    case 'originalRestored':
     case 'alternativeSelected': return current === next && (next === 'inProgress' || next === 'paused');
     case 'completed': return (current === 'inProgress' || current === 'paused') && next === 'completed';
     case 'stopped': return (current === 'inProgress' || current === 'paused') && next === 'stopped';

@@ -79,3 +79,8 @@ describe('server sync protocol', () => {
   });
 
 });
+
+it.each(['stepRepeated','originalRestored'])('accepts the explicit %s routine command envelope', kind => {
+  const timestamp=1;
+  expect(validateSyncRequest({installationId,mutations:[{mutationId,installationId,historyEpoch:1,createdAtMilliseconds:timestamp,command:{kind:'recordRoutineEvent',event:{id:mutationId,routineSessionId:mutationId,kind,sequenceNumber:1,expectedVersion:1,stepId:'authored-step',moduleId:'authored-module',occurredAtMilliseconds:timestamp,resultingStatus:'paused',resultingStepIndex:0,resultingStepElapsedMilliseconds:0,resultingUpdatedAtMilliseconds:timestamp}}}]})).toBeDefined();
+});

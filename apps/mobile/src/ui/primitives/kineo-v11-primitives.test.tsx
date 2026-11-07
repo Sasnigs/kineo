@@ -54,8 +54,8 @@ describe('v1.1 accessible primitives', () => {
     const bar = view.getByTestId('kineo-primary-tabs');
     expect(bar.props.accessibilityRole).toBe('tablist');
     expect(StyleSheet.flatten(bar.props.style).flexDirection).toBe('column');
-    expect(view.getByRole('tab', { name: 'Progress' }).props.accessibilityState.selected).toBe(true);
-    await fireEvent.press(view.getByRole('tab', { name: 'Profile' }));
+    expect(view.getByRole('tab', { name: 'History' }).props.accessibilityState.selected).toBe(true);
+    await fireEvent.press(view.getByRole('tab', { name: 'You' }));
     expect(select).toHaveBeenCalledWith('profile');
     await fireEvent(bar, 'layout', { nativeEvent: { layout: { width: layoutWidth } } });
   });
@@ -130,7 +130,7 @@ describe('Phase 2 primitives', () => {
   it('moves all shell actions into scroll flow and stacks durations at large text', async () => {
     jest.spyOn(Native, 'useWindowDimensions').mockReturnValue({ ...testDimensions, fontScale: enlargedFontScale });
     const select = jest.fn();
-    const view = await render(<V11Shell bottomBar={<V11PrimaryButton label="Continue" onPress={select} />}>
+    const view = await render(<V11Shell footerPlacement="pinned-actions" bottomBar={<V11PrimaryButton label="Continue" onPress={select} />}>
       <V11SegmentedControl label="Duration" options={durationOptions} value="standard" onSelect={select} />
     </V11Shell>);
     expect(view.getByTestId('v11-inline-footer')).toBeTruthy();
@@ -249,4 +249,22 @@ it('keeps menu rows named, disabled-safe, and readable at enlarged text without 
   await fireEvent.press(view.getByRole('button', { name: 'View Neck history' }));
   expect(press).toHaveBeenCalledTimes(1);
   expect(view.queryByRole('button', { name: 'Weekly goal' })).toBeNull();
+});
+
+it('uses soft-well radios and explicit disabled colors rather than dimming primary actions', async () => {
+  const view=await render(<><V11ChoiceRow title="Neck" selected={false} onPress={()=>undefined} />
+    <V11PrimaryButton label="Continue" disabled onPress={()=>undefined} /></>);
+  const choice=StyleSheet.flatten(view.getByRole('radio',{name:'Neck'}).props.style);
+  expect(choice.backgroundColor).toEqual(v11Colors.softWell); expect(choice.borderWidth).toBe(0);
+  const button=StyleSheet.flatten(view.getByRole('button',{name:'Continue'}).props.style);
+  expect(button.backgroundColor).toEqual(v11Colors.softWell); expect(button.opacity).toBe(1);
+});
+
+it('keeps ordinary actions in flow and pins navigation only with an explicit footer placement', async () => {
+  jest.spyOn(jest.requireActual<typeof import('react-native')>('react-native'), 'useWindowDimensions').mockReturnValue(testDimensions);
+  const view=await render(<V11Shell bottomBar={<V11PrimaryButton label="Continue" onPress={()=>undefined} />}><Text>Flow content</Text></V11Shell>);
+  expect(view.getByTestId('v11-inline-footer')).toBeTruthy(); expect(view.queryByTestId('v11-pinned-footer')).toBeNull();
+  await view.rerender(<V11Shell footerPlacement="navigation" bottomBar={<V11FloatingTabBar active="today" onSelect={()=>undefined} />}><Text>Today content</Text></V11Shell>);
+  expect(view.getByTestId('v11-pinned-footer')).toBeTruthy();
+  expect(view.getByRole('tab',{name:'History'})).toBeTruthy(); expect(view.getByRole('tab',{name:'You'})).toBeTruthy();
 });

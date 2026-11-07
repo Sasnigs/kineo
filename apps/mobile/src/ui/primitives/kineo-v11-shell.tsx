@@ -6,7 +6,7 @@ import { BlurView } from 'expo-blur';
 import MaskedView from '@react-native-masked-view/masked-view';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
-import { v11Colors as c, v11Layout as l, v11Spacing as s } from '../theme/tokens';
+import { v11Colors as c, v11ArtColors, v11Layout as l, v11Spacing as s } from '../theme/tokens';
 
 const fade = {
   viewBox: '0 0 100 32', width: '100%', startX: '0%', startY: '0%', endX: '0%', endY: '100%',
@@ -23,6 +23,7 @@ const fade = {
 
 function ProgressiveFooterFade() {
   const appearance = useColorScheme();
+  const canvasTone=v11ArtColors[appearance==='dark'?'dark':'light'].bg;
   const [reduceTransparency, setReduceTransparency] = useState(true);
   useEffect(() => {
     let active = true;
@@ -57,8 +58,8 @@ function ProgressiveFooterFade() {
     </MaskedView>)}
     <Svg width={fade.width} height={l.scrollFadeHeight} viewBox={fade.viewBox} preserveAspectRatio="none">
       <Defs><LinearGradient id="footer-tone" x1={fade.startX} y1={fade.startY} x2={fade.endX} y2={fade.endY}>
-        <Stop offset={fade.startY} stopColor={c.canvas} stopOpacity={0} />
-        <Stop offset={fade.endY} stopColor={c.canvas} stopOpacity={fade.terminalOpacity} />
+        <Stop offset={fade.startY} stopColor={canvasTone} stopOpacity={0} />
+        <Stop offset={fade.endY} stopColor={canvasTone} stopOpacity={fade.terminalOpacity} />
       </LinearGradient></Defs>
       <Rect width={fade.width} height={l.scrollFadeHeight} fill="url(#footer-tone)" />
     </Svg>
@@ -66,11 +67,11 @@ function ProgressiveFooterFade() {
 }
 
 /** Measured scroll affordance; only shared values change while scrolling. */
-export function V11Shell({ children, bottomBar, persistentBottomBar, progressiveFade = true }: {
-  children: ReactNode; bottomBar?: ReactNode; persistentBottomBar?: ReactNode; progressiveFade?: boolean;
+export function V11Shell({ children, bottomBar, persistentBottomBar, progressiveFade = true, compact = false, footerPlacement = 'flow' }: {
+  children: ReactNode; bottomBar?: ReactNode; persistentBottomBar?: ReactNode; progressiveFade?: boolean; compact?: boolean; footerPlacement?: 'flow' | 'navigation' | 'pinned-actions';
 }) {
   const { fontScale } = useWindowDimensions();
-  const inline = fontScale > l.fixedBottomBarMaximumFontScale;
+  const inline = footerPlacement === 'flow' || fontScale > l.fixedBottomBarMaximumFontScale;
   const hasFooter = bottomBar !== undefined || persistentBottomBar !== undefined;
   const contentHeight = useSharedValue(0);
   const viewportHeight = useSharedValue(0);
@@ -86,7 +87,7 @@ export function V11Shell({ children, bottomBar, persistentBottomBar, progressive
         contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets showsVerticalScrollIndicator
         onLayout={event => viewportHeight.set(event.nativeEvent.layout.height)}
         onContentSizeChange={(_width, height) => contentHeight.set(height)} onScroll={onScroll}>
-        <View style={styles.readable}>
+        <View style={[styles.readable, compact && styles.compact]}>
           {children}
           {inline && hasFooter ? <View testID="v11-inline-footer" style={styles.inlineFooter}>{footer}</View> : null}
         </View>
@@ -99,6 +100,7 @@ export function V11Shell({ children, bottomBar, persistentBottomBar, progressive
 }
 
 const styles = StyleSheet.create({
+  compact: { gap: s.compact },
   safeArea: { flex: 1, backgroundColor: c.canvas },
   body: { flex: 1, position: 'relative' },
   scroll: { flex: 1 },

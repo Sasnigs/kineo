@@ -4,10 +4,10 @@ import Animated, {
   cancelAnimation, useAnimatedProps, useAnimatedStyle, useSharedValue,
   withDelay, withSequence, withTiming,
 } from 'react-native-reanimated';
-import Svg, { G, Line, Path } from 'react-native-svg';
+import Svg, { G, Line, Path, Circle, Text as SvgText } from 'react-native-svg';
 
 import { v11Colors as c, v11Layout as l, v11Motion as m,
-  v11Spacing as s, v11Typography as t, radius } from '../theme/tokens';
+  v11Spacing as s, v11Typography as t, v11Canvas as cv, radius } from '../theme/tokens';
 import { V11AreaEmblem, useV11ReducedMotion, type V11BodyArea } from './kineo-v11-primitives';
 
 const dial = {
@@ -16,12 +16,14 @@ const dial = {
   tickCount: 24, cardinalEvery: 6, cardinalInner: 50, cardinalOuter: 56,
   tickInner: 51.5, tickOuter: 54.5, tickOpacity: 0.55, cardinalOpacity: 0.78,
   tickWidth: 1.6, cardinalWidth: 2.1, trackWidth: 7.5, progressWidth: 3,
+  outerWidth:0.6,outerOpacity:0.6,completeTickOpacity:0.24,thumbRadius:3,thumbStroke:1.5,notchStroke:1.2,readoutBaseline:63,
   readoutSize: 25, readoutLineHeight: 32, readoutTracking: -0.75,
   secondsPerMinute: 60, readoutDigits: 2,
   path: 'M28.1802 87.8198A45 45 0 1 1 91.8198 87.8198',
   iconViewBox: '0 0 24 24', checkPath: 'M5 12L10 17L19 7', iconStroke: 2,
 } as const;
 const arcLength = dial.radius * dial.sweepDegrees * Math.PI / dial.degreesPerHalfTurn;
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const choreography = m.completion;
 
@@ -37,7 +39,7 @@ export function V11RoutineMediaFrame({ children, accessibilityLabel }: {
   return <View style={styles.mediaFrame}>
     <View accessible accessibilityRole="image" accessibilityLabel={accessibilityLabel} style={styles.mediaContent}>{children}</View>
     <View style={styles.mediaFooter}>
-      <Text style={styles.provenance}>Sample media · pending review</Text>
+      <View style={styles.reviewDot}/><Text style={styles.provenance}>Sample media · pending review</Text>
     </View>
   </View>;
 }
@@ -60,13 +62,15 @@ export function V11TimerDial({ remainingSeconds, totalSeconds }: { remainingSeco
     return () => cancelAnimation(progress);
   }, [target, reduced, progress]);
   const animatedProps = useAnimatedProps(() => ({ strokeDashoffset: arcLength * (1 - progress.get()) }));
+  const nodeProps=useAnimatedProps(()=>{const angle=(dial.startDegrees+dial.sweepDegrees*progress.get())*Math.PI/dial.degreesPerHalfTurn;return {cx:dial.centerX+Math.cos(angle)*dial.radius,cy:dial.centerY+Math.sin(angle)*dial.radius};});
   const largeText = fontScale > l.fixedBottomBarMaximumFontScale;
   const size = l.timerDialSize * fontScale;
   return <View testID="v11-countdown" accessible accessibilityRole="progressbar" accessibilityLabel="Movement timer"
     accessibilityValue={{ min: 0, max: totalSeconds, now: Math.max(0, totalSeconds - remainingSeconds), text: `${formatV11Countdown(remainingSeconds)} remaining` }}
     style={largeText ? styles.largeDial : { width: size, height: size }}>
     {largeText ? null : <Svg width={size} height={size} viewBox={dial.viewBox} accessible={false}>
-      <G stroke={c.textSecondary} strokeLinecap="round">
+      <Path d="M14 88A55 55 0 1 1 106 88" fill="none" stroke={c.separator} strokeWidth={dial.outerWidth} opacity={dial.outerOpacity}/>
+      <G opacity={target>=1?dial.completeTickOpacity:1} stroke={c.textSecondary} strokeLinecap="round">
         {Array.from({ length: dial.tickCount }, (_, index) => {
           const cardinal = index % dial.cardinalEvery === 0;
           const angle = (dial.startDegrees + index * dial.sweepDegrees / (dial.tickCount - 1)) * Math.PI / dial.degreesPerHalfTurn;
@@ -77,13 +81,16 @@ export function V11TimerDial({ remainingSeconds, totalSeconds }: { remainingSeco
             strokeWidth={cardinal ? dial.cardinalWidth : dial.tickWidth} opacity={cardinal ? dial.cardinalOpacity : dial.tickOpacity} />;
         })}
       </G>
-      <Path d={dial.path} fill="none" stroke={c.separator} strokeWidth={dial.trackWidth} strokeLinecap="round" />
+      <Path d={dial.path} fill="none" stroke={c.timerTrack} strokeWidth={dial.trackWidth} strokeLinecap="round" />
       <AnimatedPath d={dial.path} fill="none" stroke={c.primaryAction} strokeWidth={dial.progressWidth}
         strokeLinecap="round" strokeDasharray={[arcLength, arcLength]} animatedProps={animatedProps} />
+      <AnimatedCircle animatedProps={nodeProps} r={dial.thumbRadius} fill={c.surface} stroke={c.primaryAction} strokeWidth={dial.thumbStroke}/>
+      <Path d="M56 22H64" stroke={c.separator} strokeWidth={dial.notchStroke} strokeLinecap="round"/>
+      <SvgText x={dial.centerX} y={dial.readoutBaseline} textAnchor="middle" fill={c.textPrimary} fontSize={dial.readoutSize} fontWeight="700" letterSpacing={dial.readoutTracking}>{formatV11Countdown(remainingSeconds)}</SvgText>
     </Svg>}
-    <View pointerEvents="none" style={largeText ? undefined : styles.readoutOverlay}>
+    {largeText?<View pointerEvents="none">
       <Text accessible={false} style={styles.readout}>{formatV11Countdown(remainingSeconds)}</Text>
-    </View>
+    </View>:null}
   </View>;
 }
 
@@ -93,7 +100,7 @@ export function V11TimerStatePill({ label, completed = false, ready = false }: {
     {completed ? <Svg testID="v11-step-check" width={l.completionIconSize} height={l.completionIconSize} viewBox={dial.iconViewBox} accessible={false}>
       <Path d={dial.checkPath} fill="none" stroke={c.secondaryAction} strokeWidth={dial.iconStroke} strokeLinecap="round" strokeLinejoin="round" />
     </Svg> : null}
-    <Text style={styles.stateLabel}>{label}</Text>
+    <Text style={[styles.stateLabel,(completed||ready)&&styles.resolvedStateLabel]}>{label}</Text>
   </View>;
 }
 
@@ -163,7 +170,7 @@ export function V11RoutinePacing({ mode, remainingSeconds = 0, totalSeconds = 0,
       </Animated.View>
     </Animated.View> : null}
     <Animated.View style={pillStyle}><V11TimerStatePill label={statusLabel} completed={complete} ready={mode === 'transition'} /></Animated.View>
-    <Animated.View style={captionStyle}><Text style={styles.guidance}>{guidance}</Text></Animated.View>
+    <Animated.View style={captionStyle}><Text style={[styles.guidance,(complete||mode==='transition')&&styles.resolvedGuidance]}>{guidance}</Text></Animated.View>
     {controls ? <Animated.View style={[styles.controls, controlsStyle]}>{controls}</Animated.View> : null}
   </View>;
 }
@@ -172,8 +179,9 @@ const styles = StyleSheet.create({
   mediaFrame: { borderRadius: l.routineMediaRadius, borderWidth: l.borderWidth, borderColor: c.separator,
     backgroundColor: c.softWell, overflow: 'hidden' },
   mediaContent: { height: l.routineVideoHeight },
-  mediaFooter: { minHeight: l.routineMediaFooterHeight, paddingHorizontal: s.standard, paddingVertical: s.micro,
-    borderTopWidth: l.borderWidth, borderTopColor: c.separator, justifyContent: 'center', backgroundColor: c.softWell },
+  reviewDot: {width:s.micro,height:s.micro,borderRadius:radius.status,backgroundColor:c.textSecondary},
+  mediaFooter: { flexDirection:'row',alignItems:'center',gap:s.compact,minHeight: l.routineMediaFooterHeight, paddingHorizontal: s.standard, paddingVertical: s.micro,
+    borderTopWidth: l.borderWidth, borderTopColor: c.separator, justifyContent: 'flex-end', backgroundColor: c.softWell },
   provenance: { color: c.textSecondary, fontSize: t.captionSize, lineHeight: t.captionLineHeight, textAlign: 'right', fontWeight: t.mediumWeight },
   transition: { minHeight: l.routineVideoHeight, alignItems: 'center', justifyContent: 'center', gap: s.small,
     backgroundColor: c.softWell, borderRadius: l.routineMediaRadius },
@@ -185,11 +193,13 @@ const styles = StyleSheet.create({
   statePill: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: s.compact,
     borderRadius: radius.status, paddingHorizontal: s.controlVertical, paddingVertical: s.micro,
     borderWidth: l.borderWidth, borderColor: c.separator, backgroundColor: c.softWell, elevation: 0 },
-  statePillDone: { borderColor: c.selectionBorder, backgroundColor: c.accentSoft },
+  resolvedStateLabel:{fontSize:cv.resolvedPillSize},
+  statePillDone: { marginTop:s.compact,paddingHorizontal:cv.resolvedPillInset,paddingVertical:s.compact,borderColor: c.selectionBorder, backgroundColor: c.accentSoft },
   stateLabel: { color: c.textPrimary, fontSize: t.captionSize, lineHeight: t.captionLineHeight, fontWeight: t.semiboldWeight, textAlign: 'center', flexShrink: 1 },
-  pacing: { alignItems: 'center', gap: s.micro },
+  pacing: { alignItems: 'center', gap: cv.pacingGap },
   dialStage: { width: '100%', overflow: 'hidden', alignItems: 'center' },
   dialContent: { alignItems: 'center', width: '100%' },
   guidance: { marginTop: s.small, color: c.textSecondary, fontSize: t.bodySize, lineHeight: t.bodyLineHeight, textAlign: 'center' },
+  resolvedGuidance:{color:c.textPrimary,fontWeight:t.mediumWeight},
   controls: { marginTop: s.large, width: '100%' },
 });
