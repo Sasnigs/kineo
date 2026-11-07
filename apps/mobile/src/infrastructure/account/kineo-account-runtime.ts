@@ -137,9 +137,13 @@ export async function createKineoAccountRuntime(
     return { ok: false, error: { code: 'localPersistence' } };
   }
   const configured = createConfiguredSupabaseClient();
-  const internalTestMode =
-    process.env.EXPO_PUBLIC_KINEO_ACCOUNT_MODE === 'internal-test';
-  const development = !configured.ok && (__DEV__ || internalTestMode);
+  const productionBuild = Constants.expoConfig?.extra?.kineoBuildProfile === 'production' ||
+    process.env.EAS_BUILD_PROFILE === 'production';
+  const internalTestMode = !productionBuild && (
+    process.env.EXPO_PUBLIC_KINEO_ACCOUNT_MODE === 'internal-test' ||
+    Constants.expoConfig?.extra?.kineoPreviewAccountMode === 'internal-test'
+  );
+  const development = !configured.ok && !productionBuild && (__DEV__ || internalTestMode);
   if (!configured.ok && !development) {
     return { ok: false, error: { code: 'configurationMissing' } };
   }

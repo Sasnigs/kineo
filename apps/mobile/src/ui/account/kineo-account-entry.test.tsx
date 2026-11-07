@@ -59,54 +59,21 @@ describe('KineoAccountEntry', () => {
       createAuthorizedService={async () => ({ ok: true, value: service })}
       onStoreRestartRequired={() => undefined} />);
 
-    expect(await view.findByText('Your Kineo account')).toBeTruthy();
+    expect(await view.findByRole('header', { name: 'Keep your history with you.' })).toBeTruthy();
+    expect(view.queryByText('Internal test account')).toBeNull();
     await fireEvent.press(view.getByRole('button', { name: 'Continue with email' }));
-    expect(view.getByRole('header', { name: 'Sign in' })).toBeTruthy();
-    expect(view.getByText('Email address')).toBeTruthy();
-    expect(view.getByText('Password')).toBeTruthy();
-    expect(view.getByLabelText('Email address')).toBeTruthy();
-    expect(view.getByLabelText('Password')).toBeTruthy();
-
-    await fireEvent.press(view.getByRole('button', { name: 'Create an account' }));
-    expect(view.getByRole('header', { name: 'Create an account' })).toBeTruthy();
-    expect(view.getByRole('button', { name: 'Create account' })).toBeTruthy();
-    await fireEvent.press(view.getByRole('button', { name: 'Sign in' }));
-    expect(view.getByRole('header', { name: 'Sign in' })).toBeTruthy();
-
+    expect(view.getByRole('header', { name: 'A private place to begin.' })).toBeTruthy();
+    expect(view.getByLabelText('Email')).toBeTruthy();
+    expect(view.getByLabelText('Confirm password')).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Create account', disabled: true })).toBeTruthy();
+    await fireEvent.press(view.getByRole('button', { name: 'Back to sign-in options' }));
+    await fireEvent.press(view.getByRole('button', { name: 'Already a member? Sign in' }));
+    expect(view.getByRole('header', { name: 'Pick up where you are.' })).toBeTruthy();
     await fireEvent.press(view.getByRole('button', { name: 'Forgot password?' }));
-    expect(view.getByRole('header', { name: 'Reset password' })).toBeTruthy();
+    expect(view.getByRole('header', { name: 'Forgot your password?' })).toBeTruthy();
     expect(view.queryByLabelText('Password')).toBeNull();
-    expect(view.getByRole('button', { name: 'Send reset link' })).toBeTruthy();
     await fireEvent.press(view.getByRole('button', { name: 'Back to sign in' }));
-    await fireEvent.press(view.getByRole('button', { name: 'All sign-in options' }));
-    expect(view.getByRole('header', { name: 'Your Kineo account' })).toBeTruthy();
     expect(view.getByRole('button', { name: 'Continue with Google' })).toBeTruthy();
-  });
-
-  it('opens email directly when social providers are not configured', async () => {
-    const service = {
-      loadStartState: async () => ({ ok: true, value: { kind: 'ready' } }),
-    } as unknown as KineoProductServing;
-    const runtime = {
-      usesDevelopmentServices: false,
-      signInProviders: { apple: false, google: false },
-      resumePendingDeletion: async () => ({ ok: true, value: undefined }),
-      resumePendingLogout: async () => ({ ok: true, value: { kind: 'none' } }),
-      auth: {
-        restoreSession: async () => ({ ok: true, value: { kind: 'signedOut' } }),
-      },
-    } as unknown as KineoAccountRuntime;
-    const view = await render(<KineoAccountEntry runtime={runtime} service={service}
-      createAuthorizedService={async () => ({ ok: true, value: service })}
-      onStoreRestartRequired={() => undefined} />);
-
-    expect(await view.findByRole('header', { name: 'Sign in' })).toBeTruthy();
-    expect(view.getByLabelText('Email address')).toBeTruthy();
-    expect(view.getByLabelText('Password')).toBeTruthy();
-    expect(view.queryByRole('button', { name: 'Continue with Google' })).toBeNull();
-    expect(view.queryByRole('button', { name: 'All sign-in options' })).toBeNull();
-    await fireEvent.press(view.getByRole('button', { name: 'Forgot password?' }));
-    expect(view.getByRole('button', { name: 'Back to sign in' })).toBeTruthy();
   });
 
   it('finishes expired logout through explicit isolated sign-in without hydrating history', async () => {
@@ -334,21 +301,39 @@ describe('KineoAccountEntry', () => {
       />,
     );
 
-    expect(await view.findByText('A routine shaped around how you feel now.')).toBeTruthy();
+    expect(await view.findByText('Make room for how you feel today.')).toBeTruthy();
     expect(view.queryByText('WELCOME TO KINEO')).toBeNull();
 
-    await fireEvent.press(view.getByText('Get started'));
-    expect(view.getByText('Are you 18 or older?')).toBeTruthy();
+    await fireEvent.press(view.getByText('Find your starting point'));
+    expect(view.getByRole('button', {name:'Continue',disabled:true})).toBeTruthy();
 
-    await fireEvent.press(view.getByText('Yes, I’m 18 or older'));
-    expect(await view.findByText('Your Kineo account')).toBeTruthy();
-
-    await fireEvent.press(view.getByText('Continue with test account'));
-    expect(await view.findByText('Review before continuing')).toBeTruthy();
-    expect(view.getByRole('button', { name: 'Read prototype Terms of Service' })).toBeTruthy();
-
-    await fireEvent.press(view.getByRole('checkbox'));
-    await fireEvent.press(view.getByText('Accept and continue'));
+    await fireEvent.press(view.getByRole('radio', { name: 'Yes, I’m 18 or older' }));
+    await fireEvent.press(view.getByRole('button', {name:'Continue'}));
+    expect(await view.findByRole('header', {name:'Keep your history with you.'})).toBeTruthy();
+    const accept = jest.spyOn(session, 'acceptCurrentLegalDocuments');
+    await fireEvent.press(view.getByRole('button', {name:'Continue with Apple'}));
+    await waitFor(() => expect(accept).toHaveBeenCalledWith('en-US', bootstrap));
+    expect(view.queryByText('Review before continuing')).toBeNull();
+    expect(view.queryByRole('checkbox')).toBeNull();
     await waitFor(() => expect(view.getByText('PRODUCT READY')).toBeTruthy());
   });
+});
+
+it('keeps production legal acceptance explicit in the v1.1 document flow', async () => {
+  const service={loadStartState:async()=>({ok:true,value:{kind:'ready'}})} as unknown as KineoProductServing;
+  const accept=jest.fn(async () => ({ok:true as const,value:bootstrap}));
+  const session={bootstrap:async()=>({ok:true,value:bootstrap}),hasCurrentLegalAcceptances:()=>false,acceptCurrentLegalDocuments:accept} as unknown as KineoAccountSession;
+  const runtime={usesDevelopmentServices:false,signInProviders:{apple:true},
+    resumePendingDeletion:async()=>({ok:true,value:undefined}),resumePendingLogout:async()=>({ok:true,value:{kind:'none'}}),
+    auth:{restoreSession:async()=>({ok:true,value:{kind:'signedOut'}}),signInWithApple:async()=>({ok:true,value:{kind:'authenticated',accountId,provider:'apple'}})},
+    connect:async()=>({ok:true,value:session})} as unknown as KineoAccountRuntime;
+  const authorized=jest.fn<Parameters<typeof KineoAccountEntry>[0]['createAuthorizedService']>().mockResolvedValue({ok:true,value:service});
+  const view=await render(<KineoAccountEntry runtime={runtime} service={service} createAuthorizedService={authorized} onStoreRestartRequired={()=>undefined} />);
+  await fireEvent.press(await view.findByRole('button',{name:'Continue with Apple'}));
+  expect(authorized).not.toHaveBeenCalled();expect(accept).not.toHaveBeenCalled();
+  expect(view.getByRole('header',{name:'Your information. Your choices.'})).toBeTruthy();
+  expect(view.queryByText('Review before continuing')).toBeNull();expect(view.queryByRole('checkbox')).toBeNull();
+  await fireEvent.press(view.getByRole('button',{name:'Agree and continue'}));
+  expect(accept).toHaveBeenCalledWith('en-US',bootstrap);
+  expect(await view.findByText('PRODUCT READY')).toBeTruthy();
 });

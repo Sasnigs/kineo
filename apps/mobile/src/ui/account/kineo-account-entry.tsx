@@ -1,20 +1,13 @@
-import * as AppleAuthentication from 'expo-apple-authentication';
 import { useURL } from 'expo-linking';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { KineoAccountSession } from '../../application/account/kineo-account-session';
 import type { LogoutRecoveryState } from '../../application/account/kineo-logout-workflow';
@@ -25,12 +18,16 @@ import type {
   AuthState,
   ReauthenticationGrant,
 } from '../../core/account/auth-module';
-import type { PrivacyResult } from '../../core/account/account-privacy-module';
+import type { PrivacyResult, PersonalDataExport } from '../../core/account/account-privacy-module';
 import type { ProductResult } from '../../core/product/product-flow';
 import type { BootstrapState } from '../../core/account/sync-module';
 import type { KineoAccountRuntime } from '../../infrastructure/account/kineo-account-runtime';
-import { colors, layout, radius, spacing, typography } from '../theme/tokens';
+import { colors, layout, spacing, typography, v11Layout, v11Typography, v11Canvas } from '../theme/tokens';
 import { KineoProductApp } from '../product/kineo-product-app';
+import { V11BrandMark, V11WelcomeArtwork, V11PageHeader, V11PrimaryButton,
+  V11SecondaryButton, V11InlineTextAction, V11NoticeCard, V11Emblem, V11Shell, V11ListRow } from '../primitives/kineo-v11-primitives';
+import { V11Question, V11Topline } from '../primitives/kineo-v11-canvas-parts';
+import { createPrivateExportDraft } from './private-export-draft';
 import { PrototypeLegalDocuments } from './prototype-legal-documents';
 
 type EntryState =
@@ -55,36 +52,8 @@ type EntryState =
     }>
   | Readonly<{ kind: 'error'; message: string; retry: () => void }>;
 
-type AuthMode = 'options' | 'emailSignIn' | 'emailSignUp' | 'reset';
+type AuthMode = 'options' | 'emailSignIn' | 'emailSignUp' | 'reset' | 'privacy' | 'resetSent' | 'policies';
 
-const accessibilityAuthLayoutFontScale = 2;
-
-const authPresentation: Record<AuthMode, Readonly<{
-  eyebrow: string;
-  title: string;
-  subtitle: string;
-}>> = {
-  options: {
-    eyebrow: 'YOUR KINEO ACCOUNT',
-    title: 'Your Kineo account',
-    subtitle: 'Keep your check-ins and routines together.',
-  },
-  emailSignIn: {
-    eyebrow: 'WELCOME BACK',
-    title: 'Sign in',
-    subtitle: 'Pick up where you left off.',
-  },
-  emailSignUp: {
-    eyebrow: 'GETTING STARTED',
-    title: 'Create an account',
-    subtitle: 'Keep your progress across devices.',
-  },
-  reset: {
-    eyebrow: 'ACCOUNT RECOVERY',
-    title: 'Reset password',
-    subtitle: 'We’ll email a reset link if your account exists.',
-  },
-};
 
 type Props = Readonly<{
   service: KineoProductServing;
@@ -111,20 +80,18 @@ export function KineoAccountEntry({
   createAuthorizedService,
   onStoreRestartRequired,
 }: Props) {
-  const hasAlternativeSignIn = runtime.usesDevelopmentServices ||
-    runtime.signInProviders?.apple === true || runtime.signInProviders?.google === true;
   const [state, setState] = useState<EntryState>({
     kind: 'loading',
     message: accountCopy.loading,
   });
+  const preparedExport=useRef(createPrivateExportDraft<PersonalDataExport>());
+  const exportAccountId=state.kind==='ready'?state.session.accountId:undefined;
+  useEffect(()=>{const draft=preparedExport.current;if(state.kind!=='ready')draft.discard();return()=>{draft.discard();};},[state.kind,exportAccountId]);
   const [busy, setBusy] = useState(false);
-  const [authMode, setAuthMode] = useState<AuthMode>(
-    hasAlternativeSignIn ? 'options' : 'emailSignIn',
-  );
+  const [authMode, setAuthMode] = useState<AuthMode>('options');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
-  const [legalAccepted, setLegalAccepted] = useState(false);
   const [notice, setNotice] = useState<string>();
   const incomingUrl = useURL();
 
@@ -216,6 +183,15 @@ export function KineoAccountEntry({
       return;
     }
     if (connected.value.hasCurrentLegalAcceptances(bootstrap.value)) {
+      await enterProduct(connected.value, false);
+      return;
+    }
+    if (runtime.usesDevelopmentServices) {
+      const accepted = await connected.value.acceptCurrentLegalDocuments('en-US', bootstrap.value);
+      if (!accepted.ok) {
+        setState({ kind: 'error', message: accountCopy.genericError, retry: onStoreRestartRequired });
+        return;
+      }
       await enterProduct(connected.value, false);
       return;
     }
@@ -357,6 +333,7 @@ export function KineoAccountEntry({
         )}
         <KineoProductApp
           service={state.productService}
+          onBackToAccount={() => { showAuthMode('options'); setState({ kind: 'authentication' }); }}
           onStoreRestartRequired={onStoreRestartRequired}
           accountActions={{
             provider: state.session.provider,
@@ -368,6 +345,26 @@ export function KineoAccountEntry({
                 await state.session.privacy.resetHistory(grant),
               ),
             ),
+            prepareExport: (password) => {
+              const ticket=preparedExport.current.begin();
+              return withReauthentication(runtime,state.session,password,async grant=>{
+                if(!preparedExport.current.isCurrent(ticket))return {ok:false,error:{code:'invalidState'}};
+                const prepared=await state.session.privacy.requestExport(grant);
+                if(!prepared.ok)return privacyToProduct(prepared);
+                if(!preparedExport.current.isCurrent(ticket)||prepared.value.kind!=='ready')return {ok:false,error:{code:'accountUnavailable'}};
+                const downloaded=await state.session.privacy.downloadExport(prepared.value);
+                if(!downloaded.ok)return privacyToProduct(downloaded);
+                return preparedExport.current.retain(ticket,downloaded.value)?{ok:true,value:undefined}:{ok:false,error:{code:'invalidState'}};
+              });
+            },
+            shareExport: async()=>{
+              const data=preparedExport.current.current();
+              if(!data)return {ok:false,error:{code:'invalidState'}};
+              const result=await runtime.exportSharer.share(data);
+              if(result.ok)preparedExport.current.discard();
+              return privacyToProduct(result);
+            },
+            discardExport:()=>{preparedExport.current.discard();},
             exportData: (password) => withReauthentication(
               runtime,
               state.session,
@@ -441,7 +438,7 @@ export function KineoAccountEntry({
   if (state.kind === 'loading') {
     return (
       <AccountShell>
-        <View style={styles.centered}>
+        <View accessibilityLiveRegion="polite" style={styles.centered}>
           <ActivityIndicator color={colors.accentDark} />
           <Text style={styles.body}>{state.message}</Text>
         </View>
@@ -451,7 +448,7 @@ export function KineoAccountEntry({
 
   if (state.kind === 'error') {
     return (
-      <AccountShell eyebrow="LET’S TRY THAT AGAIN" title="Your data stayed safe.">
+      <AccountShell eyebrow="Let’s try that again" title="Your data stayed safe.">
         <Text style={styles.body}>{state.message}</Text>
         <ActionButton label="Retry" onPress={state.retry} />
       </AccountShell>
@@ -477,11 +474,13 @@ export function KineoAccountEntry({
       }
     };
     return (
-      <AccountShell eyebrow="SECURE SIGN-OUT" title={canSignIn ? 'Sign in to finish signing out' : 'Finish signing out'}>
+      <AccountShell eyebrow="Secure sign-out" title={canSignIn ? 'Sign in to finish signing out' : 'Finish signing out'}>
         <Text style={styles.body}>{logoutRecoveryMessage(state.recovery)}</Text>
         {canSignIn ? <>
+          <Text style={styles.authFieldLabel}>Recovery email</Text>
           <TextInput accessibilityLabel="Recovery email" placeholder="Email" autoCapitalize="none"
             autoComplete="email" keyboardType="email-address" style={styles.input} value={email} onChangeText={setEmail} />
+          <Text style={styles.authFieldLabel}>Recovery password</Text>
           <TextInput accessibilityLabel="Recovery password" placeholder="Password" secureTextEntry
             autoComplete="current-password" style={styles.input} value={password} onChangeText={setPassword} />
           <ActionButton label="Use email to finish signing out" disabled={busy}
@@ -498,67 +497,43 @@ export function KineoAccountEntry({
   }
 
   if (state.kind === 'promise') {
-    return (
-      <AccountShell eyebrow="MOVE WITH TODAY IN MIND" title="A routine shaped around how you feel now.">
-        <View style={styles.promiseCard}>
-          <Text style={styles.promiseText}>
-            A brief check-in helps Kineo prepare a focused neck and back movement routine.
-          </Text>
-          <View style={styles.trustRow}>
-            <Text style={styles.trustText}>Private account sync</Text>
-            <Text style={styles.trustText}>No routine browsing</Text>
-          </View>
-        </View>
-        <Text style={styles.caption}>
-          General wellness guidance for adults—not diagnosis or medical care.
-        </Text>
-        <ActionButton label="Get started" onPress={() => setState({ kind: 'age' })} />
-      </AccountShell>
-    );
+    return <AccountShell>
+      <V11BrandMark context="Your daily movement" />
+      <V11PageHeader title="Make room for how you feel today."
+        lead="A short check-in. A considered plan. The freedom to take it gently." />
+      <V11WelcomeArtwork />
+      <ActionButton label="Find your starting point" onPress={() => setState({ kind: 'age' })} />
+      <TextButton label="I already have an account" onPress={() => { showAuthMode('emailSignIn'); setState({ kind: 'authentication' }); }} />
+      <Text style={[styles.caption, styles.centerText]}>For adults · General wellness, not medical care</Text>
+    </AccountShell>;
   }
-
   if (state.kind === 'age') {
-    return (
-      <AccountShell eyebrow="BEFORE WE BEGIN" title="Are you 18 or older?">
-        <Text style={styles.body}>Kineo is currently designed for adults.</Text>
-        <ActionButton
-          label="Yes, I’m 18 or older"
-          disabled={busy}
-          onPress={() => void (async () => {
-            setBusy(true);
-            const result = await service.confirmAdultEligibility();
-            setBusy(false);
-            if (result.ok) {
-              await restoreAuthentication();
-            } else {
-              setNotice(accountCopy.genericError);
-            }
-          })()}
-        />
-        <SecondaryButton
-          label="No"
-          onPress={() => setState({ kind: 'ageUnavailable' })}
-        />
-        {notice === undefined ? null : <Notice message={notice} />}
-      </AccountShell>
-    );
+    return <AccountShell><V11Topline label="Before we begin" onBack={() => setState({ kind: 'promise' })} />
+      <V11Question editorial context="A quick check" title={'Are you 18\nor older?'} helper="Kineo is currently available to adults."
+        options={[{value:'yes',title:'Yes, I’m 18 or older',detail:'Continue to account setup'},
+          {value:'no',title:'No, I’m under 18',detail:'Kineo is currently for adults only'}]}
+        disabled={busy} onContinue={answer => {
+          if (answer === 'no') { setState({ kind: 'ageUnavailable' }); return; }
+          void (async () => { setBusy(true); const result = await service.confirmAdultEligibility(); setBusy(false);
+            if (result.ok) { showAuthMode('options'); await restoreAuthentication(); }
+            else setNotice(accountCopy.genericError);
+          })();
+        }} />
+      <Text style={styles.caption}>We only need confirmation—not your date of birth.</Text>
+      {notice ? <Notice message={notice} /> : null}
+    </AccountShell>;
   }
-
   if (state.kind === 'ageUnavailable') {
-    return (
-      <AccountShell eyebrow="NOT AVAILABLE YET" title="Kineo is for adults right now.">
-        <Text style={styles.body}>We can’t continue with setup.</Text>
-        <SecondaryButton
-          label="I answered by mistake"
-          onPress={() => setState({ kind: 'age' })}
-        />
-      </AccountShell>
-    );
+    return <AccountShell><V11Topline onBack={() => setState({ kind: 'age' })} /><V11Emblem kind="leaf" />
+      <V11PageHeader kind="notice" context="Not available yet" title={'Kineo is for\nadults right now.'} lead="We can’t continue with setup." />
+      <SecondaryButton label="I answered by mistake" onPress={() => setState({ kind: 'age' })} />
+      <Text style={styles.caption}>You haven’t created an account.</Text>
+    </AccountShell>;
   }
 
   if (state.kind === 'verification') {
     return (
-      <AccountShell eyebrow="CHECK YOUR EMAIL" title="Verify your account">
+      <AccountShell eyebrow="Check your email" title="Verify your account">
         <Text style={styles.body}>
           Open the private verification link sent to {state.email}, then return to Kineo.
         </Text>
@@ -580,11 +555,13 @@ export function KineoAccountEntry({
     const passwordsMatch = password === passwordConfirmation;
     const passwordIsLongEnough = [...password].length >= minimumPasswordCharacterCount;
     return (
-      <AccountShell eyebrow="SECURE RECOVERY" title="Choose a new password">
+      <AccountShell eyebrow="Secure recovery" title="Choose a new password">
         <Text style={styles.body}>
           Use at least {minimumPasswordCharacterCount} characters. Passphrases and password managers work well.
         </Text>
+        <Text style={styles.authFieldLabel}>New password</Text>
         <TextInput
+          accessibilityLabel="New password"
           autoCapitalize="none"
           autoComplete="new-password"
           onChangeText={setPassword}
@@ -594,7 +571,9 @@ export function KineoAccountEntry({
           style={styles.input}
           value={password}
         />
+        <Text style={styles.authFieldLabel}>Confirm new password</Text>
         <TextInput
+          accessibilityLabel="Confirm new password"
           autoCapitalize="none"
           autoComplete="new-password"
           onChangeText={setPasswordConfirmation}
@@ -633,341 +612,118 @@ export function KineoAccountEntry({
   }
 
   if (state.kind === 'legal') {
-    return (
-      <AccountShell eyebrow="YOUR ACCOUNT" title="Review before continuing">
-        <Text style={styles.body}>
-          Kineo stores your wellness check-ins and routine history so they can follow your account across devices.
-        </Text>
-        <PrototypeLegalDocuments />
-        <Pressable
-          accessibilityRole="checkbox"
-          accessibilityState={{ checked: legalAccepted }}
-          onPress={() => setLegalAccepted((value) => !value)}
-          style={styles.checkboxRow}
-        >
-          <View style={[styles.checkbox, legalAccepted && styles.checkboxSelected]}>
-            <Text style={styles.checkmark}>{legalAccepted ? '✓' : ''}</Text>
-          </View>
-          <Text style={styles.checkboxLabel}>
-            I accept the Terms of Service and Privacy Policy for this internal prototype.
-          </Text>
-        </Pressable>
-        <ActionButton
-          label="Accept and continue"
-          disabled={!legalAccepted || busy}
-          onPress={() => void (async () => {
-            setBusy(true);
-            const result = await state.session.acceptCurrentLegalDocuments(
-              'en-US',
-              state.bootstrap,
-            );
-            setBusy(false);
-            if (!result.ok) {
-              setNotice(accountCopy.genericError);
-              return;
-            }
-            await enterProduct(state.session, false);
-          })()}
-        />
-        {notice === undefined ? null : <Notice message={notice} />}
-      </AccountShell>
-    );
+    return <AccountShell>
+      <V11Topline onBack={() => { showAuthMode('options'); setState({kind:'authentication'}); }} />
+      <V11PageHeader context="Before you decide" title={'Your information.\nYour choices.'}
+        lead="Read the Terms and Privacy Notice before continuing." />
+      <PrototypeLegalDocuments />
+      <Text style={styles.caption}>By continuing, you agree to the Terms and acknowledge the Privacy Notice.</Text>
+      <ActionButton label="Agree and continue" disabled={busy} onPress={() => void (async () => {
+        setBusy(true); setNotice(undefined);
+        const result = await state.session.acceptCurrentLegalDocuments('en-US', state.bootstrap);
+        setBusy(false);
+        if (!result.ok) { setNotice(accountCopy.genericError); return; }
+        await enterProduct(state.session, false);
+      })()} />
+      {notice ? <Notice message={notice} /> : null}
+    </AccountShell>;
   }
 
-  const presentation = authPresentation[authMode];
-  return (
-    <AccountShell
-      eyebrow={presentation.eyebrow}
-      title={presentation.title}
-      subtitle={presentation.subtitle}
-      authLayout
-    >
-      {runtime.usesDevelopmentServices ? (
-        <View style={styles.developmentBadge}>
-          <Text style={styles.developmentText}>INTERNAL TEST ACCOUNT</Text>
-        </View>
-      ) : null}
-      {authMode === 'options' ? (
-        <View style={styles.authPanel}>
-          {runtime.usesDevelopmentServices ? (
-            <ActionButton
-              label="Continue with test account"
-              disabled={busy}
-              onPress={() => void runAuth(() => runtime.auth.signInWithApple())}
-            />
-          ) : runtime.signInProviders?.apple ? (
-            <AppleAuthentication.AppleAuthenticationButton
-              buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-              buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
-              cornerRadius={radius.button}
-              onPress={() => void runAuth(() => runtime.auth.signInWithApple())}
-              style={styles.appleButton}
-            />
-          ) : null}
-          {runtime.signInProviders?.google ? (
-            <SecondaryButton
-              label="Continue with Google"
-              disabled={busy}
-              onPress={() => void runAuth(() => runtime.auth.signInWithGoogle())}
-            />
-          ) : null}
-          <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.authDivider}>
-            <View style={styles.authDividerLine} />
-            <Text style={styles.authDividerText}>OR</Text>
-            <View style={styles.authDividerLine} />
-          </View>
-          <SecondaryButton
-            label="Continue with email"
-            disabled={busy}
-            onPress={() => showAuthMode('emailSignIn')}
-          />
-        </View>
-      ) : (
-        <>
-          <View style={styles.authPanel}>
-            <View style={styles.authField}>
-              <Text style={styles.authFieldLabel}>Email address</Text>
-              <TextInput
-                accessibilityLabel="Email address"
-                autoCapitalize="none"
-                autoComplete="email"
-                autoCorrect={false}
-                keyboardType="email-address"
-                onChangeText={setEmail}
-                placeholder="you@example.com"
-                placeholderTextColor={colors.secondaryInk}
-                style={styles.input}
-                value={email}
-              />
-            </View>
-            {authMode !== 'reset' ? (
-              <View style={styles.authField}>
-                <Text style={styles.authFieldLabel}>Password</Text>
-                <TextInput
-                  accessibilityLabel="Password"
-                  autoCapitalize="none"
-                  autoComplete={authMode === 'emailSignUp' ? 'new-password' : 'current-password'}
-                  onChangeText={setPassword}
-                  placeholder="Enter your password"
-                  placeholderTextColor={colors.secondaryInk}
-                  secureTextEntry
-                  style={styles.input}
-                  value={password}
-                />
-              </View>
-            ) : null}
-            {authMode === 'emailSignIn' ? (
-              <TextButton
-                label="Forgot password?"
-                alignEnd
-                disabled={busy}
-                onPress={() => showAuthMode('reset')}
-              />
-            ) : null}
-            {authMode === 'emailSignUp' ? (
-              <Text style={styles.caption}>
-                Use at least {minimumPasswordCharacterCount} characters. Passphrases and password managers work well.
-              </Text>
-            ) : null}
-            <ActionButton
-              disabled={busy}
-              label={authMode === 'emailSignUp'
-                ? 'Create account'
-                : authMode === 'reset'
-                  ? 'Send reset link'
-                  : 'Sign in'}
-              onPress={() => void (authMode === 'reset'
-                ? runSimpleAuthAction(
-                    () => runtime.auth.requestPasswordReset(email),
-                    setBusy,
-                    setNotice,
-                    'If that account exists, a reset link is on its way.',
-                  )
-                : runAuth(() => authMode === 'emailSignUp'
-                    ? runtime.auth.signUpWithEmail({ email, password })
-                    : runtime.auth.signInWithEmail({ email, password })))}
-            />
-          </View>
-          {authMode === 'emailSignIn' || authMode === 'emailSignUp' ? (
-            <InlineAuthAction
-              prompt={authMode === 'emailSignIn' ? 'New to Kineo?' : 'Already have an account?'}
-              label={authMode === 'emailSignIn' ? 'Create an account' : 'Sign in'}
-              disabled={busy}
-              onPress={() => showAuthMode(authMode === 'emailSignIn' ? 'emailSignUp' : 'emailSignIn')}
-            />
-          ) : null}
-          {authMode === 'reset' ? (
-            <TextButton
-              label="Back to sign in"
-              disabled={busy}
-              onPress={() => showAuthMode('emailSignIn')}
-            />
-          ) : hasAlternativeSignIn ? (
-            <TextButton
-              label="All sign-in options"
-              disabled={busy}
-              onPress={() => showAuthMode('options')}
-            />
-          ) : null}
-        </>
-      )}
-      {notice === undefined ? null : <Notice message={notice} />}
-      {authMode === 'options' ? (
-        <Text style={styles.authPrivacyNote}>
-          Your wellness history is private and is not included in email messages.
-        </Text>
-      ) : null}
-    </AccountShell>
-  );
+  const open = (mode: AuthMode) => showAuthMode(mode);
+  const back = () => authMode === 'options' ? setState({ kind: 'age' }) : open(authMode === 'emailSignUp' || authMode === 'privacy' ? 'options' : 'emailSignIn');
+  const social = <>
+    <SecondaryButton label="Continue with Apple" icon="logo-apple" disabled={busy || (!runtime.usesDevelopmentServices && !runtime.signInProviders?.apple)}
+      onPress={() => void runAuth(() => runtime.auth.signInWithApple())} />
+    <SecondaryButton label="Continue with Google" disabled={busy || (!runtime.usesDevelopmentServices && !runtime.signInProviders?.google)}
+      onPress={() => void runAuth(() => runtime.auth.signInWithGoogle())} />
+  </>;
+  if (authMode === 'policies') return <AccountShell><V11Topline onBack={() => open('privacy')} />
+    <V11PageHeader context="Full policies" title="Terms & Privacy" /><PrototypeLegalDocuments />
+    <ActionButton label="Back to privacy overview" onPress={() => open('privacy')} />
+  </AccountShell>;
+  if (authMode === 'privacy') return <AccountShell><V11Topline onBack={back} />
+    <V11PageHeader context="Before you decide" title={'Your information.\nYour choices.'}
+      />
+    <Text style={styles.body}>A plain-language overview. <Text accessibilityRole="link" onPress={() => open('policies')} style={styles.policyLink}>Full policies remain available.</Text></Text>
+    <V11ListRow label="What you share" icon="create-outline" subtitle="Check-ins, routine activity, and optional feedback" />
+    <V11ListRow label="Why it is saved" icon="archive-outline" subtitle="To maintain your history and preferences" />
+    <V11ListRow label="Your controls" icon="options-outline" subtitle="Export, reset history, or delete your data" />
+    <V11NoticeCard tone="caution" title="A safety exception" message="Resetting history does not clear a current safety restriction." />
+    <ActionButton label="Back to account options" onPress={() => open('options')} />
+    <Text style={styles.caption}>Policy copy must be matched to the production data practices before release.</Text>
+  </AccountShell>;
+  if (authMode === 'resetSent') return <AccountShell><V11Topline onBack={() => open('emailSignIn')} /><V11Emblem kind="mail" />
+    <V11PageHeader context="Check your inbox" title={'Your next step\nis in your email.'}
+      lead="If an account exists for that address, we’ll send instructions to reset your password." />
+    <ActionButton label="Back to sign in" onPress={() => open('emailSignIn')} />
+    <TextButton label="Use a different email" onPress={() => open('reset')} />
+  </AccountShell>;
+  const signingUp = authMode === 'emailSignUp';
+  const resetting = authMode === 'reset';
+  const signInError = authMode === 'emailSignIn' && notice !== undefined;
+  return <AccountShell authLayout>
+    <V11Topline onBack={authMode === 'emailSignIn' ? () => { if(signInError) open('emailSignIn'); else setState({kind:'promise'}); } : back} />
+    <V11PageHeader kind={signInError ? 'notice' : 'editorial'}
+      context={authMode === 'options' ? 'Your space' : signingUp ? 'Create account' : resetting ? 'Account access' : 'Welcome back'}
+      title={authMode === 'options' ? 'Keep your\nhistory with you.' : signingUp ? 'A private place\nto begin.' : resetting ? 'Forgot your\npassword?' : signInError ? 'Let’s try that\nagain.' : 'Pick up\nwhere you are.'}
+      lead={authMode === 'options' ? 'An account saves your check-ins, routines, and preferences across signed-in devices.' : resetting ? 'Enter your email to request a reset link.' : undefined} />
+    {authMode === 'options' ? <>{social}<View style={styles.authDividerLine} />
+      <ActionButton label="Continue with email" icon="mail-outline" onPress={() => open('emailSignUp')} />
+      <Text style={styles.caption}>By continuing, you agree to the Terms and acknowledge the Privacy Notice.</Text>
+      <V11ListRow label="Terms & Privacy" icon="shield-checkmark-outline" subtitle="Read before you continue" onPress={() => open('privacy')} />
+      <TextButton label="Already a member? Sign in" onPress={() => open('emailSignIn')} />
+    </> : <>
+      <View style={styles.authField}><Text style={styles.authFieldLabel}>Email</Text>
+        <TextInput accessibilityLabel="Email" placeholder="you@example.com" autoComplete="email" keyboardType="email-address"
+          autoCapitalize="none" autoCorrect={false} style={styles.input} value={email} onChangeText={setEmail} />
+      </View>
+      {!resetting ? <View style={styles.authField}><Text style={styles.authFieldLabel}>Password</Text>
+        <TextInput accessibilityLabel="Password" placeholder={signingUp ? 'At least 15 characters' : 'Your password'}
+          autoComplete={signingUp ? 'new-password' : 'current-password'} secureTextEntry autoCapitalize="none"
+          style={styles.input} value={password} onChangeText={setPassword} />
+      </View> : null}
+      {signingUp ? <View style={styles.authField}><Text style={styles.authFieldLabel}>Confirm password</Text>
+        <TextInput accessibilityLabel="Confirm password" placeholder="Enter it again" autoComplete="new-password" secureTextEntry
+          style={styles.input} value={passwordConfirmation} onChangeText={setPasswordConfirmation} />
+      </View> : null}
+      {notice ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.authError}>{notice}</Text> : null}
+      <ActionButton label={resetting ? 'Send reset link' : signingUp ? 'Create account' : signInError ? 'Try again' : 'Sign in'}
+        disabled={busy || (signingUp && (password !== passwordConfirmation || [...password].length < minimumPasswordCharacterCount))}
+        onPress={() => void (async () => {
+          if (resetting) { setBusy(true); setNotice(undefined); const result = await runtime.auth.requestPasswordReset(email); setBusy(false);
+            if (result.ok) open('resetSent'); else setNotice(authErrorMessage(result.error));
+          } else await runAuth(() => signingUp ? runtime.auth.signUpWithEmail({email,password}) : runtime.auth.signInWithEmail({email,password}));
+        })()} />
+      {signingUp ? <><Text style={styles.caption}>Your password is never used to personalize your routine.</Text>
+        <TextButton label="Back to sign-in options" onPress={() => open('options')} /></>
+        : resetting ? <TextButton label="Back to sign in" onPress={() => open('emailSignIn')} />
+        : <><TextButton label={signInError ? 'Reset password' : 'Forgot password?'} onPress={() => open('reset')} />
+          <View style={styles.authDividerLine} />{social}</>}
+    </>}
+    {authMode === 'options' && notice ? <Notice message={notice} /> : null}
+  </AccountShell>;
 }
 
-function InlineAuthAction({
-  prompt,
-  label,
-  onPress,
-  disabled = false,
-}: Readonly<{ prompt: string; label: string; onPress: () => void; disabled?: boolean }>) {
-  return (
-    <Pressable
-      accessibilityLabel={label}
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [styles.authInlineAction, disabled && styles.disabled, pressed && styles.pressed]}
-    >
-      <Text style={styles.authInlinePrompt}>{prompt} </Text>
-      <Text style={styles.authInlineLabel}>{label}</Text>
-    </Pressable>
-  );
+function TextButton({ label, onPress, disabled = false, alignEnd = false }:
+  Readonly<{ label: string; onPress: () => void; disabled?: boolean; alignEnd?: boolean }>) {
+  return <V11InlineTextAction label={label} onPress={onPress} disabled={disabled}
+    style={alignEnd ? styles.textButtonEnd : undefined} />;
 }
 
-function TextButton({
-  label,
-  onPress,
-  disabled = false,
-  alignEnd = false,
-}: Readonly<{ label: string; onPress: () => void; disabled?: boolean; alignEnd?: boolean }>) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.textButton,
-        alignEnd && styles.textButtonEnd,
-        disabled && styles.disabled,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text style={styles.textButtonLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function AccountShell({
-  eyebrow,
-  title,
-  subtitle,
-  authLayout = false,
-  children,
-}: Readonly<{
-  eyebrow?: string;
-  title?: string;
-  subtitle?: string;
-  authLayout?: boolean;
-  children: React.ReactNode;
+function AccountShell({ eyebrow, title, subtitle, footer, children }: Readonly<{
+  eyebrow?: string; title?: string; subtitle?: string; authLayout?: boolean;
+  footer?: React.ReactNode; children: React.ReactNode;
 }>) {
-  const { fontScale } = useWindowDimensions();
-  const simplifyAuthLayout = authLayout && fontScale >= accessibilityAuthLayoutFontScale;
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.flex}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {simplifyAuthLayout ? null : (
-            <View style={styles.brandRow}>
-              <View style={styles.brandDot} />
-              <Text style={styles.brand}>Kineo</Text>
-            </View>
-          )}
-          <View style={[styles.content, authLayout && styles.authContent]}>
-            {authLayout ? (
-              <View style={styles.authHeading}>
-                {eyebrow === undefined || simplifyAuthLayout ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
-                {title === undefined ? null : (
-                  <Text accessibilityRole="header" style={styles.title}>{title}</Text>
-                )}
-                {subtitle === undefined ? null : <Text style={styles.authSubtitle}>{subtitle}</Text>}
-              </View>
-            ) : (
-              <>
-                {eyebrow === undefined ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
-                {title === undefined ? null : (
-                  <Text accessibilityRole="header" style={styles.title}>{title}</Text>
-                )}
-              </>
-            )}
-            {children}
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
-  );
+  return <V11Shell progressiveFade={false}>
+    {title ? <V11PageHeader context={eyebrow} title={title} lead={subtitle} /> : null}
+    {children}{footer}
+  </V11Shell>;
 }
 
-function ActionButton({
-  label,
-  onPress,
-  disabled = false,
-}: Readonly<{ label: string; onPress: () => void; disabled?: boolean }>) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.actionButton,
-        disabled && styles.disabled,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text style={styles.actionLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function SecondaryButton({
-  label,
-  onPress,
-  disabled = false,
-}: Readonly<{ label: string; onPress: () => void; disabled?: boolean }>) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.secondaryButton,
-        disabled && styles.disabled,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text style={styles.secondaryLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
+const ActionButton = V11PrimaryButton;
+const SecondaryButton = V11SecondaryButton;
 function Notice({ message }: Readonly<{ message: string }>) {
-  return <Text accessibilityRole="alert" style={styles.notice}>{message}</Text>;
+  return <V11NoticeCard message={message} role="alert" />;
 }
 
 async function runSimpleAuthAction(
@@ -997,7 +753,7 @@ function authErrorMessage(error: AuthError): string {
     case 'verificationRequired':
       return 'Verify your email before signing in.';
     case 'invalidCredentials':
-      return 'The email or password could not be verified.';
+      return 'We couldn’t sign you in. Check your email and password.';
     case 'secureStorageUnavailable':
       return 'Secure storage is unavailable. Unlock this device and try again.';
     default:
@@ -1079,53 +835,10 @@ function isEmailVerificationUrl(value: string): boolean {
 }
 
 const styles = StyleSheet.create({
+  authError: { color: colors.danger, fontSize: v11Typography.bodySize, lineHeight: v11Typography.bodyLineHeight },
+  policyLink: { color: colors.accentDark, textDecorationLine: 'underline' },
+  centerText: { textAlign: 'center' },
   flex: { flex: 1 },
-  safeArea: { flex: 1, backgroundColor: colors.canvas },
-  scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: spacing.screenHorizontal,
-    paddingVertical: spacing.screenVertical,
-  },
-  brandRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.compact },
-  brandDot: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.status,
-    height: spacing.standard,
-    width: spacing.standard,
-  },
-  brand: {
-    color: colors.ink,
-    fontSize: typography.subtitleSize,
-    fontWeight: typography.displayWeight,
-  },
-  content: {
-    alignSelf: 'center',
-    flex: 1,
-    gap: spacing.standard,
-    justifyContent: 'center',
-    maxWidth: layout.readableWidth,
-    paddingVertical: spacing.section,
-    width: '100%',
-  },
-  authContent: {
-    gap: spacing.roomy,
-    justifyContent: 'flex-start',
-    paddingTop: spacing.hero,
-  },
-  authHeading: { gap: spacing.small },
-  authSubtitle: {
-    color: colors.secondaryInk,
-    fontSize: typography.bodySize,
-    lineHeight: typography.bodyLineHeight,
-  },
-  authPanel: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-    borderWidth: layout.borderWidth,
-    gap: spacing.standard,
-    padding: spacing.roomy,
-  },
   authField: { gap: spacing.compact },
   authFieldLabel: {
     color: colors.ink,
@@ -1133,75 +846,12 @@ const styles = StyleSheet.create({
     fontWeight: typography.strongWeight,
     lineHeight: typography.detailLineHeight,
   },
-  authDivider: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.small,
-    paddingVertical: spacing.compact,
-  },
   authDividerLine: {
     backgroundColor: colors.border,
-    flex: 1,
     height: layout.borderWidth,
   },
-  authDividerText: {
-    color: colors.secondaryInk,
-    fontSize: typography.captionSize,
-    fontWeight: typography.strongWeight,
-  },
-  authInlineAction: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    minHeight: layout.controlMinimumHeight,
-  },
-  authInlinePrompt: {
-    color: colors.secondaryInk,
-    fontSize: typography.detailSize,
-    lineHeight: typography.detailLineHeight,
-  },
-  authInlineLabel: {
-    color: colors.accentDark,
-    fontSize: typography.detailSize,
-    fontWeight: typography.strongWeight,
-    lineHeight: typography.detailLineHeight,
-  },
-  textButton: {
-    alignItems: 'center',
-    alignSelf: 'center',
-    justifyContent: 'center',
-    minHeight: layout.controlMinimumHeight,
-    paddingHorizontal: spacing.compact,
-  },
   textButtonEnd: { alignSelf: 'flex-end' },
-  textButtonLabel: {
-    color: colors.accentDark,
-    fontSize: typography.detailSize,
-    fontWeight: typography.strongWeight,
-    lineHeight: typography.detailLineHeight,
-  },
-  authPrivacyNote: {
-    borderColor: colors.border,
-    borderTopWidth: layout.borderWidth,
-    color: colors.secondaryInk,
-    fontSize: typography.captionSize,
-    lineHeight: typography.captionLineHeight,
-    paddingTop: spacing.standard,
-  },
   centered: { alignItems: 'center', gap: spacing.standard },
-  eyebrow: {
-    color: colors.accentDark,
-    fontSize: typography.eyebrowSize,
-    fontWeight: typography.strongWeight,
-    letterSpacing: typography.eyebrowTracking,
-  },
-  title: {
-    color: colors.ink,
-    fontSize: typography.titleSize,
-    fontWeight: typography.displayWeight,
-    lineHeight: typography.titleLineHeight,
-  },
   body: {
     color: colors.secondaryInk,
     fontSize: typography.bodySize,
@@ -1212,114 +862,17 @@ const styles = StyleSheet.create({
     fontSize: typography.captionSize,
     lineHeight: typography.captionLineHeight,
   },
-  promiseCard: {
-    backgroundColor: colors.forest,
-    borderRadius: radius.hero,
-    gap: spacing.roomy,
-    padding: spacing.roomy,
-  },
-  promiseText: {
-    color: colors.onDark,
-    fontSize: typography.subtitleSize,
-    fontWeight: typography.strongWeight,
-    lineHeight: typography.subtitleLineHeight,
-  },
-  trustRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.compact },
-  trustText: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.status,
-    color: colors.forest,
-    fontSize: typography.captionSize,
-    fontWeight: typography.strongWeight,
-    overflow: 'hidden',
-    paddingHorizontal: spacing.small,
-    paddingVertical: spacing.compact,
-  },
-  actionButton: {
-    alignItems: 'center',
-    backgroundColor: colors.accentDeep,
-    borderRadius: radius.button,
-    justifyContent: 'center',
-    minHeight: layout.controlMinimumHeight,
-    paddingHorizontal: spacing.standard,
-  },
-  actionLabel: {
-    color: colors.inverseInk,
-    fontSize: typography.bodySize,
-    fontWeight: typography.buttonWeight,
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.button,
-    borderWidth: layout.borderWidth,
-    justifyContent: 'center',
-    minHeight: layout.controlMinimumHeight,
-    paddingHorizontal: spacing.standard,
-  },
-  secondaryLabel: {
-    color: colors.ink,
-    fontSize: typography.bodySize,
-    fontWeight: typography.buttonWeight,
-  },
   input: {
     backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.button,
-    borderWidth: layout.borderWidth,
+    borderRadius: v11Canvas.inputRadius,
+    borderWidth: 0,
+    shadowColor: colors.shadow, shadowOpacity: v11Layout.cardShadowOpacity,
+    shadowOffset: { width: 0, height: v11Layout.cardShadowOffsetY }, shadowRadius: v11Layout.cardShadowRadius,
     color: colors.ink,
-    fontSize: typography.bodySize,
+    fontSize: v11Typography.choiceSize,
     minHeight: layout.controlMinimumHeight,
+    paddingVertical: spacing.controlVertical,
     paddingHorizontal: spacing.standard,
-  },
-  appleButton: { height: layout.controlMinimumHeight, width: '100%' },
-  checkboxRow: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    gap: spacing.small,
-    paddingVertical: spacing.compact,
-  },
-  checkbox: {
-    alignItems: 'center',
-    borderColor: colors.border,
-    borderRadius: spacing.micro,
-    borderWidth: layout.selectedBorderWidth,
-    height: spacing.roomy,
-    justifyContent: 'center',
-    width: spacing.roomy,
-  },
-  checkboxSelected: { backgroundColor: colors.accentDeep, borderColor: colors.accentDeep },
-  checkmark: { color: colors.inverseInk, fontWeight: typography.strongWeight },
-  checkboxLabel: {
-    color: colors.ink,
-    flex: 1,
-    fontSize: typography.detailSize,
-    lineHeight: typography.detailLineHeight,
-  },
-  notice: {
-    backgroundColor: colors.accentSoft,
-    borderColor: colors.border,
-    borderRadius: radius.button,
-    borderWidth: layout.borderWidth,
-    color: colors.ink,
-    fontSize: typography.detailSize,
-    lineHeight: typography.detailLineHeight,
-    overflow: 'hidden',
-    padding: spacing.standard,
-  },
-  developmentBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.attentionSurface,
-    borderRadius: radius.status,
-    paddingHorizontal: spacing.small,
-    paddingVertical: spacing.micro,
-  },
-  developmentText: {
-    color: colors.attentionInk,
-    fontSize: typography.eyebrowSize,
-    fontWeight: typography.strongWeight,
-    letterSpacing: typography.eyebrowTracking,
   },
   offlineBanner: {
     backgroundColor: colors.attentionSurface,
@@ -1332,6 +885,4 @@ const styles = StyleSheet.create({
     fontWeight: typography.strongWeight,
     textAlign: 'center',
   },
-  disabled: { opacity: layout.disabledOpacity },
-  pressed: { opacity: layout.pressedOpacity },
 });
