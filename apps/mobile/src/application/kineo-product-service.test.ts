@@ -5,7 +5,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { KineoSqliteStore } from '../infrastructure/persistence/kineo-sqlite-store';
-import { migrateKineoDatabase } from '../infrastructure/persistence/kineo-schema';
+import { migrateKineoDatabase, kineoV1MigrationStatements } from '../infrastructure/persistence/kineo-schema';
 import { ProtectedKineoStore } from '../infrastructure/persistence/protected-kineo-store';
 import { NodeSqliteTestDatabase } from '../infrastructure/persistence/testing/node-sqlite-test-database';
 import { KineoProductService } from './kineo-product-service';
@@ -789,6 +789,16 @@ describe('Kineo product service check-in', () => {
       throw new Error('Plan fixture was not created.');
     }
 
+    // Projecting the sequence must not start a session or change authored timing/order.
+    const plan = checkedIn.value.plan;
+    expect(plan.sequence).toHaveLength(plan.itemCount);
+    expect(plan.sequence?.reduce((seconds, step) => seconds + step.estimatedSeconds, 0)).toBe(plan.nominalSeconds);
+    expect(Object.isFrozen(plan.sequence)).toBe(true);
+    const beforeStart = await service.loadStartState();
+    expect(beforeStart).toMatchObject({ ok: true, value: { kind: 'unfinishedPlan' } });
+    if (beforeStart.ok && beforeStart.value.kind === 'unfinishedPlan') {
+      expect(beforeStart.value.plan.sequence).toEqual(plan.sequence);
+    }
     let routine = await service.startRoutine(checkedIn.value.plan.decisionId);
     expect(routine).toMatchObject({
       ok: true,
@@ -801,6 +811,7 @@ describe('Kineo product service check-in', () => {
       },
     });
     if (!routine.ok) throw new Error('Routine fixture did not start.');
+    expect(routine.value.currentItem?.localizedTitle).toBe(plan.sequence?.[0]?.title);
     await expect(service.startRoutine(checkedIn.value.plan.decisionId)).resolves.toEqual(routine);
     const restored = await service.loadStartState();
     expect(restored).toMatchObject({
@@ -1303,4 +1314,77 @@ describe('Kineo product service check-in', () => {
     });
     await database.closeAsync();
   });
+});
+
+const v11WeeklyIntention = 4;
+const v11InvalidWeeklyIntention = 5;
+it('persists the v1.1 weekly intention through the existing profile store without advancing onboarding', async () => {
+  const { service, database } = await makeService();
+  await service.confirmAdultEligibility();
+  await service.savePrimaryArea('neck');
+  await service.saveSecondaryArea();
+  const checkpoint = await service.loadStartState();
+  await expect(service.saveWeeklyGoalDays(v11WeeklyIntention)).resolves.toEqual({ok:true,value:undefined});
+  const profile = await service.loadProfile();
+  expect(profile.ok && profile.value.profile.weeklyGoalDays).toBe(v11WeeklyIntention);
+  expect(await service.loadStartState()).toEqual(checkpoint);
+  await expect(service.saveWeeklyGoalDays(v11InvalidWeeklyIntention)).resolves.toEqual({ok:false,error:{code:'invalidState'}});
+  const afterInvalid = await service.loadProfile();
+  expect(afterInvalid.ok && afterInvalid.value.profile.weeklyGoalDays).toBe(v11WeeklyIntention);
+  await database.closeAsync();
+});
+
+it('projects actual dated participation for the v1.1 rhythm strip without fabricating days', async () => {
+  const {service,database}=await makeService();
+  await service.confirmAdultEligibility(); await service.savePrimaryArea('neck'); await service.saveSecondaryArea();
+  await service.acknowledgeSafetyBoundary(); await service.completeOnboarding();
+  const progress=await service.loadProgress();
+  expect(progress.ok && progress.value.currentLocalDay).toBe(localDay);
+  expect(progress.ok && progress.value.participationLocalDays).toEqual([]);
+  expect(progress.ok && progress.value.weeklyParticipationDayCount).toBe(0);
+  await database.closeAsync();
+});
+
+it('persists Repeat and Original at the current step, rejects stale/early repeats, and records real session detail', async () => {
+  const {database,service,advanceMonotonicClock}=await makeService();
+  await service.confirmAdultEligibility();await service.savePrimaryArea('neck');await service.saveSecondaryArea();await service.acknowledgeSafetyBoundary();await service.completeOnboarding();
+  const draft=await service.beginCheckIn();if(!draft.ok)throw new Error('Missing draft');
+  const plan=await service.submitCheckIn(draft.value,{area:'neck',changeReport:'similar',movementComfort:'okay'});
+  if(!plan.ok||plan.value.kind!=='plan')throw new Error('Missing plan');
+  const started=await service.startRoutine(plan.value.plan.decisionId);if(!started.ok||started.value.currentItem?.kind!=='movement')throw new Error('Missing movement');
+  const {sessionId,currentStepIndex}=started.value;const alternative=started.value.currentItem.availableAlternatives[0];if(!alternative)throw new Error('Missing alternative');
+  await expect(service.repeatRoutineStep(sessionId,currentStepIndex)).resolves.toMatchObject({ok:false,error:{code:'invalidState'}});
+  await expect(service.repeatRoutineStep(sessionId,currentStepIndex+1)).resolves.toMatchObject({ok:false,error:{code:'invalidState'}});
+  const dose=started.value.currentItem.scheduledDose;if(dose.kind!=='timed')throw new Error('Timed fixture required');
+  const millisecondsPerSecond=1_000;advanceMonotonicClock(dose.activeSeconds*millisecondsPerSecond);
+  await expect(service.repeatRoutineStep(sessionId,currentStepIndex)).resolves.toMatchObject({ok:true,value:{currentStepIndex,status:'inProgress',stepElapsedMilliseconds:0}});
+  await service.selectRoutineAlternative(sessionId,currentStepIndex,alternative.movementId);await service.resumeRoutine(sessionId);
+  await expect(service.restoreRoutineOriginal(sessionId,currentStepIndex)).resolves.toMatchObject({ok:true,value:{currentStepIndex,selectedAlternative:undefined,stepElapsedMilliseconds:0}});
+  await service.selectRoutineAlternative(sessionId,currentStepIndex,alternative.movementId);
+  await expect(service.refreshRoutine(sessionId)).resolves.toMatchObject({ok:true,value:{selectedAlternative:{movementId:alternative.movementId}}});
+  await service.resumeRoutine(sessionId);await service.endRoutine(sessionId,'intentional');
+  await expect(service.repeatRoutineStep(sessionId,currentStepIndex)).resolves.toMatchObject({ok:false,error:{code:'invalidState'}});
+  const detail=await service.loadSessionDetail(sessionId);expect(detail).toMatchObject({ok:true,value:{sessionId,status:'stopped',responses:{}}});
+  if(!detail.ok)throw new Error('Missing session detail');expect(detail.value.steps.every(step=>step.status==='unfinished')).toBe(true);
+  await database.closeAsync();
+});
+
+it('keeps the v6 routine event migration atomic and preserves existing rows on retry',async()=>{
+  const {database,service}=await makeService();
+  await service.confirmAdultEligibility();await service.savePrimaryArea('neck');await service.saveSecondaryArea();await service.acknowledgeSafetyBoundary();await service.completeOnboarding();
+  const draft=await service.beginCheckIn();if(!draft.ok)throw new Error('Missing draft');
+  const plan=await service.submitCheckIn(draft.value,{area:'neck',changeReport:'similar',movementComfort:'okay'});if(!plan.ok||plan.value.kind!=='plan')throw new Error('Missing plan');
+  const routine=await service.startRoutine(plan.value.plan.decisionId);if(!routine.ok)throw new Error('Missing routine');
+  const original=kineoV1MigrationStatements.find(sql=>sql.startsWith('CREATE TABLE routine_events ('));if(!original)throw new Error('Missing schema');
+  const before=await database.getAllAsync('SELECT * FROM routine_events');
+  await database.execAsync(original.replace('CREATE TABLE routine_events (','CREATE TABLE routine_events_v5 ('));
+  await database.execAsync('INSERT INTO routine_events_v5 SELECT * FROM routine_events; DROP TABLE routine_events; ALTER TABLE routine_events_v5 RENAME TO routine_events; DELETE FROM schema_migrations WHERE version=6; PRAGMA user_version=5;');
+  database.failNextStatementContaining('INSERT INTO routine_events_v6');
+  const migrationTime=1_750_000_000_000;
+  expect((await migrateKineoDatabase(database,migrationTime)).ok).toBe(false);
+  expect(await database.getAllAsync('SELECT * FROM routine_events')).toEqual(before);
+  expect(await database.getFirstAsync('PRAGMA user_version')).toEqual({user_version:5});
+  expect((await migrateKineoDatabase(database,migrationTime)).ok).toBe(true);
+  expect(await database.getAllAsync('SELECT * FROM routine_events')).toEqual(before);
+  await database.closeAsync();
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { KineoProductService } from '@/application/kineo-product-service';
@@ -15,8 +15,9 @@ import {
   openProtectedKineoLocalRuntime,
   type OpenedKineoLocalRuntime,
 } from '@/infrastructure/persistence/open-protected-kineo-store';
-import { colors, spacing, typography } from '@/ui/theme/tokens';
+import { colors, layout, spacing } from '@/ui/theme/tokens';
 
+import { V11BrandMark, V11PageHeader, V11PrimaryButton, V11NoticeCard } from '../primitives/kineo-v11-primitives';
 import { KineoAccountEntry } from '../account/kineo-account-entry';
 
 type BootstrapState =
@@ -159,33 +160,29 @@ export function KineoAppBootstrap() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.content}>
-        <Text style={styles.title}>
-          {state.kind === 'opening'
+      <ScrollView contentContainerStyle={styles.content}>
+        <V11BrandMark />
+        <V11PageHeader title={
+          state.kind === 'opening'
             ? 'Opening Kineo…'
             : state.kind === 'failed' && state.configurationMissing
               ? 'Account service configuration is missing.'
-              : 'Kineo needs another try.'}
-        </Text>
+              : 'Kineo needs another try.'} />
+        {state.kind === 'opening' ? <View accessibilityLiveRegion="polite" accessibilityLabel="Opening Kineo"><ActivityIndicator color={colors.accentDark} /></View> : null}
         {state.kind === 'failed' ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              openingStore = undefined;
-              void boot();
-            }}
-          >
-            <Text style={styles.retry}>Retry</Text>
-          </Pressable>
+          <>
+            <V11NoticeCard message={state.configurationMissing
+              ? 'Configure account services for this build, then try again.'
+              : 'Unlock your device and try opening Kineo again.'} tone="caution" />
+            <V11PrimaryButton label="Retry" onPress={() => { openingStore = undefined; void boot(); }} />
+          </>
         ) : null}
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.canvas },
-  content: { flex: 1, gap: spacing.standard, justifyContent: 'center', padding: spacing.screenHorizontal },
-  title: { color: colors.ink, fontSize: typography.bodySize, fontWeight: typography.strongWeight, textAlign: 'center' },
-  retry: { color: colors.accentDark, fontSize: typography.bodySize, fontWeight: typography.buttonWeight, textAlign: 'center' },
+  content: { flexGrow: 1, gap: spacing.roomy, justifyContent: 'center', padding: spacing.screenHorizontal, maxWidth: layout.readableWidth, alignSelf: 'center', width: '100%' },
 });

@@ -5,26 +5,30 @@ name: Attention gate survives relaunch and clears through correction
     clearState: true
     clearKeychain: true
 - extendedWaitUntil:
-    visible: "A routine shaped around how you feel now."
+    visible: "Make room for how you feel today."
     timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
 - runFlow: subflows/onboard-single-area.yaml
 - tapOn: "Check in"
 - tapOn: "Worse"
+- tapOn: "Continue"
 - tapOn: "Limited"
-- assertVisible: "Is this new, sudden, or unusual for you?"
-- tapOn: "Yes"
-- assertVisible: "Kineo cannot guide this change."
+- tapOn: "Continue"
+- assertVisible: "Is this a new or unusual change?"
+- tapOn: "Yes, or I’m not sure"
+- tapOn: "Continue"
+- assertVisible: "No routine right now."
 - launchApp
 - extendedWaitUntil:
-    visible: "Pause before another routine."
+    visible: "Has your neck returned to its usual pattern?"
     timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
-- tapOn: "Review now"
-- assertVisible: "Has neck returned to its usual pattern?"
+- assertVisible: "Has your neck returned to its usual pattern?"
 - tapOn: "I selected that by mistake"
 - assertVisible: "Compared with your usual pattern…"
 - tapOn: "Similar"
+- tapOn: "Continue"
 - tapOn: "Okay"
+- tapOn: "Continue"
 - extendedWaitUntil:
-    visible: "How are you moving?"
+    visible: "Start with how you feel."
     timeout: ${UI_WAIT_TIMEOUT_MILLISECONDS}
 - assertVisible: "Check in"

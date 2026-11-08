@@ -137,7 +137,7 @@ jobs:
           Scripts/verify-simulator-launch.sh \
             "$KINEO_SIMULATOR_ID" \
             "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
-            "Get started"
+            "Find your starting point"
           mkdir -p "$RUNNER_TEMP/kineo-ui-evidence"
           xcrun simctl io "$KINEO_SIMULATOR_ID" screenshot \
             "$RUNNER_TEMP/kineo-ui-evidence/first-use-light.png"
@@ -147,7 +147,7 @@ jobs:
           Scripts/verify-simulator-launch.sh \
             "$KINEO_SIMULATOR_ID" \
             "$RUNNER_TEMP/kineo-expo-derived-data/Build/Products/Release-iphonesimulator/Kineo.app" \
-            "MOVE WITH TODAY"
+            "Make room for how"
           xcrun simctl io "$KINEO_SIMULATOR_ID" screenshot \
             "$RUNNER_TEMP/kineo-ui-evidence/first-use-large-text-dark.png"
 

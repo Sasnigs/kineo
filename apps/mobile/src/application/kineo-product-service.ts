@@ -65,10 +65,12 @@ import type {
   AttentionResolution,
   CheckInResult,
   PlanPresentation,
+  PlanSequenceStep,
   ProfilePresentation,
   ProgressPresentation,
   RoutineEndReason,
   RoutinePresentation,
+  SessionDetailPresentation,
   ProductResult,
   ProductStartState,
 } from '../core/product/product-flow';
@@ -103,6 +105,7 @@ const firstEntryRevision = 1;
 const firstDecisionRevision = 1;
 const noExistingRevision = 0;
 const minimumTimestampIncrementMilliseconds = 1;
+const weeklyIntentionOptions = [2, 3, 4] as const;
 const daysPerWeek = 7;
 const mondayWeekdayIndex = 1;
 const maximumRecentSessionCount = 5;
@@ -128,6 +131,7 @@ export interface KineoProductServing {
   confirmAdultEligibility(): Promise<ProductResult<void>>;
   savePrimaryArea(area: BodyArea): Promise<ProductResult<void>>;
   saveSecondaryArea(area?: BodyArea): Promise<ProductResult<void>>;
+  saveWeeklyGoalDays(days: number): Promise<ProductResult<void>>;
   acknowledgeSafetyBoundary(): Promise<ProductResult<void>>;
   completeOnboarding(): Promise<ProductResult<BodyArea>>;
   respondToAttentionReturn(
@@ -176,6 +180,9 @@ export interface KineoProductServing {
     expectedStepIndex: number,
     reason?: RoutineEventReason,
   ): Promise<ProductResult<RoutinePresentation>>;
+  repeatRoutineStep?(sessionId:RoutinePresentation['sessionId'],expectedStepIndex:number):Promise<ProductResult<RoutinePresentation>>;
+  restoreRoutineOriginal?(sessionId:RoutinePresentation['sessionId'],expectedStepIndex:number):Promise<ProductResult<RoutinePresentation>>;
+  loadSessionDetail?(sessionId:RoutinePresentation['sessionId']):Promise<ProductResult<SessionDetailPresentation>>;
   selectRoutineAlternative(
     sessionId: RoutinePresentation['sessionId'],
     expectedStepIndex: number,
@@ -348,6 +355,13 @@ export class KineoProductService implements KineoProductServing {
         updatedAtMilliseconds: timestamp,
       };
     });
+  }
+
+  async saveWeeklyGoalDays(days: number): Promise<ProductResult<void>> {
+    if (!weeklyIntentionOptions.some(option => option === days)) return invalidState;
+    return this.updateExistingProfile((existing, timestamp) => ({
+      ...existing, weeklyGoalDays: days, updatedAtMilliseconds: timestamp,
+    }));
   }
 
   async acknowledgeSafetyBoundary(): Promise<ProductResult<void>> {
@@ -685,6 +699,10 @@ export class KineoProductService implements KineoProductServing {
     return this.routineModule.skip(sessionId, expectedStepIndex, reason);
   }
 
+  repeatRoutineStep(sessionId:RoutinePresentation['sessionId'],expectedStepIndex:number){return this.routineModule.repeat(sessionId,expectedStepIndex);}
+  restoreRoutineOriginal(sessionId:RoutinePresentation['sessionId'],expectedStepIndex:number){return this.routineModule.restoreOriginal(sessionId,expectedStepIndex);}
+  loadSessionDetail(sessionId:RoutinePresentation['sessionId']){return this.routineModule.detail(sessionId);}
+
   selectRoutineAlternative(
     sessionId: RoutinePresentation['sessionId'],
     expectedStepIndex: number,
@@ -756,6 +774,13 @@ export class KineoProductService implements KineoProductServing {
           : Object.freeze([...existing.areas, record.area]),
       });
     }
+    for(const [id,entry] of sessions){
+      if(!terminalRoutineStatuses.includes(entry.status as (typeof terminalRoutineStatuses)[number]))continue;
+      const session=await this.store.loadRoutineSession(entry.sessionId);
+      if(!session.ok)return persistenceFailure(session.error);
+      if(session.value){const detail=await this.routineModule.detail(entry.sessionId);if(!detail.ok)return detail;
+        sessions.set(id,{...entry,duration:detail.value.duration,occurredAtMilliseconds:session.value.endedAtMilliseconds??session.value.updatedAtMilliseconds});}
+    }
     const recentSessions = [...sessions.values()]
       .reverse()
       .slice(0, maximumRecentSessionCount);
@@ -823,6 +848,8 @@ export class KineoProductService implements KineoProductServing {
       ok: true,
       value: {
         participationDayCount: participationDays.size,
+        participationLocalDays: [...participationDays],
+        currentLocalDay: this.runtime.localDayContext().localDay,
         weeklyParticipationDayCount,
         weeklyGoalDays: profileState.value.profile.weeklyGoalDays,
         recentSessions,
@@ -1279,6 +1306,21 @@ export class KineoProductService implements KineoProductServing {
     if (composition.kind !== 'composed') {
       return { ok: false, error: { code: 'contentUnavailable' } };
     }
+    const sequence: PlanSequenceStep[] = [];
+    const localizedStrings = prototypeCatalogLocalizedStrings();
+    for (const { item, sourceArea } of composition.routine.orderedItems) {
+      const movement = item.kind === 'movement'
+        ? catalog.movements.find(candidate => candidate.metadata.id === item.movementId)
+        : undefined;
+      const titleKey = item.kind === 'movement' ? movement?.metadata.displayNameKey
+        : item.kind === 'rest' ? 'routine.rest.title' : 'routine.transition.title';
+      const title = titleKey === undefined ? undefined : localizedStrings[titleKey];
+      if (!title) return { ok: false, error: { code: 'contentUnavailable' } };
+      sequence.push(Object.freeze({
+        id: item.itemId, kind: item.kind, area: sourceArea, title,
+        estimatedSeconds: item.kind === 'movement' ? item.dose.estimatedSeconds : item.fixedSeconds,
+      }));
+    }
     if (
       authorization !== undefined &&
       (
@@ -1335,6 +1377,7 @@ export class KineoProductService implements KineoProductServing {
         duration,
         explanations: selected.plan.explanations,
         itemCount: composition.routine.orderedItems.length,
+        sequence: Object.freeze(sequence),
         nominalSeconds: composition.routine.nominalSeconds,
         pauseTodayAvailable: selected.plan.pauseTodayAvailable,
       },

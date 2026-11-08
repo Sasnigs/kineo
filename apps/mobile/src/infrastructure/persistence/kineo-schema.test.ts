@@ -11,6 +11,7 @@ import {
   kineoV3MigrationChecksum,
   kineoV4MigrationChecksum,
   kineoV5MigrationChecksum,
+  kineoV6MigrationChecksum,
   migrateKineoDatabase,
   preflightKineoSchema,
 } from './kineo-schema';
@@ -156,6 +157,7 @@ describe('Kineo SQLite schema', () => {
       { version: 3, checksum: kineoV3MigrationChecksum },
       { version: 4, checksum: kineoV4MigrationChecksum },
       { version: 5, checksum: kineoV5MigrationChecksum },
+      { version: 6, checksum: kineoV6MigrationChecksum },
     ]);
     await database.closeAsync();
   });

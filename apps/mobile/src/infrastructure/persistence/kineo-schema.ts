@@ -8,7 +8,7 @@ import type {
   SqliteExecutor,
 } from '../../core/persistence/persistence-contract';
 
-export const kineoSchemaVersion = 5;
+export const kineoSchemaVersion = 6;
 export const kineoInitialMigrationName = 'v1_initial';
 export const kineoV2MigrationName = 'v2_account_sync';
 export const kineoV3MigrationName = 'v3_account_hydration';
@@ -423,7 +423,22 @@ export const kineoV5MigrationChecksum = bytesToHex(
   sha256(utf8ToBytes(verifiedHydrationStatements.join('\n'))),
 );
 
+const routineControlSchemaVersion = 6;
+const routineControlTable = kineoV1MigrationStatements.find(statement=>statement.startsWith('CREATE TABLE routine_events ('));
+if(!routineControlTable)throw new Error('Routine event schema is missing.');
+const routineControlStatements = [
+  routineControlTable.replace('CREATE TABLE routine_events (','CREATE TABLE routine_events_v6 (')
+    .replace("'alternativeSelected', 'stopped'", "'alternativeSelected', 'stepRepeated', 'originalRestored', 'stopped'")
+    .replaceAll("'stepCompleted', 'skipped', 'alternativeSelected'", "'stepCompleted', 'skipped', 'alternativeSelected', 'stepRepeated', 'originalRestored'"),
+  'INSERT INTO routine_events_v6 SELECT * FROM routine_events',
+  'DROP TABLE routine_events',
+  'ALTER TABLE routine_events_v6 RENAME TO routine_events',
+  'CREATE UNIQUE INDEX routine_events_sequence ON routine_events(routine_session_id, sequence_number)',
+] as const;
+export const kineoV6MigrationChecksum=bytesToHex(sha256(utf8ToBytes(routineControlStatements.join('\n'))));
+
 const kineoMigrations: readonly KineoMigration[] = Object.freeze([
+
   {
     version: initialSchemaVersion,
     name: kineoInitialMigrationName,
@@ -454,6 +469,7 @@ const kineoMigrations: readonly KineoMigration[] = Object.freeze([
     checksum: kineoV5MigrationChecksum,
     statements: verifiedHydrationStatements,
   },
+  {version:routineControlSchemaVersion,name:'v6_routine_controls',checksum:kineoV6MigrationChecksum,statements:routineControlStatements},
 ]);
 
 type UserVersionRow = Readonly<{ user_version: number }>;

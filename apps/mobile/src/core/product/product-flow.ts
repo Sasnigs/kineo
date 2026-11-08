@@ -43,6 +43,15 @@ export type AreaCheckInAnswers = Readonly<{
   conditionalSafetyAnswer?: ConditionalSafetyAnswer;
 }>;
 
+/** Read-only authored steps; not a session or a mutable plan command. */
+export type PlanSequenceStep = Readonly<{
+  id: string;
+  kind: 'movement' | 'transition' | 'rest';
+  area: BodyArea;
+  title: string;
+  estimatedSeconds: number;
+}>;
+
 export type PlanPresentation = Readonly<{
   decisionId: SelectionDecisionId;
   checkInId: CheckInId;
@@ -62,6 +71,8 @@ export type PlanPresentation = Readonly<{
     parameters: Readonly<Record<string, string>>;
   }>[];
   itemCount: number;
+  /** Optional for older presentation adapters; the local service always supplies it. */
+  sequence?: readonly PlanSequenceStep[];
   nominalSeconds: number;
   pauseTodayAvailable: boolean;
 }>;
@@ -131,12 +142,22 @@ export type AreaProgressPresentation = Readonly<{
   }>[];
 }>;
 
+export type SessionDetailPresentation = Readonly<{
+  sessionId: RoutineSessionId; localDay: string; deliveredLevel: RoutineLevel; duration: DurationVariant; status: RoutineStatus;
+  areas: readonly BodyArea[]; steps: readonly Readonly<{id:string;title:string;status:'completed'|'skipped'|'unfinished'}>[];
+  responses: Readonly<Partial<Record<BodyArea,AreaResponse>>>;
+}>;
+
 export type ProgressPresentation = Readonly<{
+  participationLocalDays?: readonly string[];
+  currentLocalDay?: string;
   participationDayCount: number;
   weeklyParticipationDayCount: number;
   weeklyGoalDays: number;
   recentSessions: readonly Readonly<{
     sessionId: RoutineSessionId;
+    duration?: DurationVariant;
+    occurredAtMilliseconds?: number;
     localDay: LocalDayContext['localDay'];
     status: RoutineStatus;
     deliveredLevel: RoutineLevel;

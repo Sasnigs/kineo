@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { currentLegalDocumentVersion } from '../../application/account/kineo-account-session';
-import { colors, layout, spacing, typography } from '../theme/tokens';
+import { colors, layout, radius, spacing, typography } from '../theme/tokens';
 
 // Readable prototype notices, not counsel-approved public launch documents.
 const documents = [
@@ -14,7 +14,7 @@ const documents = [
 
 export function PrototypeLegalDocuments() {
   const [expanded, setExpanded] = useState<string>();
-  return <View>
+  return <View style={styles.documents}>
     <Text style={styles.caption}>Prototype documents · {currentLegalDocumentVersion}</Text>
     {documents.map((document) => <View key={document.kind}>
       <Pressable accessibilityRole="button"
@@ -30,7 +30,8 @@ export function PrototypeLegalDocuments() {
 }
 
 const styles = StyleSheet.create({
-  caption: { color: colors.secondaryInk, fontSize: typography.captionSize },
+  documents: { backgroundColor: colors.mutedSurface, borderRadius: radius.card, padding: spacing.standard, gap: spacing.micro },
+  caption: { color: colors.secondaryInk, fontSize: typography.captionSize, lineHeight: typography.captionLineHeight },
   link: { minHeight: layout.controlMinimumHeight, justifyContent: 'center' },
   linkText: { color: colors.accentDark, fontSize: typography.bodySize, textDecorationLine: 'underline' },
   body: { color: colors.ink, fontSize: typography.detailSize, lineHeight: typography.detailLineHeight, paddingBottom: spacing.standard },
